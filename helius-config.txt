@@ -1,0 +1,5 @@
+# Helius RPC Configuration Template
+# Copy this to .env.local and add your API key
+
+# Get your free API key from https://helius.dev
+NEXT_PUBLIC_HELIUS_API_KEY=YOUR_HELIUS_API_KEY_HERE
