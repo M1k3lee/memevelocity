@@ -1,6 +1,19 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getPumpData, getTokenMetadata, getHolderStats } from './solanaManager';
+import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount } from './solanaManager';
 import { TokenData } from '../components/LiveFeed';
+
+export interface AdvancedConfig {
+    minBondingCurve?: number;
+    maxBondingCurve?: number;
+    minLiquidity?: number;
+    minHolderCount?: number;
+    maxDeployerHoldings?: number;
+    minVolume24h?: number;
+    maxDev?: number;
+    maxTop10?: number;
+    minVelocity?: number;
+    rugCheckStrictness?: 'strict' | 'standard' | 'lenient';
+}
 
 export interface EnhancedAnalysis {
     score: number; // 0-100, higher is better
@@ -227,9 +240,9 @@ export async function analyzeEnhanced(
         // 4. VOLUME VALIDATION (15 points)
         const volumeMetrics = await analyzeVolume(token, age, liquidity, heliusKey);
         
-        if (volumeMetrics.volume24h < (config?.minVolume || 0)) {
-             warnings.push(`Low volume: ${volumeMetrics.volume24h.toFixed(1)} SOL (min ${config?.minVolume || 0})`);
-             score -= 10;
+        if (volumeMetrics.volume24h < (config?.minVolume24h || 0)) {
+            warnings.push(`Low volume: ${volumeMetrics.volume24h.toFixed(1)} SOL (min ${config?.minVolume24h || 0})`);
+            score -= 10;
         }
 
         if (volumeMetrics.volume24h > 10) {
