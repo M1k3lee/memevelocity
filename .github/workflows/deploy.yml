@@ -35,6 +35,17 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
+          NEXT_PUBLIC_BASE_PATH: /memevelocity
+        continue-on-error: false
+      
+      - name: Check build output
+        run: |
+          if [ ! -d "out" ]; then
+            echo "Error: 'out' directory not found after build"
+            exit 1
+          fi
+          echo "Build output found:"
+          ls -la out/ | head -20
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
