@@ -468,6 +468,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             setDemoBalance(prev => prev - amountSol);
 
+
             // DEMO MODE: Use REAL token prices from blockchain
             // If initialPrice is not provided, fetch it from the blockchain
             let buyPrice = initialPrice || 0;
@@ -476,13 +477,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 try {
                     buyPrice = await getPumpPrice(mint, connection);
                     if (buyPrice === 0) {
-                        // If still 0, calculate from token data if available
-                        addLog(`[DEMO] Price fetch returned 0, will update on next poll`);
-                        buyPrice = 0.000001; // Temporary placeholder, will be updated by price polling
+                        // Try one more time with a small delay
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        buyPrice = await getPumpPrice(mint, connection);
+
+                        if (buyPrice === 0) {
+                            addLog(`[DEMO] ❌ Unable to fetch valid price for ${symbol}. Skipping trade.`);
+                            setDemoBalance(prev => prev + amountSol); // Refund
+                            return;
+                        }
                     }
                 } catch (e) {
-                    addLog(`[DEMO] Error fetching price, will update on next poll`);
-                    buyPrice = 0.000001; // Temporary placeholder
+                    addLog(`[DEMO] ❌ Error fetching price for ${symbol}. Skipping trade.`);
+                    setDemoBalance(prev => prev + amountSol); // Refund
+                    return;
                 }
             }
 
@@ -496,6 +504,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 symbol,
                 buyPrice,
                 amountTokens,
+                amountSolPaid: amountSol, // Track original investment
                 currentPrice: buyPrice,
                 pnlPercent: 0,
                 status: "open",
