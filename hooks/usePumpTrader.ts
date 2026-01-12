@@ -39,6 +39,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const [isDemo, setIsDemo] = useState(false);
     const [demoBalance, setDemoBalance] = useState(10.0);
     const [stats, setStats] = useState({ totalProfit: 0, wins: 0, losses: 0 });
+
+    // Profit Protection Vault
+    const [vaultBalance, setVaultBalance] = useState(0);
+    const [profitProtectionEnabled, setProfitProtectionEnabled] = useState(true);
+    const [profitProtectionPercent, setProfitProtectionPercent] = useState(25);
+
     const wsRef = useRef<WebSocket | null>(null);
 
     // Initial Load
@@ -55,6 +61,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (savedStats) {
             try { setStats(JSON.parse(savedStats)); } catch (e) { }
         }
+        const savedVault = localStorage.getItem('pump_vault_balance');
+        if (savedVault) {
+            try { setVaultBalance(parseFloat(savedVault)); } catch (e) { }
+        }
+        const savedProtectionEnabled = localStorage.getItem('pump_profit_protection_enabled');
+        if (savedProtectionEnabled !== null) {
+            try { setProfitProtectionEnabled(savedProtectionEnabled === 'true'); } catch (e) { }
+        }
+        const savedProtectionPercent = localStorage.getItem('pump_profit_protection_percent');
+        if (savedProtectionPercent) {
+            try { setProfitProtectionPercent(parseInt(savedProtectionPercent)); } catch (e) { }
+        }
     }, []);
 
     // Persistence
@@ -69,6 +87,19 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     useEffect(() => {
         localStorage.setItem('pump_stats', JSON.stringify(stats));
     }, [stats]);
+
+    useEffect(() => {
+        localStorage.setItem('pump_vault_balance', vaultBalance.toString());
+    }, [vaultBalance]);
+
+    useEffect(() => {
+        localStorage.setItem('pump_profit_protection_enabled', profitProtectionEnabled.toString());
+    }, [profitProtectionEnabled]);
+
+    useEffect(() => {
+        localStorage.setItem('pump_profit_protection_percent', profitProtectionPercent.toString());
+    }, [profitProtectionPercent]);
+
 
     const setDemoMode = (enabled: boolean) => setIsDemo(enabled);
 
@@ -98,7 +129,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const costBasis = trade.buyPrice * trade.amountTokens * (amountPercent / 100);
                 const profit = revenue - costBasis;
 
-                setDemoBalance(prev => prev + revenue);
+                // Profit Protection: Skim percentage of profit to vault
+                let profitToVault = 0;
+                let profitToTrading = profit;
+
+                if (profitProtectionEnabled && profit > 0) {
+                    profitToVault = profit * (profitProtectionPercent / 100);
+                    profitToTrading = profit - profitToVault;
+                    setVaultBalance(prev => prev + profitToVault);
+                    addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL (${profitProtectionPercent}%) to vault`);
+                }
+
+                // Add principal + remaining profit to trading balance
+                setDemoBalance(prev => prev + costBasis + profitToTrading);
+
                 setStats(prev => ({
                     totalProfit: prev.totalProfit + profit,
                     wins: profit > 0 ? prev.wins + 1 : prev.wins,
@@ -111,8 +155,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     }
                     return t;
                 }));
-                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Rev: ${revenue.toFixed(4)} SOL`);
-                toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`, { description: `Rev: ${revenue.toFixed(4)} SOL` });
+                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Rev: ${revenue.toFixed(4)} SOL, Profit: ${profit > 0 ? '+' : ''}${profit.toFixed(4)} SOL`);
+                toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`, { description: `Profit: ${profit > 0 ? '+' : ''}${profit.toFixed(4)} SOL` });
                 return;
             }
 
@@ -739,6 +783,45 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         ));
     };
 
+    // Vault Management Functions
+    const withdrawFromVault = (amount: number) => {
+        if (amount <= 0 || amount > vaultBalance) {
+            addLog(`❌ Invalid withdrawal amount. Vault has ${vaultBalance.toFixed(4)} SOL`);
+            return;
+        }
+        setVaultBalance(prev => prev - amount);
+        if (isDemo) {
+            setDemoBalance(prev => prev + amount);
+            addLog(`💰 Withdrew ${amount.toFixed(4)} SOL from vault to trading balance`);
+        } else {
+            addLog(`💰 Released ${amount.toFixed(4)} SOL from vault protection`);
+        }
+    };
+
+    const moveVaultToTrading = (amount: number) => {
+        if (amount <= 0 || amount > vaultBalance) {
+            addLog(`❌ Invalid transfer amount. Vault has ${vaultBalance.toFixed(4)} SOL`);
+            return;
+        }
+        setVaultBalance(prev => prev - amount);
+        setDemoBalance(prev => prev + amount);
+        addLog(`📊 Moved ${amount.toFixed(4)} SOL from vault to trading balance`);
+    };
+
+    const toggleProfitProtection = () => {
+        setProfitProtectionEnabled(prev => !prev);
+        addLog(`🔒 Profit Protection ${!profitProtectionEnabled ? 'ENABLED' : 'DISABLED'}`);
+    };
+
+    const setProfitProtectionPercentage = (percent: number) => {
+        if (percent < 0 || percent > 50) {
+            addLog(`❌ Protection percentage must be between 0-50%`);
+            return;
+        }
+        setProfitProtectionPercent(percent);
+        addLog(`🔒 Profit Protection set to ${percent}%`);
+    };
+
     return {
         activeTrades,
         buyToken,
@@ -752,6 +835,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         clearLogs,
         setDemoMode,
         demoBalance,
-        stats
+        stats,
+        // Vault
+        vaultBalance,
+        profitProtectionEnabled,
+        profitProtectionPercent,
+        withdrawFromVault,
+        moveVaultToTrading,
+        toggleProfitProtection,
+        setProfitProtectionPercentage
     };
 };

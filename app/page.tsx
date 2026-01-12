@@ -89,7 +89,28 @@ export default function Home() {
     }
   }, [config.heliusKey]);
 
-  const { activeTrades, buyToken, sellToken, syncTrades, recoverTrades, clearTrades, updateTrade, logs, addLog, clearLogs, setDemoMode, demoBalance, stats } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
+  const {
+    activeTrades,
+    buyToken,
+    sellToken,
+    syncTrades,
+    recoverTrades,
+    clearTrades,
+    updateTrade,
+    logs,
+    addLog,
+    clearLogs,
+    setDemoMode,
+    demoBalance,
+    stats,
+    vaultBalance,
+    profitProtectionEnabled,
+    profitProtectionPercent,
+    withdrawFromVault,
+    moveVaultToTrading,
+    toggleProfitProtection,
+    setProfitProtectionPercentage
+  } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
   const [tradeHistory, setTradeHistory] = useState<Set<string>>(new Set());
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
@@ -865,7 +886,19 @@ export default function Home() {
           {/* Wallet Tab - Always mounted, hidden if not active */}
           <div className={`col-span-12 flex justify-center animate-fade-in ${activeTab === 'wallet' ? 'block' : 'hidden'}`}>
             <div className="w-full max-w-2xl">
-              <WalletManager onWalletChange={handleWalletChange} onBalanceChange={setRealBalance} connection={connection} />
+              <WalletManager
+                onWalletChange={handleWalletChange}
+                onBalanceChange={setRealBalance}
+                connection={connection}
+                vaultBalance={vaultBalance}
+                profitProtectionEnabled={profitProtectionEnabled}
+                profitProtectionPercent={profitProtectionPercent}
+                onWithdrawVault={withdrawFromVault}
+                onMoveVaultToTrading={moveVaultToTrading}
+                onToggleProfitProtection={toggleProfitProtection}
+                onSetProfitProtectionPercent={setProfitProtectionPercentage}
+                isDemo={config.isDemo}
+              />
             </div>
           </div>
 
