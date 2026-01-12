@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useRef, memo } from 'react';
-import { Activity, ExternalLink, TrendingUp, RefreshCw, WifiOff, Zap } from 'lucide-react';
+import { Activity, ExternalLink, TrendingUp, RefreshCw, WifiOff, ShieldAlert, ShieldCheck, Zap, AlertTriangle, Pause, Play } from 'lucide-react';
 import { getTokenMetadata, getPumpData } from '../utils/solanaManager';
+import { quickRugCheck, detectRug } from '../utils/rugDetector';
 
 export interface TokenData {
     mint: string;
@@ -28,37 +29,89 @@ const TokenItem = memo((props: any) => {
     const isSim = token.mint.startsWith('SIM');
     const pumpFunUrl = isSim ? null : `https://pump.fun/${token.mint}`;
 
+    // Run quick rug check
+    const rugCheck = detectRug(token, 'medium');
+    const isRug = rugCheck.isRug;
+    const isSafe = !isRug && (token.vSolInBondingCurve || 0) > 35; // slightly safer if liquidity > 35
+
+    // Determine status color/badge
+    let badgeColor = "bg-gray-500/10 text-gray-500 border-gray-500/20";
+    let badgeText = "UNK";
+    let borderColor = "border-[#222]";
+
+    if (isRug) {
+        badgeColor = "bg-red-500/10 text-red-500 border-red-500/20";
+        badgeText = "RUG";
+        borderColor = "border-red-500/30";
+    } else if (isSafe) {
+        badgeColor = "bg-green-500/10 text-green-500 border-green-500/20";
+        badgeText = "GOOD";
+        borderColor = "border-green-500/30";
+    } else {
+        // Neutral/New
+        badgeColor = "bg-blue-500/10 text-blue-500 border-blue-500/20";
+        badgeText = "NEW";
+        borderColor = "border-blue-500/30 hover:border-blue-400";
+    }
+
     return (
         <div style={style} className="px-1 pb-2">
-            <div className={`p-3 h-full rounded border transition-all ${isSim ? 'bg-blue-500/5 border-blue-500/20' : 'bg-[#121212]/50 border-[#222] hover:border-[var(--primary)]'}`}>
-                <div className="flex justify-between items-start">
-                    <div className="flex-1 overflow-hidden">
-                        <h3 className="font-bold text-sm text-white flex items-center gap-2 truncate">
-                            {token.symbol || 'Unknown'}
-                            {isSim && <span className="text-[8px] bg-blue-500 px-1 rounded flex-shrink-0">SIM</span>}
-                        </h3>
-                        <p className="text-[10px] text-gray-500 font-mono truncate">{token.mint}</p>
+            <div className={`p-3 h-full rounded border transition-all ${isSim ? 'bg-blue-900/5' : 'bg-[#121212]/80'} ${borderColor} hover:scale-[1.01] hover:shadow-lg`}>
+                <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center gap-2 overflow-hidden max-w-[70%]">
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full ${isRug ? 'bg-red-500/20 text-red-500' : isSafe ? 'bg-green-500/20 text-green-500' : 'bg-blue-500/20 text-blue-500'}`}>
+                            {isRug ? <ShieldAlert size={16} /> : isSafe ? <ShieldCheck size={16} /> : <Zap size={16} />}
+                        </div>
+                        <div className="overflow-hidden">
+                            <h3 className="font-bold text-sm text-white truncate flex items-center gap-1">
+                                {token.symbol || 'Unknown'}
+                                {isSim && <span className="text-[9px] bg-blue-500 px-1 rounded-sm text-white">SIM</span>}
+                            </h3>
+                            <p className="text-[10px] text-gray-500 font-mono truncate">{token.name}</p>
+                        </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                        <Activity size={12} className={(token.initialBuy || 0) > 1 ? "text-green-500" : "text-gray-600"} />
+
+                    <div className="flex flex-col items-end gap-1">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${badgeColor}`}>
+                            {badgeText}
+                        </span>
                         {pumpFunUrl && (
-                            <a
-                                href={pumpFunUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[var(--primary)] hover:text-white transition-colors"
-                                title="View on pump.fun"
-                            >
+                            <a href={pumpFunUrl} target="_blank" rel="noopener noreferrer"
+                                className="text-gray-500 hover:text-[var(--primary)] transition-colors" title="View on Pump.fun">
                                 <ExternalLink size={12} />
                             </a>
                         )}
                     </div>
                 </div>
-                <div className="flex justify-between text-[10px] text-gray-400 mt-2">
-                    <span>{(token.vSolInBondingCurve || 0).toFixed(1)} SOL</span>
-                    <span>{new Date(token.timestamp || Date.now()).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+
+                <div className="flex justify-between items-center text-[10px] text-gray-400 bg-black/20 p-2 rounded">
+                    <div className="flex flex-col">
+                        <span className="text-gray-600 uppercase text-[9px]">Liquidity</span>
+                        <span className={(token.vSolInBondingCurve || 0) > 30 ? "text-green-400" : "text-gray-300"}>
+                            {(token.vSolInBondingCurve || 0).toFixed(1)} SOL
+                        </span>
+                    </div>
+                    <div className="flex flex-col items-end">
+                        <span className="text-gray-600 uppercase text-[9px]">Time</span>
+                        <span className="font-mono text-gray-300">
+                            {new Date(token.timestamp || Date.now()).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                    </div>
                 </div>
+
+                {/* Rug Reason / Warning */}
+                {rugCheck.warnings.length > 0 && !isRug && (
+                    <div className="mt-2 text-[10px] text-yellow-500 flex items-start gap-1 p-1 bg-yellow-500/5 rounded border border-yellow-500/10">
+                        <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
+                        <span className="italic leading-tight opacity-80">{rugCheck.warnings[0]}</span>
+                    </div>
+                )}
+                {isRug && rugCheck.reason && (
+                    <div className="mt-2 text-[10px] text-red-400 flex items-start gap-1 p-1 bg-red-500/5 rounded border border-red-500/10">
+                        <ShieldAlert size={10} className="mt-0.5 flex-shrink-0" />
+                        <span className="italic leading-tight font-medium">{rugCheck.reason}</span>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -76,6 +129,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const [tokens, setTokens] = useState<TokenData[]>([]);
     const [status, setStatus] = useState<"connecting" | "connected" | "disconnected" | "simulating">("connecting");
     const [retryCount, setRetryCount] = useState(0);
+    const [paused, setPaused] = useState(false);
 
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -86,18 +140,12 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const onTokenDetectedRef = useRef(onTokenDetected);
     useEffect(() => { onTokenDetectedRef.current = onTokenDetected; }, [onTokenDetected]);
 
-    // Validate Helius API key format (should be UUID-like, not placeholder)
     const isValidHeliusKey = (key: string): boolean => {
         if (!key || key.trim() === '') return false;
         const trimmed = key.trim();
-        // Helius keys are UUIDs (36 chars with dashes) or long hex strings
-        // Reject obvious placeholders
         const invalidPatterns = ['admin', 'test', 'demo', 'key', 'placeholder'];
         const lowerKey = trimmed.toLowerCase();
-        if (invalidPatterns.some(pattern => lowerKey.includes(pattern) && trimmed.length < 30)) {
-            return false;
-        }
-        // UUID format: 8-4-4-4-12 (36 chars total) or long hex string (32+ chars)
+        if (invalidPatterns.some(pattern => lowerKey.includes(pattern) && trimmed.length < 30)) return false;
         const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         return uuidPattern.test(trimmed) || trimmed.length >= 32;
     };
@@ -125,7 +173,6 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         }, 8000);
 
         try {
-            // Check if Helius key is valid, otherwise use public feed
             const useHelius = heliusKey && isValidHeliusKey(heliusKey);
             const url = useHelius
                 ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}`
@@ -145,40 +192,33 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 setLastError("");
 
                 if (useHelius) {
-                    console.log("[LiveFeed] ✅ Connected to Helius, subscribing to pump.fun program logs...");
-                    // Subscribe to logs for pump.fun program (catches token creation)
+                    console.log("[LiveFeed] ✅ Connected to Helius");
                     ws.send(JSON.stringify({
                         jsonrpc: "2.0", id: 1, method: "logsSubscribe",
                         params: [{ mentions: ["6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"] }, { commitment: "processed" }]
                     }));
-                    // Note: Account subscription removed - too many notifications, logs are sufficient
                 } else {
-                    console.log("[LiveFeed] ✅ Connected to PumpPortal feed...");
+                    console.log("[LiveFeed] ✅ Connected to PumpPortal");
                     ws.send(JSON.stringify({ method: "subscribeNewToken" }));
                 }
             };
 
             ws.onmessage = async (event) => {
+                if (paused) return; // Don't process if paused
+
                 try {
                     const data = JSON.parse(event.data);
                     if (useHelius) {
-                        // Handle log notifications (token creation events)
                         if (data.method === "logsNotification") {
                             const logs = data.params.result.value.logs as string[];
                             const signature = data.params.result.value.signature;
-                            // Check for various instruction types that indicate token creation
                             const createPatterns = ["Instruction: Create", "create", "Create", "initialize", "Initialize", "new_token", "NewToken"];
-                            const hasCreateInstruction = logs.some(log =>
-                                createPatterns.some(pattern => log.includes(pattern))
-                            );
-                            if (hasCreateInstruction) {
-                                console.log(`[LiveFeed] 🎯 Detected token creation: ${signature.substring(0, 16)}...`);
+                            if (logs.some(log => createPatterns.some(pattern => log.includes(pattern)))) {
                                 handleNewTokenSignature(signature);
                             }
                             return;
                         }
                     }
-                    // Handle PumpPortal feed messages
                     if (data.mint) {
                         const newToken: TokenData = { ...data, timestamp: Date.now(), marketCapSol: data.vSolInBondingCurve || 0 };
                         updateTokens(newToken);
@@ -192,25 +232,16 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 if (connectionTimeout.current) clearTimeout(connectionTimeout.current);
                 if (!isSimulating) {
                     setStatus("disconnected");
-                    // If Helius failed and we have a key, try falling back to public feed
                     if (useHelius && heliusKey && event.code !== 1000) {
-                        setLastError("Helius failed - retry with public feed");
-                        // Auto-retry with public feed after 2 seconds
-                        setTimeout(() => {
-                            if (wsRef.current?.readyState !== WebSocket.OPEN) {
-                                connectWs(); // Will use public feed since useHelius will be false
-                            }
-                        }, 2000);
+                        setLastError("Helius failed - retrying");
+                        setTimeout(() => { if (wsRef.current?.readyState !== WebSocket.OPEN) connectWs(); }, 2000);
                     }
                 }
             };
 
             ws.onerror = (error) => {
-                if (useHelius) {
-                    setLastError("Helius API Error (Invalid key?)");
-                } else {
-                    setLastError("Connection Error");
-                }
+                if (useHelius) setLastError("Helius API Error");
+                else setLastError("Connection Error");
             };
         } catch (err: any) {
             setLastError("WS Failed");
@@ -219,6 +250,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     };
 
     const handleNewTokenSignature = async (signature: string) => {
+        if (paused) return;
         try {
             const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${heliusKey}`, {
                 method: 'POST',
@@ -255,7 +287,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const updateTokens = (token: TokenData) => {
         setTokens(prev => {
             if (prev.some(t => t.mint === token.mint)) return prev;
-            return [token, ...prev].slice(0, 30);
+            // Keep last 50 tokens
+            return [token, ...prev].slice(0, 50);
         });
         onTokenDetectedRef.current(token);
     };
@@ -266,11 +299,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             if (simulationInterval.current) clearInterval(simulationInterval.current);
             setStatus("simulating");
             simulationInterval.current = setInterval(() => {
+                if (paused) return;
+
                 const randomMint = "SIM" + Math.random().toString(36).substring(7).toUpperCase();
                 const symbols = ["SOL", "PUMP", "MOON", "APE", "SAFE", "DIAMOND", "ROCKET", "BULL", "GEM", "STAR"];
                 const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)] + Math.floor(Math.random() * 99);
-
-                // More realistic distribution: 60% rugs, 30% mediocre, 10% good (better than 98.6% rugs in reality)
                 const rand = Math.random();
                 let isRug = false;
                 let devBuy = 0.1;
@@ -278,21 +311,18 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 let liquidity = 30;
 
                 if (rand < 0.6) {
-                    // 60% rugs - low dev buy, no commitment
                     isRug = true;
-                    devBuy = 0.05 + Math.random() * 0.3; // 0.05-0.35 SOL
+                    devBuy = 0.05 + Math.random() * 0.3;
                     name = ["Garbage Coin", "Rug Pull", "Scam Token", "Fake Coin"][Math.floor(Math.random() * 4)];
-                    liquidity = 30 + Math.random() * 5; // Minimal growth
+                    liquidity = 30 + Math.random() * 5;
                 } else if (rand < 0.9) {
-                    // 30% mediocre - some dev buy but not great
-                    devBuy = 0.5 + Math.random() * 1.5; // 0.5-2.0 SOL
+                    devBuy = 0.5 + Math.random() * 1.5;
                     name = ["Average Token", "Meh Coin", "Okay Token"][Math.floor(Math.random() * 3)];
-                    liquidity = 30 + Math.random() * 10; // Some growth
+                    liquidity = 30 + Math.random() * 10;
                 } else {
-                    // 10% good tokens - high dev commitment
-                    devBuy = 2.0 + Math.random() * 8; // 2.0-10.0 SOL
+                    devBuy = 2.0 + Math.random() * 8;
                     name = ["Diamond Hook", "Moon Shot", "Rocket Fuel", "Gem Token", "Bull Run"][Math.floor(Math.random() * 5)];
-                    liquidity = 30 + Math.random() * 20 + 5; // Good growth
+                    liquidity = 30 + Math.random() * 20 + 5;
                 }
 
                 const mockToken: TokenData = {
@@ -310,7 +340,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     timestamp: Date.now()
                 };
                 updateTokens(mockToken);
-            }, 5000);
+            }, 3000); // Faster simulation
         } else {
             if (simulationInterval.current) { clearInterval(simulationInterval.current); simulationInterval.current = null; }
             connectWs();
@@ -318,7 +348,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         return () => {
             if (simulationInterval.current) clearInterval(simulationInterval.current);
         };
-    }, [isSimulating, heliusKey]);
+    }, [isSimulating, heliusKey, paused]);
 
     const manualReconnect = () => {
         setRetryCount(prev => prev + 1);
@@ -327,41 +357,64 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     };
 
     return (
-        <div className="glass-panel p-6 w-full h-[600px] flex flex-col animate-fade-in">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold glow-text flex items-center gap-2">
-                    <Activity size={20} className="text-[var(--primary)]" /> Market Feed
-                </h2>
-                <div className="flex items-center gap-2">
-                    {lastError && !isSimulating && <span className="text-[10px] text-red-400 bg-red-400/10 px-2 py-0.5 rounded">{lastError}</span>}
+        <div className="glass-panel p-6 w-full h-[600px] flex flex-col animate-fade-in relative overflow-hidden">
+            {/* Background enhancement */}
+            <div className="absolute top-0 right-0 p-32 bg-[var(--primary)]/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-                    <div className={`flex items-center gap-2 px-2 py-1 rounded-full border ${status === "connected" ? "bg-green-500/10 border-green-500/20 text-green-500" : status === "simulating" ? "bg-blue-500/10 border-blue-500/20 text-blue-500" : status === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500" : "bg-red-500/10 border-red-500/20 text-red-500"}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${status === "connected" ? "bg-green-500 animate-pulse" : status === "simulating" ? "bg-blue-500 animate-pulse" : status === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`}></div>
-                        <span className="text-[10px] font-medium uppercase tracking-wider">{status}</span>
+            <div className="flex justify-between items-center mb-6 z-10">
+                <div>
+                    <h2 className="text-2xl font-bold glow-text flex items-center gap-3">
+                        <div className="relative">
+                            <Activity size={24} className="text-[var(--primary)]" />
+                            <div className="absolute top-0 right-0 w-2 h-2 bg-[var(--primary)] rounded-full animate-ping"></div>
+                        </div>
+                        Market Intelligence
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-1">Real-time analysis & rug detection</p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    {lastError && !isSimulating && <span className="text-[10px] text-red-400 bg-red-400/10 px-2 py-1 rounded border border-red-500/20">{lastError}</span>}
+
+                    <button onClick={() => setPaused(!paused)} className={`p-2 rounded-full border transition-all ${paused ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/50' : 'bg-[#222] text-gray-400 border-[#333] hover:text-white'}`}>
+                        {paused ? <Play size={16} fill="currentColor" /> : <Pause size={16} fill="currentColor" />}
+                    </button>
+
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${status === "connected" ? "bg-green-500/10 border-green-500/20 text-green-500" : status === "simulating" ? "bg-blue-500/10 border-blue-500/20 text-blue-500" : status === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500" : "bg-red-500/10 border-red-500/20 text-red-500"}`}>
+                        <div className={`w-2 h-2 rounded-full ${status === "connected" ? "bg-green-500 animate-pulse" : status === "simulating" ? "bg-blue-500 animate-pulse" : status === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`}></div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider">{status}</span>
                     </div>
 
                     {status === "disconnected" && !isSimulating && (
-                        <button onClick={manualReconnect} className="p-1 hover:text-white text-gray-400 transition-colors">
-                            <RefreshCw size={14} className={retryCount > 0 ? "animate-spin" : ""} />
+                        <button onClick={manualReconnect} className="p-2 bg-[#222] rounded-full border border-[#333] hover:text-white text-gray-400 transition-colors hover:rotate-180 duration-500">
+                            <RefreshCw size={16} />
                         </button>
                     )}
                 </div>
             </div>
 
-            <div className="flex-1 pr-2 space-y-3 custom-scrollbar overflow-y-auto min-h-0">
+            <div className="bg-[#1a1a1a]/50 border border-[#222] rounded-lg p-3 mb-2 flex justify-between text-[10px] text-gray-400 tracking-wider font-mono uppercase z-10">
+                <span>Token Analysis</span>
+                <span>Status</span>
+            </div>
+
+            <div className="flex-1 pr-2 space-y-3 custom-scrollbar overflow-y-auto min-h-0 z-10 relative">
                 {tokens.length === 0 ? (
-                    <div className="text-center text-gray-500 mt-20">
-                        {status === "disconnected" ? <WifiOff className="mx-auto mb-2 opacity-20" size={48} /> : <div className="loading-spinner mx-auto mb-2" />}
-                        <p>{status === "disconnected" ? "Connection Lost" : "Scanning Market..."}</p>
-                        <p className="text-[10px] opacity-50 mt-1">{isSimulating ? "Simulating for Paper Trade" : "Waiting for new Pump.fun tokens"}</p>
+                    <div className="text-center text-gray-500 mt-20 flex flex-col items-center">
+                        {status === "disconnected" ? <WifiOff className="mb-4 opacity-20" size={64} /> : <div className="loading-spinner mb-4 w-12 h-12 border-4" />}
+                        <p className="text-lg font-medium">{status === "disconnected" ? "Connection Lost" : "Scanning Market..."}</p>
+                        <p className="text-xs opacity-50 mt-2 max-w-[200px]">{isSimulating ? "Simulating for Paper Trade" : "Analyzing incoming tokens from Pump.fun..."}</p>
                     </div>
                 ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 pb-20">
                         {tokens.map((token, index) => (
                             <TokenItem key={token.mint} index={index} style={{}} tokens={tokens} />
                         ))}
                     </div>
                 )}
+
+                {/* Scroll fade effect */}
+                <div className="fixed bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-[#050505] to-transparent pointer-events-none z-20"></div>
             </div>
         </div>
     );

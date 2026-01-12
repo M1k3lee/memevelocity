@@ -113,39 +113,77 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             if (!wallet) return;
 
+            // Ensure we have current balance
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
 
             if (balance === 0) {
-                addLog(`Sell Failed: No balance found for ${trade.symbol}`);
+                // If balance is 0 but we thought we had tokens, maybe we already sold?
+                // Check if trade is old (>1 min) - if so, just close it locally
+                if (Date.now() - (trade.lastPriceChangeTime || 0) > 60000) {
+                    addLog(`Sell Failed: No balance for ${trade.symbol}. Assuming sold external/dust. Closing.`);
+                    setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
+                } else {
+                    addLog(`Sell Failed: No balance found for ${trade.symbol} (yet)`);
+                }
                 return;
             }
 
             const amountToSell = balance * (amountPercent / 100);
+
+            // Skip dust sells if not 100%
+            if (amountPercent < 100 && (amountToSell * trade.currentPrice) < 0.001) {
+                addLog(`Skipped dust sell for ${trade.symbol} (Value too low)`);
+                return;
+            }
+
             const priorityFee = Math.max(0.001, Math.min(0.005, (trade.amountSolPaid || 0.1) * 0.1));
-            const transactionBuffer = await getTradeTransaction({
-                publicKey: wallet.publicKey.toBase58(),
-                action: "sell",
-                mint,
-                amount: amountToSell,
-                denominatedInSol: "false",
-                slippage: 15,
-                priorityFee,
-                pool: "pump"
-            });
+
+            // Retry logic for transaction building
+            let transactionBuffer;
+            try {
+                transactionBuffer = await getTradeTransaction({
+                    publicKey: wallet.publicKey.toBase58(),
+                    action: "sell",
+                    mint,
+                    amount: amountToSell, // Sell actual token amount, not SOL value
+                    denominatedInSol: "false",
+                    slippage: 20, // Increased slippage for sells to ensure exit
+                    priorityFee,
+                    pool: "pump"
+                });
+            } catch (err: any) {
+                // Retry once with higher slippage if failed
+                console.warn("Sell tx build failed, retrying with higher slippage...");
+                transactionBuffer = await getTradeTransaction({
+                    publicKey: wallet.publicKey.toBase58(),
+                    action: "sell",
+                    mint,
+                    amount: amountToSell,
+                    denominatedInSol: "false",
+                    slippage: 50, // High slippage to force exit
+                    priorityFee: 0.005, // High priority fee
+                    pool: "pump"
+                });
+            }
 
             const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
             addLog(`Sell Tx Sent: ${signature.substring(0, 8)}...`);
-            toast.success(`Sell Tx Sent for ${trade.symbol}`, { description: `Tx: ${signature.substring(0, 8)}...` });
 
-            setActiveTrades(prev => prev.map(t => {
-                if (t.mint === mint) {
-                    return { ...t, status: "closed" };
-                }
-                return t;
-            }));
+            // Only close trade locally if 100% sell
+            if (amountPercent >= 99) {
+                setActiveTrades(prev => prev.map(t => {
+                    if (t.mint === mint) {
+                        return { ...t, status: "closed" };
+                    }
+                    return t;
+                }));
+            }
         } catch (error: any) {
             addLog(`Sell Error: ${error.message}`);
-            toast.error(`Sell Error: ${trade.symbol}`, { description: error.message });
+            // If error is "Account not found" or similar, it means we don't have the token
+            if (error.message?.includes("Account") || error.message?.includes("not found")) {
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
+            }
         }
     }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades]);
 

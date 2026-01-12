@@ -25,9 +25,9 @@ export default function Home() {
   const [config, setConfig] = useState<any>(() => {
     if (typeof window !== 'undefined') {
       const savedHelius = localStorage.getItem('helius_api_key') || '';
-      return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 20, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: savedHelius, maxConcurrentTrades: 5 };
+      return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 30, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: savedHelius, maxConcurrentTrades: 5 };
     }
-    return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 20, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: '', maxConcurrentTrades: 5 };
+    return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 30, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: '', maxConcurrentTrades: 5 };
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(0);
