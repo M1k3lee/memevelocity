@@ -82,6 +82,7 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                     <thead>
                         <tr className="text-xs text-gray-400 border-b border-[#222]">
                             <th className="p-2">Token</th>
+                            <th className="p-2">Invested</th>
                             <th className="p-2">Entry</th>
                             <th className="p-2">Current</th>
                             <th className="p-2">PnL</th>
@@ -113,6 +114,10 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                     <div className="text-[10px] font-mono text-gray-500">{trade.mint.substring(0, 6)}...</div>
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
+                                    {trade.amountSolPaid ? `${trade.amountSolPaid.toFixed(3)} SOL` :
+                                        (trade.amountTokens * trade.buyPrice > 0 ? `${(trade.amountTokens * trade.buyPrice).toFixed(3)} SOL` : "-")}
+                                </td>
+                                <td className="p-3 text-sm text-gray-300">
                                     {trade.buyPrice > 0 ? trade.buyPrice.toFixed(9) : "Pending"}
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
@@ -133,28 +138,31 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                 <td className="p-3">
                                     {(() => {
                                         // Calculate PnL in real-time as fallback
-                                        let displayPnl = trade.pnlPercent;
+                                        let displayPnlPercent = trade.pnlPercent;
+                                        let displayPnlSol = 0;
+
                                         if (trade.buyPrice > 0 && trade.currentPrice > 0) {
-                                            const calculatedPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-                                            // Use calculated PnL if stored PnL is 0 and we have valid prices
-                                            if (Math.abs(trade.pnlPercent) < 0.01 && Math.abs(calculatedPnl) > 0.01) {
-                                                displayPnl = calculatedPnl;
-                                            } else {
-                                                displayPnl = trade.pnlPercent;
-                                            }
-                                        } else if (trade.buyPrice === 0 && trade.currentPrice > 0) {
-                                            // Buy price not set yet, show as pending
+                                            displayPnlPercent = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
+                                            // Calculate SOL PnL: (Current Price - Buy Price) * Amount of Tokens
+                                            displayPnlSol = (trade.currentPrice - trade.buyPrice) * trade.amountTokens;
+                                        }
+
+                                        if (trade.buyPrice === 0 && trade.currentPrice > 0) {
                                             return <span className="text-gray-500 text-xs">Setting buy price...</span>;
                                         } else if (trade.currentPrice === 0) {
-                                            // Price not fetched yet
                                             return <span className="text-gray-500 text-xs">Updating price...</span>;
                                         }
 
                                         return (
-                                            <span className={`flex items-center gap-1 font-bold ${displayPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
-                                                {displayPnl >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                                                {displayPnl.toFixed(2)}%
-                                            </span>
+                                            <div className="flex flex-col">
+                                                <span className={`flex items-center gap-1 font-bold ${displayPnlPercent >= 0 ? "text-green-500" : "text-red-500"}`}>
+                                                    {displayPnlPercent >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                                                    {displayPnlPercent.toFixed(2)}%
+                                                </span>
+                                                <span className={`text-[10px] ${displayPnlSol >= 0 ? "text-green-400/70" : "text-red-400/70"}`}>
+                                                    {displayPnlSol >= 0 ? "+" : ""}{displayPnlSol.toFixed(4)} SOL
+                                                </span>
+                                            </div>
                                         );
                                     })()}
                                 </td>
