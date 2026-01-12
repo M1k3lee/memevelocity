@@ -162,8 +162,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             status: isFullSell ? "closed" : "open",
                             amountTokens: remainingTokens,
                             amountSolPaid: remainingSolPaid,
-                            currentPrice: sellPrice,
-                            pnlPercent: t.buyPrice > 0 ? ((sellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
+                            currentPrice: effectiveSellPrice,
+                            pnlPercent: t.buyPrice > 0 ? ((effectiveSellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
                         };
                     }
                     return t;
@@ -182,8 +182,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 // If balance is 0 but we thought we had tokens, maybe we already sold?
                 // Check if trade is old (>1 min) - if so, just close it locally
                 if (Date.now() - (trade.lastPriceChangeTime || 0) > 60000) {
-                    addLog(`Sell Failed: No balance for ${trade.symbol}. Assuming sold external/dust. Closing.`);
-                    setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
+                    addLog(`Sell Failed: No balance for ${trade.symbol}. Assuming sold external/rug. Closing as loss.`);
+                    setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                        ...t,
+                        status: "closed",
+                        currentPrice: 0,
+                        pnlPercent: -100
+                    } : t));
                 } else {
                     addLog(`Sell Failed: No balance found for ${trade.symbol} (yet)`);
                 }
