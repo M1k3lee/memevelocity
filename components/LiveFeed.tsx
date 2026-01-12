@@ -24,7 +24,7 @@ const TokenItem = memo((props: any) => {
     const { index, style, tokens } = props;
     const token = tokens[index];
     if (!token) return null;
-    
+
     const isSim = token.mint.startsWith('SIM');
     const pumpFunUrl = isSim ? null : `https://pump.fun/${token.mint}`;
 
@@ -166,15 +166,15 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                         if (data.method === "logsNotification") {
                             const logs = data.params.result.value.logs as string[];
                             const signature = data.params.result.value.signature;
-                        // Check for various instruction types that indicate token creation
-                        const createPatterns = ["Instruction: Create", "create", "Create", "initialize", "Initialize", "new_token", "NewToken"];
-                        const hasCreateInstruction = logs.some(log => 
-                            createPatterns.some(pattern => log.includes(pattern))
-                        );
-                        if (hasCreateInstruction) {
-                            console.log(`[LiveFeed] 🎯 Detected token creation: ${signature.substring(0, 16)}...`);
-                            handleNewTokenSignature(signature);
-                        }
+                            // Check for various instruction types that indicate token creation
+                            const createPatterns = ["Instruction: Create", "create", "Create", "initialize", "Initialize", "new_token", "NewToken"];
+                            const hasCreateInstruction = logs.some(log =>
+                                createPatterns.some(pattern => log.includes(pattern))
+                            );
+                            if (hasCreateInstruction) {
+                                console.log(`[LiveFeed] 🎯 Detected token creation: ${signature.substring(0, 16)}...`);
+                                handleNewTokenSignature(signature);
+                            }
                             return;
                         }
                     }
@@ -255,7 +255,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const updateTokens = (token: TokenData) => {
         setTokens(prev => {
             if (prev.some(t => t.mint === token.mint)) return prev;
-            return [token, ...prev].slice(0, 50);
+            return [token, ...prev].slice(0, 30);
         });
         onTokenDetectedRef.current(token);
     };
@@ -269,14 +269,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 const randomMint = "SIM" + Math.random().toString(36).substring(7).toUpperCase();
                 const symbols = ["SOL", "PUMP", "MOON", "APE", "SAFE", "DIAMOND", "ROCKET", "BULL", "GEM", "STAR"];
                 const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)] + Math.floor(Math.random() * 99);
-                
+
                 // More realistic distribution: 60% rugs, 30% mediocre, 10% good (better than 98.6% rugs in reality)
                 const rand = Math.random();
                 let isRug = false;
                 let devBuy = 0.1;
                 let name = "Garbage Coin";
                 let liquidity = 30;
-                
+
                 if (rand < 0.6) {
                     // 60% rugs - low dev buy, no commitment
                     isRug = true;
@@ -294,19 +294,19 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     name = ["Diamond Hook", "Moon Shot", "Rocket Fuel", "Gem Token", "Bull Run"][Math.floor(Math.random() * 5)];
                     liquidity = 30 + Math.random() * 20 + 5; // Good growth
                 }
-                
+
                 const mockToken: TokenData = {
-                    mint: randomMint, 
-                    traderPublicKey: "SIM", 
-                    txType: "create", 
+                    mint: randomMint,
+                    traderPublicKey: "SIM",
+                    txType: "create",
                     initialBuy: devBuy,
-                    bondingCurveKey: "SIM", 
-                    vTokensInBondingCurve: 1073000000, 
-                    vSolInBondingCurve: liquidity, 
+                    bondingCurveKey: "SIM",
+                    vTokensInBondingCurve: 1073000000,
+                    vSolInBondingCurve: liquidity,
                     marketCapSol: liquidity,
-                    name: name, 
-                    symbol: randomSymbol, 
-                    uri: "", 
+                    name: name,
+                    symbol: randomSymbol,
+                    uri: "",
                     timestamp: Date.now()
                 };
                 updateTokens(mockToken);
@@ -334,7 +334,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 </h2>
                 <div className="flex items-center gap-2">
                     {lastError && !isSimulating && <span className="text-[10px] text-red-400 bg-red-400/10 px-2 py-0.5 rounded">{lastError}</span>}
-                    
+
                     <div className={`flex items-center gap-2 px-2 py-1 rounded-full border ${status === "connected" ? "bg-green-500/10 border-green-500/20 text-green-500" : status === "simulating" ? "bg-blue-500/10 border-blue-500/20 text-blue-500" : status === "connecting" ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-500" : "bg-red-500/10 border-red-500/20 text-red-500"}`}>
                         <div className={`w-1.5 h-1.5 rounded-full ${status === "connected" ? "bg-green-500 animate-pulse" : status === "simulating" ? "bg-blue-500 animate-pulse" : status === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`}></div>
                         <span className="text-[10px] font-medium uppercase tracking-wider">{status}</span>
@@ -348,7 +348,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 </div>
             </div>
 
-            <div className="flex-1 pr-2 space-y-3 custom-scrollbar h-full">
+            <div className="flex-1 pr-2 space-y-3 custom-scrollbar overflow-y-auto min-h-0">
                 {tokens.length === 0 ? (
                     <div className="text-center text-gray-500 mt-20">
                         {status === "disconnected" ? <WifiOff className="mx-auto mb-2 opacity-20" size={48} /> : <div className="loading-spinner mx-auto mb-2" />}

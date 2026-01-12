@@ -43,14 +43,14 @@ export default function Home() {
         setConfig((prev: any) => ({ ...prev, heliusKey: '' }));
       }
     };
-    
+
     loadHeliusKey();
-    
+
     // Listen for custom event when key is updated in WalletManager (same tab)
     const handleHeliusKeyUpdate = () => {
       loadHeliusKey();
     };
-    
+
     // Listen for storage changes (when key is updated in another tab)
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'helius_api_key') {
@@ -58,7 +58,7 @@ export default function Home() {
         setConfig((prev: any) => ({ ...prev, heliusKey: newKey }));
       }
     };
-    
+
     window.addEventListener('heliusKeyUpdated', handleHeliusKeyUpdate);
     window.addEventListener('storage', handleStorageChange);
     return () => {
@@ -92,7 +92,7 @@ export default function Home() {
   const { activeTrades, buyToken, sellToken, syncTrades, recoverTrades, clearTrades, updateTrade, logs, addLog, clearLogs, setDemoMode, demoBalance, stats } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
   const [tradeHistory, setTradeHistory] = useState<Set<string>>(new Set());
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
-  const minTimeBetweenTrades = 2000; // 2 seconds minimum between trades
+  const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
 
   const handleWalletChange = (newWallet: any) => {
     setWallet(newWallet);
@@ -137,12 +137,12 @@ export default function Home() {
     // This catches obvious scams BEFORE expensive analysis
     const { detectRug } = await import('../utils/rugDetector');
     const rugDetection = detectRug(token, config.mode);
-    
+
     if (rugDetection.isRug) {
       addLog(`🚨 RUG DETECTED: ${token.symbol} - ${rugDetection.reason} (Confidence: ${rugDetection.confidence}%)`);
       return;
     }
-    
+
     // Log warnings but don't reject (for high-risk mode)
     if (rugDetection.warnings.length > 0) {
       rugDetection.warnings.forEach(warning => {
@@ -154,19 +154,19 @@ export default function Home() {
     // Use token data from WebSocket if available (avoids RPC call)
     const liquidity = token.vSolInBondingCurve || 30;
     const liquidityGrowth = liquidity - 30; // Initial liquidity is 30 SOL
-    
+
     // Reject tokens that have already crashed (negative liquidity growth > 5 SOL)
     if (liquidityGrowth < -5) {
       addLog(`🚨 Rejected ${token.symbol}: Liquidity draining (${liquidityGrowth.toFixed(2)} SOL) - likely rug`);
       return;
     }
-    
+
     // Reject tokens with very low liquidity (honeypot risk)
     if (liquidity < 1) {
       addLog(`🚨 Rejected ${token.symbol}: Liquidity too low (${liquidity.toFixed(2)} SOL) - honeypot risk`);
       return;
     }
-    
+
     // For demo mode with RPC issues, use token data from WebSocket directly
     // This allows trading even when RPC is rate-limited
     if (config.isDemo && token.vSolInBondingCurve && token.vTokensInBondingCurve) {
@@ -199,7 +199,7 @@ export default function Home() {
 
         // First buyer analysis (ultra-early entry)
         const firstSignal = await analyzeFirstBuyer(token, connection);
-        
+
         if (!firstSignal.shouldBuy || firstSignal.confidence < 60) {
           addLog(`🚀 First Reject: ${token.symbol} - ${firstSignal.reason} (Confidence: ${firstSignal.confidence}%)`);
           return;
@@ -260,7 +260,7 @@ export default function Home() {
 
         // Speed trading analysis (momentum-based)
         const speedSignal = await analyzeSpeedTrade(token, connection);
-        
+
         if (!speedSignal.shouldBuy || speedSignal.confidence < 50) {
           addLog(`⚡ Speed Reject: ${token.symbol} - ${speedSignal.reason} (Confidence: ${speedSignal.confidence}%)`);
           return;
@@ -300,39 +300,39 @@ export default function Home() {
       try {
         const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
         const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
-        
+
         // Calculate momentum (liquidity growth rate)
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0; // SOL per minute
-        
+
         // FAST TRACK: Very new tokens (<60s) with strong momentum
         // BUT: Must pass basic rug checks (liquidity, not crashed, etc.)
         if (age < 60 && momentum > 1.5 && liquidityGrowth > 2 && liquidityGrowth >= 0 && liquidity >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ NEW + MOMENTUM: Early momentum play (rug checks passed)`);
-          
+
           setTradeHistory(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
-          
+
           setLastTradeTime(Date.now());
-      await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
+          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
           return;
         }
-        
+
         // FAST TRACK: New tokens (<2 min) with very strong momentum (>3 SOL/min)
         // BUT: Must pass basic rug checks
         if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && liquidity >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ STRONG MOMENTUM: High buy activity detected (rug checks passed)`);
-          
+
           setTradeHistory(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
-          
+
           setLastTradeTime(Date.now());
-      await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
+          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
           return;
         }
       } catch (error: any) {
@@ -348,19 +348,19 @@ export default function Home() {
       const age = (Date.now() - token.timestamp) / 1000;
       const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
       const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
-      
+
       // 1. SNIPER TRAP CHECK: If token pumped too fast (>20 SOL in <30s), it's likely a bot trap
       if (age < 30 && liquidityGrowth > 20 && config.mode !== 'high' && config.mode !== 'first') {
-         addLog(`🚨 Sniper Trap Avoided: ${token.symbol} pumped +${liquidityGrowth.toFixed(2)} SOL in ${age.toFixed(1)}s. Too risky.`);
-         return;
+        addLog(`🚨 Sniper Trap Avoided: ${token.symbol} pumped +${liquidityGrowth.toFixed(2)} SOL in ${age.toFixed(1)}s. Too risky.`);
+        return;
       }
 
       // 2. DEAD TOKEN CHECK: If token is old (>2m) with no momentum, skip
       if (age > 120 && momentum < 0.1 && config.mode !== 'high') {
-         addLog(`💤 Dead Token: ${token.symbol} is ${Math.floor(age/60)}m old with 0 momentum. Skipping.`);
-         return;
+        addLog(`💤 Dead Token: ${token.symbol} is ${Math.floor(age / 60)}m old with 0 momentum. Skipping.`);
+        return;
       }
-      
+
       // 3. ORGANIC CONFIRMATION: For new tokens (<30s), wait for some activity (unless high risk mode)
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
         if (liquidityGrowth < 0.5) {
@@ -368,7 +368,7 @@ export default function Home() {
           return;
         }
       }
-      
+
       // Full enhanced analysis
       // NOTE: Demo mode uses REAL tokens, not simulated ones
       // Only skip analysis for SIM tokens in simulation mode (not demo mode)
@@ -408,20 +408,20 @@ export default function Home() {
       // Mode-based filtering with analysis scores
       // IMPORTANT: High-risk mode should still have MINIMUM quality standards
       // "High risk" means buying newer/smaller tokens, NOT buying obvious scams
-      
+
       // Base thresholds - High risk mode is more lenient on age/size, but still needs quality
       let minScore = config.mode === 'safe' ? 65 : config.mode === 'medium' || config.mode === 'custom' ? 50 : 40; // Increased from 30 to 40 for high-risk
       if (config.isDemo) {
         // Paper trading: Lower thresholds to allow more trades for testing
         minScore = config.mode === 'safe' ? 55 : config.mode === 'medium' || config.mode === 'custom' ? 40 : 30; // Increased from 25 to 30 for high-risk
       }
-      
+
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality (don't go below 25 in real mode, 20 in demo)
       if (config.mode === 'high' && age < 120 && momentum > 2) {
         minScore = config.isDemo ? 20 : 25; // Still maintain quality standards
       }
-      
+
       // If RPC is failing (analysis might be incomplete), be very lenient
       // Check if analysis has warnings about RPC issues
       const hasRpcIssues = analysis.warnings.some(w => w.includes('RPC') || w.includes('Access denied') || w.includes('rate limit') || w.includes('basic analysis'));
@@ -430,7 +430,7 @@ export default function Home() {
         minScore = Math.max(10, minScore - 20); // Lower by 20 points, minimum 10
         addLog(`⚠️ RPC issues detected - lowering score threshold to ${minScore} for ${token.symbol}`);
       }
-      
+
       if (analysis.score < minScore) {
         addLog(`🚫 Rejected: ${token.symbol} - Score: ${analysis.score}/100 (Need: ${minScore}) - ${analysis.riskLevel.toUpperCase()} risk`);
         addLog(`   Bonding Curve: ${analysis.bondingCurveProgress.toFixed(1)}% | Market Cap: ${analysis.marketCap.toFixed(1)} SOL`);
@@ -454,7 +454,7 @@ export default function Home() {
       addLog(`   👥 Holders: ${analysis.metrics.holderCount} | Deployer: ${analysis.metrics.deployerHoldings.toFixed(1)}% | Top 10: ${analysis.metrics.top10Concentration.toFixed(1)}%`);
       addLog(`   💰 Volume: ${analysis.metrics.volume24h.toFixed(1)} SOL | Buy Ratio: ${(analysis.metrics.buySellRatio * 100).toFixed(0)}%`);
       addLog(`   ⚡ Velocity: ${analysis.metrics.bondingCurveVelocity.toFixed(2)}%/min | Liquidity: ${analysis.metrics.liquidityDepth.toFixed(1)} SOL`);
-      
+
       if (analysis.strengths.length > 0) {
         analysis.strengths.forEach(s => addLog(`   ✓ ${s}`));
       }
@@ -468,7 +468,7 @@ export default function Home() {
       let positionSize = config.amount;
       const scoreMultiplier = Math.max(0.5, Math.min(2.0, (analysis.score / 50))); // 0.5x to 2.0x
       positionSize = config.amount * scoreMultiplier;
-      
+
       // Portfolio heat management: Reduce position size if too many trades open
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
       if (openTradesCount >= 3) {
@@ -476,11 +476,11 @@ export default function Home() {
       } else if (openTradesCount >= 2) {
         positionSize *= 0.85; // Reduce by 15% if 2 trades open
       }
-      
+
       // Cap position size for safety
       positionSize = Math.min(positionSize, config.amount * 2); // Never more than 2x base
       positionSize = Math.max(positionSize, config.amount * 0.3); // Never less than 0.3x base
-      
+
       if (Math.abs(positionSize - config.amount) > 0.001) {
         addLog(`💰 Position Size: ${positionSize.toFixed(4)} SOL (${scoreMultiplier > 1 ? '+' : ''}${((scoreMultiplier - 1) * 100).toFixed(0)}% based on score ${analysis.score})`);
       }
@@ -517,7 +517,7 @@ export default function Home() {
           initialPrice = undefined;
         }
         setLastTradeTime(Date.now());
-      await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
+        await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
       }
     }
   }, [config.isRunning, config.isDemo, config.mode, config.amount, config.heliusKey, wallet, activeTrades, tradeHistory, buyToken, realBalance, connection, addLog]);
@@ -529,7 +529,7 @@ export default function Home() {
     activeTrades.forEach(trade => {
       // Only process OPEN trades
       if (trade.status !== "open") return;
-      
+
       // CRITICAL FIX: Don't skip if buyPrice is 0 - wait for it to be set
       // The price polling will set buyPrice on first update
       // Only skip if we have a currentPrice but no buyPrice after reasonable time
@@ -566,13 +566,13 @@ export default function Home() {
       if (trade.buyTime && exitStrategy.maxHoldTime < Infinity) {
         const holdTime = (Date.now() - trade.buyTime) / 1000; // seconds
         const minHoldTime = exitStrategy.minHoldTime || 0;
-        
+
         // Check minimum hold time (for first buyer mode)
         if (holdTime < minHoldTime) {
           // Don't exit yet - still in minimum hold period
           return;
         }
-        
+
         // Time-based exit after max hold time
         if (holdTime >= exitStrategy.maxHoldTime) {
           addLog(`⏰ TIME EXIT: ${trade.symbol} held for ${Math.floor(holdTime)}s (max: ${exitStrategy.maxHoldTime}s). Selling...`);
@@ -585,7 +585,7 @@ export default function Home() {
       if (exitStrategy.momentumExit && trade.buyTime) {
         const holdTime = (Date.now() - trade.buyTime) / 1000;
         const minHoldTime = exitStrategy.minHoldTime || 0;
-        
+
         // Only check momentum after minimum hold time
         if (holdTime >= minHoldTime && trade.pnlPercent > 5) {
           // If we're in profit and price is rising, consider early exit
@@ -599,27 +599,27 @@ export default function Home() {
           }
         }
       }
-      
+
       if (config.mode === 'high' && trade.buyTime) {
         const holdTime = (Date.now() - trade.buyTime) / 1000;
         if (holdTime < 10) {
           return;
         }
       }
-      
+
       // Profit Protection: If we're in profit but price starts dropping, exit quickly
       // This prevents giving back profits on meme tokens
       if (trade.buyPrice > 0 && trade.currentPrice > 0 && trade.highestPrice) {
         const currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
         const peakPnl = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
-        
+
         // If we were up 10%+ but now down to 5% or less, exit to protect profits
         if (peakPnl >= 10 && currentPnl <= 5 && currentPnl > 0) {
           addLog(`💰 PROFIT PROTECTION: ${trade.symbol} dropped from ${peakPnl.toFixed(1)}% to ${currentPnl.toFixed(1)}%. Securing profits...`);
           sellToken(trade.mint, 100);
           return;
         }
-        
+
         // If we were up 20%+ but now down to 10% or less, exit immediately
         if (peakPnl >= 20 && currentPnl <= 10 && currentPnl > 0) {
           addLog(`💰 PROFIT PROTECTION: ${trade.symbol} dropped from ${peakPnl.toFixed(1)}% to ${currentPnl.toFixed(1)}%. Exiting...`);
@@ -633,7 +633,7 @@ export default function Home() {
       if (trade.highestPrice && trade.highestPrice > trade.buyPrice && trade.buyPrice > 0) {
         const peakGain = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
         const currentDropFromPeak = ((trade.highestPrice - trade.currentPrice) / trade.highestPrice) * 100;
-        
+
         // Adaptive trailing stop: Tighter stops as profit increases
         let trailingStopPercent = 15; // Default 15% from peak
         if (peakGain >= 50) {
@@ -643,7 +643,7 @@ export default function Home() {
         } else if (peakGain >= 15) {
           trailingStopPercent = 12; // Slightly tighter at 15%+ profit
         }
-        
+
         // If we've gained at least 10% and now dropped X% from peak, sell
         if (peakGain >= 10 && currentDropFromPeak >= trailingStopPercent) {
           addLog(`📉 ADAPTIVE TRAILING STOP: ${trade.symbol} dropped ${currentDropFromPeak.toFixed(1)}% from peak (${peakGain.toFixed(1)}% gain, ${trailingStopPercent}% stop). Selling...`);
@@ -651,13 +651,13 @@ export default function Home() {
           return;
         }
       }
-      
+
       // Trailing Stop (for speed trading - explicit setting)
       if (exitStrategy.trailingStop && trade.highestPrice && trade.highestPrice > trade.buyPrice) {
         const peakGain = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
         const trailingStopPercent = exitStrategy.trailingStopPercent || 10; // Default 10% from peak
         const currentDropFromPeak = ((trade.highestPrice - trade.currentPrice) / trade.highestPrice) * 100;
-        
+
         // If we've gained at least 20% and now dropped X% from peak, sell
         if (peakGain >= 20 && currentDropFromPeak >= trailingStopPercent) {
           addLog(`📉 TRAILING STOP: ${trade.symbol} dropped ${currentDropFromPeak.toFixed(1)}% from peak (${peakGain.toFixed(1)}% gain). Selling...`);
@@ -678,11 +678,11 @@ export default function Home() {
           return;
         }
       }
-      
+
       // Fallback: Use stored PnL if calculation failed (check both calculated and stored)
-      const pnlToCheck = trade.pnlPercent !== undefined ? trade.pnlPercent : 
-                        (trade.buyPrice > 0 && trade.currentPrice > 0 ? 
-                         ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0);
+      const pnlToCheck = trade.pnlPercent !== undefined ? trade.pnlPercent :
+        (trade.buyPrice > 0 && trade.currentPrice > 0 ?
+          ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0);
       if (pnlToCheck <= -Math.abs(stopLoss) && trade.buyPrice > 0) {
         addLog(`🛑 STOP LOSS Triggered for ${trade.symbol} at ${pnlToCheck.toFixed(2)}% (threshold: -${stopLoss}%)`);
         sellToken(trade.mint, 100);
@@ -692,19 +692,19 @@ export default function Home() {
       // Staged Profit Taking (Research: 50% at 2x, 30% at 5x, hold 20%)
       const takeProfit = exitStrategy.takeProfit || config.takeProfit;
       const takeProfit2 = exitStrategy.takeProfit2;
-      
+
       // Initialize partial sells tracking if not exists
       if (!trade.partialSells) {
         updateTrade(trade.mint, { partialSells: {} });
         return; // Wait for next cycle
       }
-      
+
       // Calculate current PnL to ensure accuracy
       let currentPnl = trade.pnlPercent;
       if (trade.buyPrice > 0 && trade.currentPrice > 0) {
         currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
       }
-      
+
       // First profit target (2x = 100%) - Sell 50%
       if (currentPnl >= takeProfit && !trade.partialSells[50]) {
         addLog(`🎯 STAGED TP1: ${trade.symbol} hit ${currentPnl.toFixed(1)}% (target: ${takeProfit}%). Selling 50%...`);
@@ -713,7 +713,7 @@ export default function Home() {
         updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 50: true } });
         return;
       }
-      
+
       // Second profit target (5x = 400%) - Sell 30% more (total 80% sold, 20% held)
       if (takeProfit2 && currentPnl >= takeProfit2 && !trade.partialSells[80]) {
         addLog(`🚀 STAGED TP2: ${trade.symbol} hit ${currentPnl.toFixed(1)}% (target: ${takeProfit2}%). Selling 30% more (20% held for lottery)...`);
@@ -722,27 +722,27 @@ export default function Home() {
         updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 80: true } });
         return;
       }
-      
+
       // Standard take profit (if no staged exits configured)
       if (!takeProfit2 && currentPnl >= takeProfit) {
         addLog(`🎯 TAKE PROFIT Triggered for ${trade.symbol} at ${currentPnl.toFixed(2)}%`);
         sellToken(trade.mint, 100);
         return;
       }
-      
+
       // Paper Trading: Quick exit on small profits to test system more frequently
       // Exit at 5% profit if held for more than 30 seconds (for testing)
       if (config.isDemo && trade.buyTime && trade.buyPrice > 0 && trade.currentPrice > 0) {
         const holdTime = (Date.now() - trade.buyTime) / 1000;
         const quickProfit = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-        
+
         // If we're up 5%+ and held for 30+ seconds, take profit (paper trading optimization)
         if (quickProfit >= 5 && holdTime >= 30 && currentPnl < takeProfit) {
           addLog(`📊 PAPER TRADING QUICK EXIT: ${trade.symbol} up ${quickProfit.toFixed(1)}% after ${Math.floor(holdTime)}s. Taking profit...`);
           sellToken(trade.mint, 100);
           return;
         }
-        
+
         // Exit stale positions in paper trading (no movement for 2 minutes)
         if (holdTime >= 120 && Math.abs(currentPnl) < 2) {
           addLog(`⏱️ STALE POSITION: ${trade.symbol} no movement after ${Math.floor(holdTime)}s. Exiting...`);

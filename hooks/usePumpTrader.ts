@@ -30,6 +30,7 @@ export interface ActiveTrade {
     };
     partialSells?: { [percent: number]: boolean }; // Track staged sells (50%, 30%, etc.)
     originalAmount?: number; // Track original position size for partial sells
+    lastLiquidity?: number; // Track liquidity for rug detection
 }
 
 export const usePumpTrader = (wallet: Keypair | null, connection: Connection, heliusKey?: string) => {
@@ -206,17 +207,17 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             if (buyPrice === 0 || buyPrice < 0.000000001) {
                                 buyPrice = price;
                             }
-                            
+
                             const pnl = buyPrice > 0 ? ((price - buyPrice) / buyPrice) * 100 : 0;
-                            
+
                             // Track highest price for trailing stop
                             const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, price) : price;
-                            
-                            return { 
-                                ...trade, 
+
+                            return {
+                                ...trade,
                                 buyPrice, // Update buyPrice if it was invalid
-                                currentPrice: price, 
-                                pnlPercent: pnl, 
+                                currentPrice: price,
+                                pnlPercent: pnl,
                                 highestPrice,
                                 lastPriceUpdate: Date.now(),
                                 lastPriceChangeTime: price !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime
@@ -236,16 +237,17 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     // Poll price for active trades - faster for first buyer mode and demo mode
     useEffect(() => {
         // Check if any trades are in first buyer mode (very short hold times)
-        const hasFirstBuyerTrades = activeTrades.some(t => 
-            t.status === "open" && 
-            t.exitStrategy && 
+        const hasFirstBuyerTrades = activeTrades.some(t =>
+            t.status === "open" &&
+            t.exitStrategy &&
             t.exitStrategy.maxHoldTime < 10
         );
-        
+
         // Use faster polling for demo mode (paper trading) and first buyer mode
         // Demo mode needs fast updates to catch quick price movements
-        const pollInterval = hasFirstBuyerTrades ? 2000 : (isDemo ? 3000 : 12000);
-        
+        // FIX: Reduced interval from 12000ms to 1000ms to catch "quick x3/x5" pumps
+        const pollInterval = hasFirstBuyerTrades ? 1000 : (isDemo ? 1000 : 1500);
+
         // Immediate price update on mount/change (don't wait for interval)
         const updatePrices = async () => {
             const openTrades = activeTrades.filter(t => t.status === "open");
@@ -253,262 +255,117 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const tradesToPoll = (hasFirstBuyerTrades || isDemo) ? openTrades : openTrades.slice(0, 10);
             if (tradesToPoll.length === 0) return;
 
-            for (const trade of tradesToPoll) {
-                try {
-                    let price = 0;
+            // PARALLEL EXECUTION: Fix for "hanging" app
+            // Instead of awaiting each trade sequentially, we process them in parallel batches
+            // This prevents UI blocking and increases trade reaction speed significantly
+            const BATCH_SIZE = 5;
+            const updates: Map<string, Partial<ActiveTrade>> = new Map();
 
-                    // DEMO MODE: Always use REAL prices from blockchain (even for demo trades)
-                    // Only use simulated prices for SIM tokens when NOT in demo mode (simulation mode)
-                    if (trade.mint.startsWith('SIM') && !isDemo) {
-                        // Simulate realistic price movement (only for simulation mode, not demo mode)
-                        // Good tokens tend to go up, rugs go down
-                        const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug") || 
-                                     trade.symbol.includes("Scam") || trade.symbol.includes("Fake");
-                        
-                        // Ensure we have a valid starting price
-                        const basePrice = trade.currentPrice > 0 ? trade.currentPrice : (trade.buyPrice > 0 ? trade.buyPrice : 0.000001);
-                        
-                        // Calculate time since buy to simulate realistic price action
-                        const timeSinceBuy = trade.buyTime ? (Date.now() - trade.buyTime) / 1000 : 0; // seconds
-                        const minutesSinceBuy = timeSinceBuy / 60;
-                        
-                        if (isRug) {
-                            // Rugs: High volatility, strong downward trend
-                            // Early: might pump briefly, then crash
-                            const volatility = 0.12; // 12% max swing
-                            let drift = -0.02; // Strong downward bias
-                            
-                            // Early pump phase (first 30 seconds) - might go up briefly
-                            if (timeSinceBuy < 30 && Math.random() > 0.7) {
-                                drift = 0.05; // Brief pump
-                            }
-                            
-                            const change = 1 + (Math.random() * volatility * 2 - volatility) + drift;
+            // Process trades in concurrent batches to avoid rate limits but stay fast
+            for (let i = 0; i < tradesToPoll.length; i += BATCH_SIZE) {
+                const batch = tradesToPoll.slice(i, i + BATCH_SIZE);
+
+                await Promise.all(batch.map(async (trade) => {
+                    try {
+                        let price = 0;
+                        let currentLiquidity = 0;
+
+                        // DEMO MODE: Always use REAL prices from blockchain (even for demo trades)
+                        if (trade.mint.startsWith('SIM') && !isDemo) {
+                            // Simplify SIM logic for performance/reliability
+                            const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug");
+                            const basePrice = trade.currentPrice > 0 ? trade.currentPrice : (trade.buyPrice > 0 ? trade.buyPrice : 0.000001);
+                            // Random walk with drift
+                            const change = 1 + (Math.random() * 0.1 - 0.05) + (isRug ? -0.01 : 0.005);
                             price = Math.max(0.000001, basePrice * change);
                         } else {
-                            // Good tokens: Moderate volatility, upward trend
-                            // Early momentum phase: stronger upward drift
-                            const volatility = 0.08; // 8% max swing
-                            let drift = 0.01; // Base upward bias
-                            
-                            // Early momentum (first 2 minutes) - stronger pump
-                            if (minutesSinceBuy < 2) {
-                                drift = 0.03 + (Math.random() * 0.05); // 3-8% upward drift
-                            } else if (minutesSinceBuy < 5) {
-                                drift = 0.015 + (Math.random() * 0.02); // 1.5-3.5% upward drift
-                            }
-                            
-                            const change = 1 + (Math.random() * volatility * 2 - volatility) + drift;
-                            price = Math.max(0.000001, basePrice * change);
-                        }
-                    } else {
-                        // REAL MODE or DEMO MODE: Always fetch real prices from blockchain
-                        // Demo mode tracks real tokens with real prices, just doesn't spend real SOL
-                        try {
-                            price = await getPumpPrice(trade.mint, connection);
-                            if (price === 0) {
-                                // Price fetch returned 0 - might be an error or token rugged
-                                // For demo mode, if RPC fails, keep using current price (don't update to 0)
-                                if (isDemo && trade.currentPrice > 0) {
-                                    // Keep current price if RPC fails - WebSocket will update it
+                            // REAL PRICE FETCHING (Parallelized)
+                            try {
+                                // Try to get full pump data (liquidity + price)
+                                const pumpData = await getPumpData(trade.mint, connection);
+                                if (pumpData) {
+                                    currentLiquidity = pumpData.vSolInBondingCurve;
+                                    if (pumpData.vTokensInBondingCurve > 0 && pumpData.vSolInBondingCurve > 0) {
+                                        price = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1000000;
+                                    }
+                                }
+
+                                // Fallback if calculation failed
+                                if (price === 0) {
+                                    const fetchedPrice = await getPumpPrice(trade.mint, connection);
+                                    if (fetchedPrice > 0) price = fetchedPrice;
+                                }
+
+                                // If RPC fails, keep old price in demo mode to prevent bad exits
+                                if (price === 0 && isDemo && trade.currentPrice > 0) {
                                     price = trade.currentPrice;
-                                    console.warn(`[Price Poll] ${trade.symbol}: RPC returned 0, keeping current price ${price.toFixed(9)}`);
-                                } else {
-                                    console.warn(`[Price Poll] ${trade.symbol}: getPumpPrice returned 0`);
                                 }
-                            }
-                        } catch (error: any) {
-                            console.error(`[Price Poll] Error fetching price for ${trade.symbol}:`, error.message);
-                            // For demo mode, if RPC fails, keep using current price
-                            if (isDemo && trade.currentPrice > 0) {
-                                price = trade.currentPrice;
-                            } else {
-                                price = 0; // Set to 0 on error
+                            } catch (error) {
+                                // Silent fail, keep old price
+                                if (isDemo && trade.currentPrice > 0) price = trade.currentPrice;
                             }
                         }
-                    }
 
-                    // Use current price if RPC returned 0 but we have a valid current price (for demo mode)
-                    const priceToUse = price > 0 ? price : (isDemo && trade.currentPrice > 0 ? trade.currentPrice : price);
-                    
-                    if (priceToUse > 0) {
-                        // Fetch current liquidity to detect drains (rug pull indicator)
-                        let currentLiquidity = 0;
-                        try {
-                            const pumpData = await getPumpData(trade.mint, connection);
-                            if (pumpData) {
-                                currentLiquidity = pumpData.vSolInBondingCurve;
+                        const priceToUse = price > 0 ? price : (trade.currentPrice > 0 ? trade.currentPrice : 0);
+
+                        if (priceToUse > 0) {
+                            // Calculate updates locally (don't set state yet)
+                            let buyPrice = trade.buyPrice;
+                            if (buyPrice === 0 || buyPrice < 0.000000001) {
+                                buyPrice = priceToUse;
                             }
-                        } catch (e) {
-                            // Ignore errors, continue with price update
-                        }
-                        
-                        setActiveTrades(prev => prev.map(t => {
-                            if (t.mint === trade.mint && t.status === "open") {
-                                // CRITICAL FIX: If buyPrice is 0 or invalid, use current price as buyPrice
-                                // This ensures PnL calculation works even if initial price fetch failed
-                                let buyPrice = t.buyPrice;
-                                if (buyPrice === 0 || buyPrice < 0.000000001) {
-                                    // If buyPrice is invalid, set it to current price (first valid price we get)
-                                    buyPrice = priceToUse;
-                                    addLog(`[${trade.symbol}] Setting buyPrice to ${priceToUse.toFixed(9)} (was invalid)`);
-                                }
-                                
-                                // Calculate PnL with the price we're using
-                                const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
-                                
-                                // LIQUIDITY DRAIN DETECTION: Exit immediately if liquidity drops significantly
-                                // This is a critical rug pull indicator
-                                if (currentLiquidity > 0 && t.lastPriceUpdate) {
-                                    // Try to get previous liquidity from trade metadata or estimate
-                                    const previousLiquidity = (t as any).lastLiquidity || currentLiquidity;
-                                    const liquidityDrop = previousLiquidity > 0 ? ((previousLiquidity - currentLiquidity) / previousLiquidity) * 100 : 0;
-                                    
-                                    // If liquidity dropped by more than 20%, it's likely a rug - EXIT IMMEDIATELY
-                                    if (liquidityDrop > 20 && previousLiquidity > 5) {
-                                        addLog(`🚨 LIQUIDITY DRAIN DETECTED: ${trade.symbol} liquidity dropped ${liquidityDrop.toFixed(1)}% (${previousLiquidity.toFixed(2)} → ${currentLiquidity.toFixed(2)} SOL). RUG PULL! Exiting...`);
-                                        toast.error(`RUG PULL DETECTED: ${trade.symbol}`, { description: `Liquidity dropped ${liquidityDrop.toFixed(1)}%. Selling!` });
-                                        // Exit immediately - don't wait for next cycle
-                                        setTimeout(() => {
-                                            sellToken(trade.mint, 100);
-                                        }, 100);
-                                        return { ...t, status: "selling" as const };
-                                    }
-                                    
-                                    // Store current liquidity for next check
-                                    (t as any).lastLiquidity = currentLiquidity;
-                                }
-                                
-                                // Calculate PnL - ensure we have valid buyPrice (use pnl we calculated above)
-                                const calculatedPnl = pnl;
 
-                                // Define stop loss threshold (negative value)
-                                const stopLossThreshold = -(t.exitStrategy?.stopLoss || 10);
-                                
-                                // Track highest price for trailing stop
-                                const highestPrice = t.highestPrice ? Math.max(t.highestPrice, priceToUse) : priceToUse;
+                            const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
+                            const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
 
-                                // === SMART EXIT STRATEGY ===
-                                
-                                // 1. STAGED SELLS (Secure Profits)
-                                // If PnL hits 100% (2x), sell 50% to get initial investment back (risk-free)
-                                if (calculatedPnl >= 100 && !(t.partialSells && t.partialSells[100])) {
-                                    const percentToSell = 50;
-                                    addLog(`💰 2X TARGET HIT: ${trade.symbol} is up ${calculatedPnl.toFixed(0)}%. Selling ${percentToSell}% to secure principal.`);
-                                    toast.success(`2X HIT: ${trade.symbol}`, { description: "Selling 50% to risk-free the trade" });
-                                    
-                                    // Execute partial sell
-                                    sellToken(trade.mint, percentToSell);
-                                    
-                                    // Mark as partially sold so we don't sell again for this target
-                                    return {
-                                        ...t,
-                                        partialSells: { ...(t.partialSells || {}), 100: true }
-                                    };
+                            // Check liquidity drain (Rug Pull Detector)
+                            if (currentLiquidity > 0 && trade.lastPriceUpdate) {
+                                const prevLiq = (trade as any).lastLiquidity || currentLiquidity;
+                                // >20% drop is a rug
+                                if (prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
+                                    // Rug pull detected - exit immediately
+                                    updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
+                                    sellToken(trade.mint, 100);
+                                    addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
+                                    return;
                                 }
-                                
-                                // 2. TRAILING STOP LOSS (Protect Gains)
-                                // Dynamic trailing stop based on how high it has gone
-                                let dynamicStopLoss = stopLossThreshold;
-                                let trailingStopReason = "Stop Loss";
-                                
-                                if (highestPrice > buyPrice) {
-                                    const highestPnl = ((highestPrice - buyPrice) / buyPrice) * 100;
-                                    
-                                    // Tiered Trailing Stop
-                                    if (highestPnl > 200) {
-                                        // If > 3x, trail by 20%
-                                        const trailPrice = highestPrice * 0.8;
-                                        const trailPnl = ((trailPrice - buyPrice) / buyPrice) * 100;
-                                        dynamicStopLoss = Math.max(stopLossThreshold, trailPnl);
-                                        trailingStopReason = "Trailing Stop (Tier 3)";
-                                    } else if (highestPnl > 100) {
-                                        // If > 2x, trail by 15%
-                                        const trailPrice = highestPrice * 0.85;
-                                        const trailPnl = ((trailPrice - buyPrice) / buyPrice) * 100;
-                                        dynamicStopLoss = Math.max(stopLossThreshold, trailPnl);
-                                        trailingStopReason = "Trailing Stop (Tier 2)";
-                                    } else if (highestPnl > 50) {
-                                        // If > 1.5x, trail by 10%
-                                        const trailPrice = highestPrice * 0.9;
-                                        const trailPnl = ((trailPrice - buyPrice) / buyPrice) * 100;
-                                        dynamicStopLoss = Math.max(stopLossThreshold, trailPnl);
-                                        trailingStopReason = "Trailing Stop (Tier 1)";
-                                    }
-                                }
-
-                                // CRITICAL: If PnL drops below dynamic stop loss threshold, exit immediately
-                                if (calculatedPnl <= dynamicStopLoss && buyPrice > 0) {
-                                    console.warn(`[Price Poll] ${trade.symbol}: PnL ${calculatedPnl.toFixed(2)}% hit ${trailingStopReason} at ${dynamicStopLoss.toFixed(2)}%`);
-                                    addLog(`🛑 ${trade.symbol}: ${trailingStopReason} triggered at ${calculatedPnl.toFixed(2)}%`);
-                                    toast.warning(`${trailingStopReason}: ${trade.symbol}`, { description: `Secured PnL: ${calculatedPnl.toFixed(2)}%` });
-                                    
-                                    // Exit immediately - don't wait for next cycle
-                                    setTimeout(() => {
-                                        sellToken(trade.mint, 100);
-                                    }, 100);
-                                    
-                                    return { ...t, status: "selling" as const };
-                                }
-                                
-                                // Safety check: If price dropped to near zero, it's likely a rug
-                                // Still update the price so we can see the -100% PnL and trigger stop loss
-                                if (priceToUse < buyPrice * 0.0001 && buyPrice > 0) {
-                                    // Price dropped by more than 99.99% - likely a rug
-                                    // Update price anyway so stop loss triggers, but log it
-                                    console.warn(`[Price Poll] ${trade.symbol}: Price dropped 99.99%+ (${buyPrice.toFixed(9)} → ${priceToUse.toFixed(9)}) - likely rug`);
-                                    addLog(`🚨 ${trade.symbol}: Price crashed 99.99%+ - likely rug pull`);
-                                    // If not already triggered above, exit immediately (rug pull = instant -100%)
-                                    if (calculatedPnl > stopLossThreshold) {
-                                        setTimeout(() => {
-                                            sellToken(trade.mint, 100);
-                                        }, 100);
-                                    }
-                                }
-                                
-                                // Debug logging for price updates (only log if price changed significantly)
-                                const priceChange = t.currentPrice > 0 ? ((priceToUse - t.currentPrice) / t.currentPrice) * 100 : 0;
-                                if (Math.abs(priceChange) > 1 || t.currentPrice === 0) {
-                                    console.log(`[Price Update] ${trade.symbol}: ${t.currentPrice.toFixed(9)} → ${priceToUse.toFixed(9)} (${calculatedPnl.toFixed(2)}% PnL)`);
-                                }
-
-                                return {
-                                    ...t,
-                                    buyPrice, // Always use valid buyPrice
-                                    currentPrice: priceToUse,
-                                    pnlPercent: calculatedPnl,
-                                    highestPrice,
-
-                                    lastPriceUpdate: Date.now(),
-                                    lastPriceChangeTime: priceToUse !== t.currentPrice ? Date.now() : t.lastPriceChangeTime,
-                                    lastLiquidity: currentLiquidity // Store for drain detection
-                                };
                             }
-                            return t;
-                        }));
 
-                        // Check for stale tokens (No price change for 3 minutes)
-                        const staleThreshold = 3 * 60 * 1000;
-                        if (!isDemo && trade.lastPriceChangeTime && (Date.now() - trade.lastPriceChangeTime > staleThreshold)) {
-                            addLog(`Stale Token: No movement on ${trade.symbol} for 3 mins. Selling...`);
-                            sellToken(trade.mint, 100);
+                            // Prepare update object
+                            const update: any = {
+                                buyPrice,
+                                currentPrice: priceToUse,
+                                pnlPercent: pnl,
+                                highestPrice,
+                                lastPriceUpdate: Date.now(),
+                                lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
+                                lastLiquidity: currentLiquidity > 0 ? currentLiquidity : (trade as any).lastLiquidity
+                            };
+
+                            updates.set(trade.mint, update);
                         }
-                    } else if (price === 0) {
-                        // Price fetch returned 0 - log for debugging
-                        console.warn(`[Price Poll] ${trade.symbol}: Price is 0, skipping update. buyPrice: ${trade.buyPrice}, currentPrice: ${trade.currentPrice}`);
+                    } catch (e) {
+                        // Ignore individual trade errors to keep the batch moving
                     }
-                } catch (e: any) {
-                    console.error(`[Price Poll] Error for ${trade.symbol}:`, e.message);
-                    if (e.message?.includes('429')) {
-                        console.warn("Helius Rate Limit Hit during polling. Slowing down...");
+                }));
+            }
+
+            // Apply ALL updates in ONE state change (Batching) to prevent re-renders
+            if (updates.size > 0) {
+                setActiveTrades(prev => prev.map(t => {
+                    if (updates.has(t.mint)) {
+                        const update = updates.get(t.mint);
+                        // Merge update
+                        return { ...t, ...update };
                     }
-                }
+                    return t;
+                }));
             }
         };
-        
+
         // Run immediately on mount/change
         updatePrices();
-        
+
         // Then run on interval
         const interval = setInterval(updatePrices, pollInterval);
 
@@ -547,13 +404,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 addLog("[DEMO] Insufficient funds for trade.");
                 return;
             }
-            
+
             // Demo mode: Stop trading if balance gets too low (prevent burning through all demo SOL)
             if (demoBalance < amountSol * 2) {
                 addLog("[DEMO] ⚠️ Low demo balance - stopping to prevent total loss. Reset demo balance to continue.");
                 return;
             }
-            
+
             setDemoBalance(prev => prev - amountSol);
 
             // DEMO MODE: Use REAL token prices from blockchain
@@ -590,7 +447,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
-            
+
             // CRITICAL: Immediately fetch real price to ensure buyPrice is accurate
             // This prevents issues where buyPrice is 0 or placeholder
             // Also fetch price immediately and then again after a short delay to ensure it's current
@@ -603,9 +460,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                 const updatedBuyPrice = t.buyPrice === 0 || t.buyPrice < 0.000000001 ? realPrice : t.buyPrice;
                                 const updatedPnl = updatedBuyPrice > 0 ? ((realPrice - updatedBuyPrice) / updatedBuyPrice) * 100 : 0;
                                 addLog(`[DEMO] ${symbol} price update: buyPrice=${updatedBuyPrice.toFixed(9)}, current=${realPrice.toFixed(9)}, PnL=${updatedPnl.toFixed(2)}%`);
-                                return { 
-                                    ...t, 
-                                    buyPrice: updatedBuyPrice, 
+                                return {
+                                    ...t,
+                                    buyPrice: updatedBuyPrice,
                                     currentPrice: realPrice,
                                     pnlPercent: updatedPnl
                                 };
@@ -620,7 +477,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     addLog(`[DEMO] ${symbol} price fetch error: ${e.message}`);
                 }
             }, 1000); // 1 second delay to ensure trade is in state
-            
+
             // Also fetch again after 3 seconds to ensure we have the latest price
             setTimeout(async () => {
                 try {
@@ -630,9 +487,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             if (t.mint === mint && t.status === "open" && (t.buyPrice === 0 || t.buyPrice < 0.000000001)) {
                                 const updatedPnl = realPrice > 0 ? ((realPrice - realPrice) / realPrice) * 100 : 0;
                                 addLog(`[DEMO] ${symbol} second price update: ${realPrice.toFixed(9)} SOL`);
-                                return { 
-                                    ...t, 
-                                    buyPrice: realPrice, 
+                                return {
+                                    ...t,
+                                    buyPrice: realPrice,
                                     currentPrice: realPrice,
                                     pnlPercent: updatedPnl
                                 };
@@ -644,7 +501,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     // Silent fail on second attempt
                 }
             }, 3000);
-            
+
             addLog(`[DEMO] Paper trade placed for ${symbol} at ${buyPrice > 0.000001 ? buyPrice.toFixed(9) : 'market'} SOL (tracking real price)`);
             toast.success(`[DEMO] Bought ${symbol}`, { description: `Amount: ${amountSol} SOL` });
             return;
@@ -810,7 +667,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     // Helper to update a trade's properties (for staged profit taking, etc.)
     const updateTrade = (mint: string, updates: Partial<ActiveTrade>) => {
-        setActiveTrades(prev => prev.map(t => 
+        setActiveTrades(prev => prev.map(t =>
             t.mint === mint ? { ...t, ...updates } : t
         ));
     };
