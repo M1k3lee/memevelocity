@@ -67,7 +67,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
     useEffect(() => {
         // Get Helius key from localStorage (managed in WalletManager)
         const heliusKey = localStorage.getItem('helius_api_key') || '';
-        
+
         onConfigChange({
             amount,
             takeProfit,
@@ -88,7 +88,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.01);
             setTakeProfit(20);
             setStopLoss(10);
-            setMaxConcurrentTrades(1); // Conservative: one at a time
+            // setMaxConcurrentTrades(1); // Decoupled: User sets this manually
             setAdvancedConfig({
                 minLiquidity: 10,
                 maxLiquidity: 1000,
@@ -107,7 +107,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.02);
             setTakeProfit(50);
             setStopLoss(15);
-            setMaxConcurrentTrades(2); // Moderate: 2 concurrent trades
+            // setMaxConcurrentTrades(2); 
             setAdvancedConfig({
                 minLiquidity: 5,
                 maxLiquidity: 2000,
@@ -126,7 +126,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.03);
             setTakeProfit(100);
             setStopLoss(30);
-            setMaxConcurrentTrades(3); // Aggressive: 3 concurrent trades
+            // setMaxConcurrentTrades(3); 
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 5000,
@@ -145,7 +145,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.01); // Smaller positions for quick exits
             setTakeProfit(50); // Will be overridden by speed trader
             setStopLoss(10); // Tight stop
-            setMaxConcurrentTrades(2); // Can handle multiple quick trades
+            // setMaxConcurrentTrades(2); 
             setAdvancedConfig({
                 minLiquidity: 8,
                 maxLiquidity: 1000,
@@ -164,7 +164,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.01); // Small positions - high frequency
             setTakeProfit(30); // Will be overridden by first buyer
             setStopLoss(8); // Very tight stop
-            setMaxConcurrentTrades(2); // Can handle multiple quick trades
+            // setMaxConcurrentTrades(2); 
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 500,
@@ -206,42 +206,42 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("safe")}
                         className={`p-3 rounded border transition-all ${mode === "safe" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Multi-layer analysis, score ≥65/100, 1 concurrent trade"
+                        title="Multi-layer analysis, score ≥65/100, strict entry"
                     >
                         <div className="font-bold whitespace-nowrap">Safe-ish</div>
-                        <div className="text-[10px] opacity-70">Score: ≥65 | 1 trade</div>
+                        <div className="text-[10px] opacity-70">Score: ≥65 | Strict Entry</div>
                     </button>
                     <button
                         onClick={() => setPreset("medium")}
                         className={`p-3 rounded border transition-all ${mode === "medium" ? "border-[var(--warning)] bg-[rgba(255,204,0,0.1)] text-[var(--warning)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Balanced filters, score ≥50/100, 2 concurrent trades"
+                        title="Balanced filters, score ≥50/100"
                     >
                         <div className="font-bold">Medium</div>
-                        <div className="text-[10px] opacity-70">Score: ≥50 | 2 trades</div>
+                        <div className="text-[10px] opacity-70">Score: ≥50 | Balanced</div>
                     </button>
                     <button
                         onClick={() => setPreset("high")}
                         className={`p-3 rounded border transition-all ${mode === "high" ? "border-[var(--danger)] bg-[rgba(255,0,85,0.1)] text-[var(--danger)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Minimal filters, score ≥30/100, faster trades, 3 concurrent trades. Still avoids rugs but takes more risks."
+                        title="Minimal filters, score ≥30/100, faster trades. Avoids rugs but takes more risks."
                     >
                         <div className="font-bold">High Risk</div>
-                        <div className="text-[10px] opacity-70">Score: ≥30 | 3 trades</div>
+                        <div className="text-[10px] opacity-70">Score: ≥30 | Aggressive</div>
                     </button>
                     <button
                         onClick={() => setPreset("scalp")}
                         className={`p-3 rounded border transition-all ${mode === "scalp" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Speed trading: Quick in/out on momentum, 2 concurrent trades"
+                        title="Speed trading: Quick in/out on momentum"
                     >
                         <div className="font-bold">⚡ SCALP</div>
-                        <div className="text-[10px] opacity-70">Momentum | 2 trades</div>
+                        <div className="text-[10px] opacity-70">Momentum | Quick Exits</div>
                     </button>
                     <button
                         onClick={() => setPreset("first")}
                         className={`p-3 rounded border transition-all ${mode === "first" ? "border-[#ff00ff] bg-[rgba(255,0,255,0.1)] text-[#ff00ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="First Buyer: Buy immediately, sell after 6s or when momentum detected, 2 concurrent trades"
+                        title="First Buyer: Buy immediately, sell after 6s or when momentum detected"
                     >
                         <div className="font-bold">🚀 FIRST</div>
-                        <div className="text-[10px] opacity-70">6s exit | 2 trades</div>
+                        <div className="text-[10px] opacity-70">6s exit | Sniper Mode</div>
                     </button>
                     <button
                         onClick={() => setPreset("custom")}
@@ -311,69 +311,69 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 <>
 
 
-            <div className="space-y-4 mb-8">
-                <div>
-                    <label className="text-gray-400 text-sm flex justify-between">
-                        Trade Amount (SOL)
-                        <span className="text-white">{amount} SOL</span>
-                    </label>
-                    <input
-                        type="range" min="0.01" max="1" step="0.01"
-                        value={amount}
-                        onChange={(e) => setAmount(parseFloat(e.target.value))}
-                        className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${amount > (realBalance + (isDemo ? 1000 : 0)) ? 'bg-red-900' : 'bg-[#222]'}`}
-                    />
-                    {amount > realBalance && !isDemo && (
-                        <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
-                            <AlertTriangle size={10} /> Insufficient balance for this amount.
-                        </p>
-                    )}
-                </div>
+                    <div className="space-y-4 mb-8">
+                        <div>
+                            <label className="text-gray-400 text-sm flex justify-between">
+                                Trade Amount (SOL)
+                                <span className="text-white">{amount} SOL</span>
+                            </label>
+                            <input
+                                type="range" min="0.01" max="1" step="0.01"
+                                value={amount}
+                                onChange={(e) => setAmount(parseFloat(e.target.value))}
+                                className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${amount > (realBalance + (isDemo ? 1000 : 0)) ? 'bg-red-900' : 'bg-[#222]'}`}
+                            />
+                            {amount > realBalance && !isDemo && (
+                                <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
+                                    <AlertTriangle size={10} /> Insufficient balance for this amount.
+                                </p>
+                            )}
+                        </div>
 
-                <div className="flex gap-4">
-                    <div className="flex-1">
-                        <label className="text-gray-400 text-sm">Take Profit (%)</label>
-                        <input
-                            type="number"
-                            value={takeProfit}
-                            onChange={(e) => setTakeProfit(parseInt(e.target.value))}
-                            className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
-                        />
-                    </div>
-                    <div className="flex-1">
-                        <label className="text-gray-400 text-sm">Stop Loss (%)</label>
-                        <input
-                            type="number"
-                            value={stopLoss}
-                            onChange={(e) => setStopLoss(parseInt(e.target.value))}
-                            className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
-                        />
-                    </div>
-                </div>
+                        <div className="flex gap-4">
+                            <div className="flex-1">
+                                <label className="text-gray-400 text-sm">Take Profit (%)</label>
+                                <input
+                                    type="number"
+                                    value={takeProfit}
+                                    onChange={(e) => setTakeProfit(parseInt(e.target.value))}
+                                    className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
+                                />
+                            </div>
+                            <div className="flex-1">
+                                <label className="text-gray-400 text-sm">Stop Loss (%)</label>
+                                <input
+                                    type="number"
+                                    value={stopLoss}
+                                    onChange={(e) => setStopLoss(parseInt(e.target.value))}
+                                    className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
+                                />
+                            </div>
+                        </div>
 
-                <div>
-                    <label className="text-gray-400 text-sm flex justify-between">
-                        Max Concurrent Trades
-                        <span className="text-white">{maxConcurrentTrades}</span>
-                    </label>
-                    <input
-                        type="range" min="1" max="10" step="1"
-                        value={maxConcurrentTrades}
-                        onChange={(e) => setMaxConcurrentTrades(parseInt(e.target.value))}
-                        className="w-full h-2 bg-[#222] rounded-lg appearance-none cursor-pointer mt-2"
-                    />
-                    <p className="text-[10px] text-gray-500 mt-1 italic">Limits how many tokens the bot will hold at once.</p>
-                </div>
-            </div>
-            
-            </>
+                        <div>
+                            <label className="text-gray-400 text-sm flex justify-between">
+                                Max Concurrent Trades
+                                <span className="text-white">{maxConcurrentTrades}</span>
+                            </label>
+                            <input
+                                type="range" min="1" max="10" step="1"
+                                value={maxConcurrentTrades}
+                                onChange={(e) => setMaxConcurrentTrades(parseInt(e.target.value))}
+                                className="w-full h-2 bg-[#222] rounded-lg appearance-none cursor-pointer mt-2"
+                            />
+                            <p className="text-[10px] text-gray-500 mt-1 italic">Limits how many tokens the bot will hold at once.</p>
+                        </div>
+                    </div>
+
+                </>
             ) : (
                 <div className="space-y-4 mb-8 animate-fade-in">
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
                         <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                             <AlertTriangle size={14} className="text-yellow-500" /> Rug Protection
                         </h3>
-                        
+
                         <div className="mb-3">
                             <label className="text-gray-400 text-xs flex justify-between mb-1">
                                 Rug Check Strictness
@@ -384,8 +384,8 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                                     <button
                                         key={s}
                                         onClick={() => setAdvancedConfig(prev => ({ ...prev, rugCheckStrictness: s }))}
-                                        className={`flex-1 py-1 text-xs rounded border ${advancedConfig.rugCheckStrictness === s 
-                                            ? 'bg-blue-900/30 border-blue-500 text-blue-400' 
+                                        className={`flex-1 py-1 text-xs rounded border ${advancedConfig.rugCheckStrictness === s
+                                            ? 'bg-blue-900/30 border-blue-500 text-blue-400'
                                             : 'bg-[#222] border-[#333] text-gray-500 hover:border-[#444]'}`}
                                     >
                                         {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -407,7 +407,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
 
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
                         <h3 className="text-sm font-bold text-white mb-3">Bonding Curve & Liquidity</h3>
-                        
+
                         <div className="grid grid-cols-2 gap-3 mb-3">
                             <div>
                                 <label className="text-gray-400 text-xs block mb-1">Min Liquidity (SOL)</label>
@@ -464,7 +464,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
 
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
                         <h3 className="text-sm font-bold text-white mb-3">Holder Analysis</h3>
-                        
+
                         <div className="grid grid-cols-2 gap-3 mb-3">
                             <div>
                                 <label className="text-gray-400 text-xs block mb-1">Max Dev Holding (%)</label>
@@ -485,7 +485,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                                 />
                             </div>
                         </div>
-                        
+
                         <div>
                             <label className="text-gray-400 text-xs block mb-1">Min Holders</label>
                             <input
