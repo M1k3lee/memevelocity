@@ -13,7 +13,7 @@ interface ActiveTradesProps {
 }
 
 export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClearAll }: ActiveTradesProps) {
-    const openTrades = trades.filter(t => t.status === "open");
+    const openTrades = trades.filter(t => t.status === "open" || t.status === "selling");
 
     if (openTrades.length === 0) {
         return (
@@ -97,6 +97,9 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                         {trade.symbol}
                                         {trade.txId?.startsWith('SIM') && (
                                             <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1 rounded">SIM</span>
+                                        )}
+                                        {trade.status === 'selling' && (
+                                            <span className="text-[10px] bg-orange-500/20 text-orange-400 border border-orange-500/30 px-1 rounded animate-pulse">SELLING...</span>
                                         )}
                                         {!trade.mint.startsWith('SIM') && (
                                             <a

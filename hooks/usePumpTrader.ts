@@ -151,7 +151,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 setActiveTrades(prev => prev.map(t => {
                     if (t.mint === mint) {
-                        return { ...t, status: "closed", pnlPercent: t.buyPrice > 0 ? ((sellPrice - t.buyPrice) / t.buyPrice) * 100 : 0 };
+                        return {
+                            ...t,
+                            status: "closed",
+                            currentPrice: sellPrice,
+                            pnlPercent: t.buyPrice > 0 ? ((sellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
+                        };
                     }
                     return t;
                 }));
@@ -179,9 +184,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const amountToSell = balance * (amountPercent / 100);
 
+            // Set status to "selling" locally to indicate progress if not already set (e.g. by rug detector)
+            setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
+
             // Skip dust sells if not 100%
             if (amountPercent < 100 && (amountToSell * trade.currentPrice) < 0.001) {
                 addLog(`Skipped dust sell for ${trade.symbol} (Value too low)`);
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
                 return;
             }
 
@@ -222,7 +231,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const sellPrice = trade.currentPrice || 0;
             // Realistic SOL received estimate (1% fee + 1% avg slippage/priority = ~2% friction)
             const estimatedSolReceived = amountToSell * sellPrice * 0.98;
-            const estimatedCostBasis = (trade.buyPrice || sellPrice) * amountToSell;
+            const estimatedCostBasis = (trade.buyPrice || sellPrice) * (trade.amountTokens * (amountPercent / 100));
             const estimatedProfit = estimatedSolReceived - estimatedCostBasis;
 
             // Profit Protection: Skim percentage of profit to vault for real trades too
@@ -242,16 +251,27 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (amountPercent >= 99) {
                 setActiveTrades(prev => prev.map(t => {
                     if (t.mint === mint) {
-                        return { ...t, status: "closed" };
+                        return {
+                            ...t,
+                            status: "closed",
+                            currentPrice: sellPrice,
+                            pnlPercent: t.buyPrice > 0 ? ((sellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
+                        };
                     }
                     return t;
                 }));
+            } else {
+                // If partial sell, put back to open so it continues tracking
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
             }
         } catch (error: any) {
             addLog(`Sell Error: ${error.message}`);
             // If error is "Account not found" or similar, it means we don't have the token
-            if (error.message?.includes("Account") || error.message?.includes("not found")) {
+            if (error.message?.includes("Account") || error.message?.includes("not found") || error.message?.includes("0.00 SOL")) {
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
+            } else {
+                // Otherwise, put it back to open so the bot/user can try again
+                setActiveTrades(prev => prev.map(t => t.mint === mint && t.status === "selling" ? { ...t, status: "open" } : t));
             }
         }
     }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
