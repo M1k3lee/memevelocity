@@ -271,7 +271,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     txType: "create",
                     initialBuy: 0,
                     bondingCurveKey: "",
-                    vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000,
+                    vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000000000,
                     vSolInBondingCurve: pumpData?.vSolInBondingCurve || 30,
                     marketCapSol: pumpData?.vSolInBondingCurve || 30,
                     name: meta.name,
@@ -331,7 +331,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     txType: "create",
                     initialBuy: devBuy,
                     bondingCurveKey: "SIM",
-                    vTokensInBondingCurve: 1073000000,
+                    vTokensInBondingCurve: 1073000000000000, // Correct scale: 1B tokens * 10^6 decimals = 10^15
                     vSolInBondingCurve: liquidity,
                     marketCapSol: liquidity,
                     name: name,
