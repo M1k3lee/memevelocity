@@ -90,8 +90,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         try {
             if (isDemo) {
                 const sellPrice = trade.currentPrice || 0;
-                const revenue = trade.amountTokens * sellPrice * (amountPercent / 100);
-                const profit = revenue - (trade.buyPrice * trade.amountTokens * (amountPercent / 100));
+
+                // Simulate 1% Pump.fun fee + 0.5% Slippage/Priority Fees (1.5% total friction)
+                const rawRevenue = trade.amountTokens * sellPrice * (amountPercent / 100);
+                const revenue = rawRevenue * 0.985;
+
+                const costBasis = trade.buyPrice * trade.amountTokens * (amountPercent / 100);
+                const profit = revenue - costBasis;
 
                 setDemoBalance(prev => prev + revenue);
                 setStats(prev => ({
@@ -369,13 +374,25 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                 }
                             }
 
+                            // Only update timestamp if we got a fresh price from network
+                            const isFresh = price > 0;
+                            const newLastPriceUpdate = isFresh ? Date.now() : (trade.lastPriceUpdate || Date.now());
+
+                            // Auto-close if stale for > 5 minutes (300000ms)
+                            if (!isFresh && !isDemo && Date.now() - newLastPriceUpdate > 300000) {
+                                addLog(`⚠️ Token ${trade.symbol} stale >5m. Closing.`);
+                                updates.set(trade.mint, { status: "closed" });
+                                sellToken(trade.mint, 100);
+                                return;
+                            }
+
                             // Prepare update object
                             const update: any = {
                                 buyPrice,
                                 currentPrice: priceToUse,
                                 pnlPercent: pnl,
                                 highestPrice,
-                                lastPriceUpdate: Date.now(),
+                                lastPriceUpdate: newLastPriceUpdate,
                                 lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
                                 lastLiquidity: currentLiquidity > 0 ? currentLiquidity : (trade as any).lastLiquidity
                             };
@@ -469,7 +486,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }
             }
 
-            const amountTokens = buyPrice > 0 ? amountSol / buyPrice : amountSol;
+            // Simulate 1% Pump.fun fee on entry (Realistic calculation)
+            // Real trades pay 1% fee currently
+            const effectiveSol = amountSol * 0.99;
+            const amountTokens = buyPrice > 0 ? effectiveSol / buyPrice : effectiveSol;
 
             const newTrade: ActiveTrade = {
                 mint,

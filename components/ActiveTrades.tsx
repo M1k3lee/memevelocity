@@ -116,7 +116,19 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                     {trade.buyPrice > 0 ? trade.buyPrice.toFixed(9) : "Pending"}
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
-                                    {trade.currentPrice > 0 ? trade.currentPrice.toFixed(9) : "Updating..."}
+                                    {(() => {
+                                        const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 30000); // 30s stale warning
+                                        return (
+                                            <div className="flex flex-col">
+                                                <span>{trade.currentPrice > 0 ? trade.currentPrice.toFixed(9) : "Updating..."}</span>
+                                                {isStale && (
+                                                    <span className="text-orange-500 text-[9px] flex items-center gap-1 animate-pulse">
+                                                        ⚠️ STALE ({Math.floor((Date.now() - (trade.lastPriceUpdate || 0)) / 1000)}s)
+                                                    </span>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </td>
                                 <td className="p-3">
                                     {(() => {
@@ -137,7 +149,7 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                             // Price not fetched yet
                                             return <span className="text-gray-500 text-xs">Updating price...</span>;
                                         }
-                                        
+
                                         return (
                                             <span className={`flex items-center gap-1 font-bold ${displayPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
                                                 {displayPnl >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
