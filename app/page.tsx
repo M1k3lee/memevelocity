@@ -514,7 +514,9 @@ export default function Home() {
         : undefined;
 
       setLastTradeTime(Date.now());
-      await buyToken(token.mint, token.symbol, positionSize, 15, initialPrice);
+      // ADAPTIVE SLIPPAGE: Higher for riskier/faster modes
+      const dynamicSlippage = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15;
+      await buyToken(token.mint, token.symbol, positionSize, dynamicSlippage, initialPrice);
     } catch (error: any) {
       addLog(`❌ Analysis Error for ${token.symbol}: ${error.message}`);
       console.error("Token analysis error:", error);
@@ -538,7 +540,8 @@ export default function Home() {
           initialPrice = undefined;
         }
         setLastTradeTime(Date.now());
-        await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
+        const dynamicSlippage = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15;
+        await buyToken(token.mint, token.symbol, config.amount, dynamicSlippage, initialPrice);
       }
     }
   }, [config.isRunning, config.isDemo, config.mode, config.amount, config.heliusKey, wallet, activeTrades, tradeHistory, buyToken, realBalance, connection, addLog]);

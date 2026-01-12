@@ -218,6 +218,26 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
             addLog(`Sell Tx Sent: ${signature.substring(0, 8)}...`);
 
+            // Real Trade Stats Update
+            const sellPrice = trade.currentPrice || 0;
+            // Realistic SOL received estimate (1% fee + 1% avg slippage/priority = ~2% friction)
+            const estimatedSolReceived = amountToSell * sellPrice * 0.98;
+            const estimatedCostBasis = (trade.buyPrice || sellPrice) * amountToSell;
+            const estimatedProfit = estimatedSolReceived - estimatedCostBasis;
+
+            // Profit Protection: Skim percentage of profit to vault for real trades too
+            if (profitProtectionEnabled && estimatedProfit > 0) {
+                const profitToVault = estimatedProfit * (profitProtectionPercent / 100);
+                setVaultBalance(prev => prev + profitToVault);
+                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL (${profitProtectionPercent}%) from REAL trade to vault`);
+            }
+
+            setStats(prev => ({
+                totalProfit: prev.totalProfit + estimatedProfit,
+                wins: estimatedProfit > 0 ? prev.wins + 1 : prev.wins,
+                losses: estimatedProfit <= 0 ? prev.losses + 1 : prev.losses
+            }));
+
             // Only close trade locally if 100% sell
             if (amountPercent >= 99) {
                 setActiveTrades(prev => prev.map(t => {
@@ -234,7 +254,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
             }
         }
-    }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades]);
+    }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
 
     // WebSocket for Price Updates on Active Trades
     useEffect(() => {
