@@ -121,12 +121,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         try {
             if (isDemo) {
                 const sellPrice = trade.currentPrice || 0;
-
-                // Simulate 1% Pump.fun fee + 0.5% Slippage/Priority Fees (1.5% total friction)
-                const rawRevenue = trade.amountTokens * sellPrice * (amountPercent / 100);
-                const revenue = rawRevenue * 0.985;
-
                 const costBasis = trade.buyPrice * trade.amountTokens * (amountPercent / 100);
+
+                // If trade is STALE (>2m), assume price is dead (0) for stats to stay honest
+                const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 120000);
+                const effectiveSellPrice = isStale ? 0 : sellPrice;
+
+                const rawRevenue = trade.amountTokens * effectiveSellPrice * (amountPercent / 100);
+                const revenue = rawRevenue * 0.985;
                 const profit = revenue - costBasis;
 
                 // Profit Protection: Skim percentage of profit to vault
@@ -151,9 +153,15 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 setActiveTrades(prev => prev.map(t => {
                     if (t.mint === mint) {
+                        const isFullSell = amountPercent >= 99;
+                        const remainingTokens = isFullSell ? 0 : t.amountTokens * (1 - amountPercent / 100);
+                        const remainingSolPaid = isFullSell ? 0 : (t.amountSolPaid || 0) * (1 - amountPercent / 100);
+
                         return {
                             ...t,
-                            status: "closed",
+                            status: isFullSell ? "closed" : "open",
+                            amountTokens: remainingTokens,
+                            amountSolPaid: remainingSolPaid,
                             currentPrice: sellPrice,
                             pnlPercent: t.buyPrice > 0 ? ((sellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
                         };
@@ -261,8 +269,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     return t;
                 }));
             } else {
-                // If partial sell, put back to open so it continues tracking
-                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
+                // If partial sell, put back to open and update local amounts so UI reflects remaining position immediately
+                setActiveTrades(prev => prev.map(t => {
+                    if (t.mint === mint) {
+                        const remainingTokens = t.amountTokens * (1 - amountPercent / 100);
+                        const remainingSolPaid = (t.amountSolPaid || 0) * (1 - amountPercent / 100);
+                        return {
+                            ...t,
+                            status: "open",
+                            amountTokens: remainingTokens,
+                            amountSolPaid: remainingSolPaid
+                        };
+                    }
+                    return t;
+                }));
             }
         } catch (error: any) {
             addLog(`Sell Error: ${error.message}`);
@@ -463,10 +483,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             const newLastPriceUpdate = isFresh ? Date.now() : (trade.lastPriceUpdate || Date.now());
 
                             // Auto-close if stale for > 5 minutes (300000ms)
-                            if (!isFresh && !isDemo && Date.now() - newLastPriceUpdate > 300000) {
-                                addLog(`⚠️ Token ${trade.symbol} stale >5m. Closing.`);
-                                updates.set(trade.mint, { status: "closed" });
+                            // In Demo mode, we also auto-close to avoid "zombie" trades
+                            if (!isFresh && Date.now() - newLastPriceUpdate > 300000) {
+                                addLog(`⚠️ Token ${trade.symbol} stale >5m. Auto-closing as loss.`);
                                 sellToken(trade.mint, 100);
+                                updates.set(trade.mint, { status: "closed" });
                                 return;
                             }
 
