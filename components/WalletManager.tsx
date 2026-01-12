@@ -168,6 +168,75 @@ export default function WalletManager({
                     </div>
                 </div>
 
+                {/* Profit Protection Vault - Show in demo mode even without wallet */}
+                {isDemo && (
+                    <div className="border-t border-[#222] pt-4 mt-4">
+                        <div className="bg-gradient-to-br from-purple-900/10 to-blue-900/10 border border-purple-500/20 rounded-lg p-4">
+                            <div className="flex justify-between items-center mb-3">
+                                <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2">
+                                    🔒 Profit Protection Vault
+                                </h3>
+                                <button
+                                    onClick={onToggleProfitProtection}
+                                    className={`text-xs px-3 py-1 rounded transition-colors ${profitProtectionEnabled
+                                            ? 'bg-green-600 text-white'
+                                            : 'bg-gray-600 text-gray-300'
+                                        }`}
+                                >
+                                    {profitProtectionEnabled ? 'ON' : 'OFF'}
+                                </button>
+                            </div>
+
+                            <div className="flex justify-between items-end mb-3">
+                                <div>
+                                    <p className="text-xs text-gray-400">Protected Balance</p>
+                                    <p className="text-2xl font-bold text-purple-300">
+                                        {vaultBalance.toFixed(4)} <span className="text-sm">SOL</span>
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs text-gray-400">Protection Rate</p>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="50"
+                                            step="5"
+                                            value={profitProtectionPercent}
+                                            onChange={(e) => onSetProfitProtectionPercent?.(parseInt(e.target.value))}
+                                            className="w-20 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                                            disabled={!profitProtectionEnabled}
+                                        />
+                                        <span className="text-sm font-bold text-purple-300 w-10">{profitProtectionPercent}%</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {vaultBalance > 0 && (
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => {
+                                            const amount = prompt(`Move to trading balance (Max: ${vaultBalance.toFixed(4)} SOL):`);
+                                            if (amount && parseFloat(amount) > 0) {
+                                                onMoveVaultToTrading?.(parseFloat(amount));
+                                            }
+                                        }}
+                                        className="flex-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs py-2 rounded border border-blue-500/30 transition-colors"
+                                    >
+                                        📊 Move to Trading
+                                    </button>
+                                </div>
+                            )}
+
+                            <p className="text-[9px] text-gray-500 mt-2">
+                                {profitProtectionEnabled
+                                    ? `${profitProtectionPercent}% of each profit is automatically protected in this vault.`
+                                    : 'Protection disabled - all profits go to trading balance.'}
+                            </p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Helius API Key - Show even when wallet not connected */}
                 <div className="border-t border-[#222] pt-4 mt-4">
                     <h3 className="text-sm font-bold glow-text mb-3 flex items-center gap-2">
@@ -256,8 +325,8 @@ export default function WalletManager({
                     <button
                         onClick={onToggleProfitProtection}
                         className={`text-xs px-3 py-1 rounded transition-colors ${profitProtectionEnabled
-                                ? 'bg-green-600 text-white'
-                                : 'bg-gray-600 text-gray-300'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-gray-600 text-gray-300'
                             }`}
                     >
                         {profitProtectionEnabled ? 'ON' : 'OFF'}
