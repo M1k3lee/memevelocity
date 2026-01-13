@@ -397,10 +397,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             t.exitStrategy.maxHoldTime < 10
         );
 
-        // Use faster polling for demo mode (paper trading) and first buyer mode
-        // Demo mode needs fast updates to catch quick price movements
-        // FIX: Reduced interval from 12000ms to 1000ms to catch "quick x3/x5" pumps
-        const pollInterval = hasFirstBuyerTrades ? 1000 : (isDemo ? 1000 : 1500);
+        // DYNAMIC POLLING: Scale interval based on number of active trades to avoid RPC rate limits
+        // Total requests per minute = (60 / pollInterval) * tradesToPoll
+        const openTradesCount = activeTrades.filter(t => t.status === "open").length;
+
+        let pollInterval = 1500; // Base interval
+        if (hasFirstBuyerTrades || isDemo) {
+            // Scale interval: 1s for 1 trade, 2s for 5 trades, up to 5s for 10+ trades
+            pollInterval = Math.max(1000, Math.min(5000, 500 * openTradesCount));
+        } else {
+            // Even more conservative for real trading to preserve Helius credits
+            pollInterval = Math.max(2000, Math.min(10000, 1000 * openTradesCount));
+        }
 
         // Immediate price update on mount/change (don't wait for interval)
         const updatePrices = async () => {
