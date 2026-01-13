@@ -522,6 +522,12 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 </div>
             )}
 
+            {(!localStorage.getItem('helius_api_key')) && (
+                <div className="mt-4 p-2 bg-red-500/10 text-red-500 text-[10px] rounded border border-red-500/20 flex gap-2 items-center">
+                    <AlertTriangle size={12} /> Helius API Key Missing: Bot will use slow public RPC.
+                </div>
+            )}
+
             <div className="mt-4 text-xs text-gray-500 text-center">
                 * Works with Pump.fun via Direct RPC. No VPN needed for API.
             </div>
