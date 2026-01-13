@@ -220,7 +220,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                         }
                     }
                     if (data.mint) {
-                        const newToken: TokenData = { ...data, timestamp: Date.now(), marketCapSol: data.vSolInBondingCurve || 0 };
+                        // Normalize vSol to SOL (PumpPortal sends lamports)
+                        const vSol = data.vSolInBondingCurve ? data.vSolInBondingCurve / 1e9 : 0;
+                        const newToken: TokenData = {
+                            ...data,
+                            vSolInBondingCurve: vSol,
+                            timestamp: Date.now(),
+                            marketCapSol: vSol || 0
+                        };
                         updateTokens(newToken);
                     }
                 } catch (e) {

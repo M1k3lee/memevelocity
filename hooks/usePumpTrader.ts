@@ -349,8 +349,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }
 
                 if (data.mint && data.vSolInBondingCurve && data.vTokensInBondingCurve) {
-                    // Standard PumpPortal price calculation: (vSol / vTokens) * 1M
-                    const price = (data.vSolInBondingCurve / data.vTokensInBondingCurve) * 1000000;
+                    // Standard PumpPortal price calculation: (vSol_SOL / vTokens) * 1M
+                    // Convert vSol from lamports to SOL
+                    const price = ((data.vSolInBondingCurve / 1000000000) / data.vTokensInBondingCurve) * 1000000;
 
                     setActiveTrades(prev => prev.map(trade => {
                         if (trade.mint === data.mint && trade.status === "open") {
