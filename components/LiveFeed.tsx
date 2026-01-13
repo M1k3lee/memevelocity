@@ -267,28 +267,46 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     params: [signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "jsonParsed" }]
                 })
             });
+
+            if (response.status === 429) {
+                console.warn("[LiveFeed] Helius getTransaction rate limited (429)");
+                return;
+            }
+
             const txData = await response.json();
+            if (txData.error) {
+                console.warn("[LiveFeed] Helius getTransaction error:", txData.error.message);
+                return;
+            }
+
             if (txData.result?.meta?.postTokenBalances?.length > 0) {
                 const mint = txData.result.meta.postTokenBalances[0].mint;
-                const meta = await getTokenMetadata(mint, heliusKey);
-                const pumpData = await getPumpData(mint);
+
+                // Fetch metadata and pump data in parallel for speed
+                const [meta, pumpData] = await Promise.all([
+                    getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" })),
+                    getPumpData(mint).catch(() => null)
+                ]);
+
                 const newToken: TokenData = {
                     mint,
-                    traderPublicKey: txData.result.transaction.message.accountKeys[0].pubkey || txData.result.transaction.message.accountKeys[0],
+                    traderPublicKey: txData.result.transaction?.message?.accountKeys?.[0]?.pubkey || txData.result.transaction?.message?.accountKeys?.[0] || "Unknown",
                     txType: "create",
                     initialBuy: 0,
                     bondingCurveKey: "",
                     vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000000000,
                     vSolInBondingCurve: pumpData?.vSolInBondingCurve || 30,
                     marketCapSol: pumpData?.vSolInBondingCurve || 30,
-                    name: meta.name,
-                    symbol: meta.symbol,
+                    name: meta.name || "Real Token",
+                    symbol: meta.symbol || "REAL",
                     uri: "",
                     timestamp: Date.now()
                 };
                 updateTokens(newToken);
             }
-        } catch (e) { }
+        } catch (e: any) {
+            console.error("[LiveFeed] handleNewTokenSignature error:", e.message);
+        }
     };
 
     const updateTokens = (token: TokenData) => {

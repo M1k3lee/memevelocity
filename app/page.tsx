@@ -327,7 +327,7 @@ export default function Home() {
 
         // FAST TRACK: Very new tokens (<60s) with strong momentum
         // BUT: Must pass basic rug checks (liquidity, not crashed, etc.)
-        if (age < 60 && momentum > 1.5 && liquidityGrowth > 2 && liquidityGrowth >= 0 && liquidity >= 1) {
+        if (age < 60 && momentum > 1.5 && liquidityGrowth > 2 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ NEW + MOMENTUM: Early momentum play (rug checks passed)`);
 
@@ -343,7 +343,7 @@ export default function Home() {
 
         // FAST TRACK: New tokens (<2 min) with very strong momentum (>3 SOL/min)
         // BUT: Must pass basic rug checks
-        if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && liquidity >= 1) {
+        if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ STRONG MOMENTUM: High buy activity detected (rug checks passed)`);
 

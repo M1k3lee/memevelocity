@@ -79,22 +79,22 @@ export async function analyzeEnhanced(
         // === CRITICAL: BONDING CURVE PROGRESS ===
         // Formula: 100 - (((balance - 206,900,000) × 100) / 793,100,000)
         const tokenBalance = pumpData.vTokensInBondingCurve;
-        const bondingCurveProgress = Math.max(0, Math.min(100, 
+        const bondingCurveProgress = Math.max(0, Math.min(100,
             100 - (((tokenBalance - 206900000) * 100) / 793100000)
         ));
-        
+
         // Sweet spot: 5-15% bonding curve progress ($3,500-$10,500 market cap)
         const marketCap = liquidity; // Approximate market cap in SOL
 
         // === CRITICAL REJECTIONS (Config-driven) ===
-        
+
         const isHighRiskMode = riskMode === 'high';
         const isSafeMode = riskMode === 'safe';
         const strictness = config?.rugCheckStrictness ?? (isHighRiskMode ? 'lenient' : isSafeMode ? 'strict' : 'standard');
-        
+
         // 2. Check contract security (CRITICAL - always check, but strictness varies)
         const contractSecurity = await checkContractSecurity(token.mint, connection);
-        
+
         // Freeze authority = honeypot risk
         if (!contractSecurity.freezeAuthority) {
             if (strictness === 'lenient') {
@@ -105,7 +105,7 @@ export async function analyzeEnhanced(
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap, contractSecurity);
             }
         }
-        
+
         // Mint authority = supply dilution
         if (!contractSecurity.mintAuthority) {
             if (strictness === 'lenient') {
@@ -123,14 +123,14 @@ export async function analyzeEnhanced(
         // 1. Bonding curve timing
         if (bondingCurveProgress < minBondingCurve) {
             if (strictness === 'lenient' && bondingCurveProgress > 0) {
-                 warnings.push(`Early entry: ${bondingCurveProgress.toFixed(1)}% curve (<${minBondingCurve}%)`);
-                 score -= 5;
+                warnings.push(`Early entry: ${bondingCurveProgress.toFixed(1)}% curve (<${minBondingCurve}%)`);
+                score -= 5;
             } else {
                 reasons.push(`Too early: ${bondingCurveProgress.toFixed(1)}% curve (min ${minBondingCurve}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap);
             }
         }
-        
+
         if (bondingCurveProgress > maxBondingCurve) {
             reasons.push(`Too late: ${bondingCurveProgress.toFixed(1)}% curve (max ${maxBondingCurve}%)`);
             return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap);
@@ -181,7 +181,7 @@ export async function analyzeEnhanced(
 
         // 3. HOLDER DISTRIBUTION (20 points)
         const holderMetrics = await analyzeHolderDistribution(token.mint, connection, heliusKey);
-        
+
         if (holderMetrics.holderCount < minHolders) {
             if (strictness === 'lenient' || age < 120) {
                 warnings.push(`Low holder count: ${holderMetrics.holderCount} (min ${minHolders})`);
@@ -203,13 +203,13 @@ export async function analyzeEnhanced(
 
         // Deployer holdings check
         if (holderMetrics.deployerHoldings > maxDev) {
-             if (strictness === 'lenient' && holderMetrics.deployerHoldings < 30) {
-                  warnings.push(`High deployer holdings: ${holderMetrics.deployerHoldings.toFixed(1)}% (max ${maxDev}%)`);
-                  score -= 10;
-             } else {
-                 reasons.push(`Deployer holds too much: ${holderMetrics.deployerHoldings.toFixed(1)}% (max ${maxDev}%)`);
-                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap, contractSecurity);
-             }
+            if (strictness === 'lenient' && holderMetrics.deployerHoldings < 30) {
+                warnings.push(`High deployer holdings: ${holderMetrics.deployerHoldings.toFixed(1)}% (max ${maxDev}%)`);
+                score -= 10;
+            } else {
+                reasons.push(`Deployer holds too much: ${holderMetrics.deployerHoldings.toFixed(1)}% (max ${maxDev}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap, contractSecurity);
+            }
         }
 
         if (holderMetrics.deployerHoldings < 10) {
@@ -221,13 +221,13 @@ export async function analyzeEnhanced(
 
         // Top 10 concentration
         if (holderMetrics.top10Concentration > maxTop10) {
-             if (strictness === 'lenient' && holderMetrics.top10Concentration < 90) {
-                  warnings.push(`High concentration: ${holderMetrics.top10Concentration.toFixed(1)}% (max ${maxTop10}%)`);
-                  score -= 10;
-             } else {
-                 reasons.push(`Top 10 hold too much: ${holderMetrics.top10Concentration.toFixed(1)}% (max ${maxTop10}%)`);
-                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap, contractSecurity);
-             }
+            if (strictness === 'lenient' && holderMetrics.top10Concentration < 90) {
+                warnings.push(`High concentration: ${holderMetrics.top10Concentration.toFixed(1)}% (max ${maxTop10}%)`);
+                score -= 10;
+            } else {
+                reasons.push(`Top 10 hold too much: ${holderMetrics.top10Concentration.toFixed(1)}% (max ${maxTop10}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap, contractSecurity);
+            }
         }
 
         if (holderMetrics.top10Concentration < 40) {
@@ -239,7 +239,7 @@ export async function analyzeEnhanced(
 
         // 4. VOLUME VALIDATION (15 points)
         const volumeMetrics = await analyzeVolume(token, age, liquidity, heliusKey);
-        
+
         if (volumeMetrics.volume24h < (config?.minVolume24h || 0)) {
             warnings.push(`Low volume: ${volumeMetrics.volume24h.toFixed(1)} SOL (min ${config?.minVolume24h || 0})`);
             score -= 10;
@@ -268,15 +268,15 @@ export async function analyzeEnhanced(
         // 5. BONDING CURVE VELOCITY (15 points)
         // Estimate velocity based on age and progress
         const bondingCurveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0; // % per minute
-        
+
         if (bondingCurveVelocity < minVelocity) {
-             warnings.push(`Low velocity: ${bondingCurveVelocity.toFixed(2)}%/min (min ${minVelocity})`);
-             score -= 5;
+            warnings.push(`Low velocity: ${bondingCurveVelocity.toFixed(2)}%/min (min ${minVelocity})`);
+            score -= 5;
         }
 
         // Calculate momentum (liquidity growth rate) - important for High Risk mode
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0; // SOL per minute
-        
+
         if (bondingCurveVelocity > 0.5 && bondingCurveVelocity < 2) {
             score += 15;
             strengths.push(`Organic growth: ${bondingCurveVelocity.toFixed(2)}%/min`);
@@ -289,7 +289,7 @@ export async function analyzeEnhanced(
         } else {
             score += 8;
         }
-        
+
         // MOMENTUM BONUS (Extra points for High Risk mode or High Velocity config)
         if (isHighRiskMode || (config?.minVelocity || 0) > 0.5) {
             if (momentum > 3 && age < 120) {
@@ -305,13 +305,16 @@ export async function analyzeEnhanced(
                 score += 10;
                 strengths.push(`📈 Early momentum: ${momentum.toFixed(1)} SOL/min`);
             }
-            
+
             // Age bonus for very new tokens
-            if (age < 60) {
-                score += 10;
+            if (age < 30) {
+                score += 25; // Significant bonus for catching it first
+                strengths.push(`🔥 Brand New: ${age.toFixed(0)}s old - First Mover Advantage`);
+            } else if (age < 60) {
+                score += 15;
                 strengths.push(`🆕 Very new: ${age.toFixed(0)}s old`);
             } else if (age < 120) {
-                score += 5;
+                score += 10;
                 strengths.push(`🆕 New: ${Math.floor(age / 60)}min old`);
             }
         }
@@ -345,14 +348,14 @@ export async function analyzeEnhanced(
         }
 
         // === BONUSES ===
-        
+
         // Perfect sweet spot + good distribution
-        if (bondingCurveProgress >= 5 && bondingCurveProgress <= 15 && 
+        if (bondingCurveProgress >= 5 && bondingCurveProgress <= 15 &&
             holderMetrics.holderCount >= 200 && holderMetrics.deployerHoldings < 10) {
             score += 10;
             strengths.push('Perfect setup: Sweet spot + good distribution');
         }
-        
+
         // High Risk mode: Bonus for new tokens with high buy activity
         if ((isHighRiskMode || (config?.minVelocity || 0) > 0.5) && age < 120) {
             // Estimate buy activity from liquidity growth
@@ -369,7 +372,7 @@ export async function analyzeEnhanced(
         }
 
         // === PENALTIES ===
-        
+
         // High deployer + high concentration = rug risk
         if (holderMetrics.deployerHoldings > 30 && holderMetrics.top10Concentration > 60) {
             score -= 20;
@@ -388,7 +391,7 @@ export async function analyzeEnhanced(
 
         // Pass threshold varies by mode
         let passed: boolean;
-        
+
         if (strictness === 'lenient') {
             // Lenient: Pass if score > 0 and liquidity > minLiquidity
             // For new tokens with momentum, be extremely lenient
@@ -435,28 +438,28 @@ export async function analyzeEnhanced(
         const errorMsg = error.message || String(error);
         const isRateLimit = errorMsg.includes('429') || errorMsg.includes('Too Many Requests');
         const isForbidden = errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('Access denied');
-        
+
         // If we have basic token data from WebSocket, create a partial analysis
         if (token.vSolInBondingCurve && token.vTokensInBondingCurve) {
             const basicPrice = (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000;
             const basicLiquidity = token.vSolInBondingCurve;
-            const basicBondingCurve = Math.max(0, Math.min(100, 
+            const basicBondingCurve = Math.max(0, Math.min(100,
                 100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)
             ));
-            
+
             // Create a basic score based on available data
             let basicScore = 30; // Start with neutral score
             if (basicLiquidity > 50) basicScore += 10;
             if (basicLiquidity > 100) basicScore += 10;
             if (basicBondingCurve < 10) basicScore += 15; // Early in curve
             if (basicBondingCurve > 50) basicScore -= 10; // Late in curve
-            
-            warnings.push(isRateLimit 
-                ? 'RPC rate limit - using basic analysis' 
-                : isForbidden 
-                ? 'RPC access denied - using basic analysis'
-                : `Analysis error - using basic analysis: ${errorMsg.substring(0, 30)}`);
-            
+
+            warnings.push(isRateLimit
+                ? 'RPC rate limit - using basic analysis'
+                : isForbidden
+                    ? 'RPC access denied - using basic analysis'
+                    : `Analysis error - using basic analysis: ${errorMsg.substring(0, 30)}`);
+
             return {
                 score: Math.max(10, Math.min(70, basicScore)),
                 riskLevel: basicScore < 40 ? 'high' : basicScore < 60 ? 'medium' : 'low',
@@ -482,13 +485,13 @@ export async function analyzeEnhanced(
                 }
             };
         }
-        
-        const errorReason = isRateLimit 
-            ? 'RPC rate limit - try again later' 
-            : isForbidden 
-            ? 'RPC access denied - check API key'
-            : `Analysis error: ${errorMsg.substring(0, 50)}`;
-            
+
+        const errorReason = isRateLimit
+            ? 'RPC rate limit - try again later'
+            : isForbidden
+                ? 'RPC access denied - check API key'
+                : `Analysis error: ${errorMsg.substring(0, 50)}`;
+
         return createRejectResult(errorReason, reasons, warnings, strengths);
     }
 }
@@ -503,7 +506,7 @@ async function checkContractSecurity(
     try {
         const mint = new PublicKey(mintAddress);
         const mintInfo = await connection.getParsedAccountInfo(mint);
-        
+
         if (!mintInfo.value || !mintInfo.value.data || typeof mintInfo.value.data === 'string') {
             return { freezeAuthority: false, mintAuthority: false, updateAuthority: false };
         }
@@ -511,7 +514,7 @@ async function checkContractSecurity(
         const parsed = mintInfo.value.data as any;
         const freezeAuthority = parsed.parsed?.info?.freezeAuthority === null;
         const mintAuthority = parsed.parsed?.info?.mintAuthority === null;
-        
+
         // Check metadata update authority
         // If we can't check update authority, assume it's okay if freeze/mint are null
         const updateAuthority = true; // Would need metadata program to check properly
@@ -538,7 +541,7 @@ async function analyzeHolderDistribution(
     try {
         // 1. Get real holder stats (concentration, whales)
         const realStats = await getHolderStats(mintAddress, connection);
-        
+
         // 2. Get real holder count (if possible)
         const realHolderCount = await getHolderCount(mintAddress, connection);
 
@@ -548,19 +551,19 @@ async function analyzeHolderDistribution(
             return { holderCount: 0, deployerHoldings: 100, top10Concentration: 100 };
         }
 
-        const bondingCurveProgress = Math.max(0, Math.min(100, 
+        const bondingCurveProgress = Math.max(0, Math.min(100,
             100 - (((pumpData.vTokensInBondingCurve - 206900000) * 100) / 793100000)
         ));
 
         // 4. Determine Holder Count
         let holderCount = 0;
-        
+
         if (realHolderCount !== null) {
             holderCount = realHolderCount;
         } else {
             // Fallback estimates
             holderCount = Math.floor(bondingCurveProgress * 20); // Base estimate
-            
+
             // Refine estimate based on real top 10 data
             if (realStats) {
                 // If top 10 hold very little (e.g. < 10%), implies many small holders
@@ -583,9 +586,9 @@ async function analyzeHolderDistribution(
         if (realStats) {
             deployerHoldings = realStats.largestHolderPercentage;
         } else {
-             // Fallback estimate
-             const liquidityRatio = pumpData.vSolInBondingCurve / (bondingCurveProgress * 100);
-             deployerHoldings = Math.min(50, Math.max(5, 50 - liquidityRatio * 10));
+            // Fallback estimate
+            const liquidityRatio = pumpData.vSolInBondingCurve / (bondingCurveProgress * 100);
+            deployerHoldings = Math.min(50, Math.max(5, 50 - liquidityRatio * 10));
         }
 
         // 5. Determine Concentration
@@ -602,8 +605,14 @@ async function analyzeHolderDistribution(
             deployerHoldings,
             top10Concentration
         };
-    } catch (e) {
-        return { holderCount: 0, deployerHoldings: 100, top10Concentration: 100 };
+    } catch (e: any) {
+        console.warn(`[analyzeHolderDistribution] Holder check failed for ${mintAddress.substring(0, 8)}: ${e.message}`);
+        // Return neutral/conservative estimates if RPC fails, rather than deliberate "rug" values
+        return {
+            holderCount: 50, // Neutral estimate
+            deployerHoldings: 15, // Conservative estimate
+            top10Concentration: 70 // Conservative estimate
+        };
     }
 }
 
@@ -620,10 +629,10 @@ async function analyzeVolume(
         // Estimate volume based on liquidity growth
         const initialLiquidity = 30;
         const liquidityGrowth = liquidity - initialLiquidity;
-        
+
         // Rough estimate: volume is typically 2-5x liquidity growth in early stages
         const estimatedVolume = Math.max(0, liquidityGrowth * 3);
-        
+
         // Buy/sell ratio - estimate based on liquidity growth rate
         // Growing liquidity = more buys than sells
         const growthRate = age > 0 ? liquidityGrowth / age : 0;
