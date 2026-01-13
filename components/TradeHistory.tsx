@@ -39,7 +39,8 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                         </thead>
                         <tbody>
                             {history.map((trade, i) => {
-                                const solProfit = (trade.pnlPercent / 100) * (trade.amountSolPaid || 0);
+                                const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
+                                const solProfit = (trade.pnlPercent / 100) * originalCost;
                                 return (
                                     <tr key={`${trade.mint}-${i}`} className="border-b border-[#222]/30 hover:bg-[#151515] transition-colors">
                                         <td className="p-2">

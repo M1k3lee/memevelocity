@@ -155,7 +155,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     if (t.mint === mint) {
                         const isFullSell = amountPercent >= 99;
                         const remainingTokens = isFullSell ? 0 : t.amountTokens * (1 - amountPercent / 100);
-                        const remainingSolPaid = isFullSell ? 0 : (t.amountSolPaid || 0) * (1 - amountPercent / 100);
+                        const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
+                        const remainingSolPaid = isFullSell ? 0 : (originalCost) * (1 - amountPercent / 100);
 
                         return {
                             ...t,
@@ -621,7 +622,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 status: "open",
                 txId: `DEMO-${Date.now()}`, // Changed from SIM to DEMO to indicate demo trade
                 buyTime: Date.now(),
-                exitStrategy
+                exitStrategy,
+                originalAmount: amountSol
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
