@@ -128,7 +128,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
                 const rawRevenue = trade.amountTokens * effectiveSellPrice * (amountPercent / 100);
-                const revenue = rawRevenue * 0.985;
+                // Increased friction to 3% (1% fee + 2% avg slippage/impact) for realism
+                const revenue = rawRevenue * 0.97;
                 const profit = revenue - costBasis;
 
                 // Profit Protection: Skim percentage of profit to vault
@@ -458,13 +459,21 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                     if (fetchedPrice > 0) price = fetchedPrice;
                                 }
 
-                                // If RPC fails, keep old price in demo mode to prevent bad exits
+                                // Paper Trading Realism: If RPC fails, keep price for 60s grace period.
+                                // After 60s, assume token has rugged/stopped and set price to 0.
                                 if (price === 0 && isDemo && trade.currentPrice > 0) {
-                                    price = trade.currentPrice;
+                                    const timeSinceUpdate = Date.now() - (trade.lastPriceUpdate || Date.now());
+                                    if (timeSinceUpdate > 60000) { // 60s grace period
+                                        price = 0.000000001; // Effectively 0 to trigger Stop Loss
+                                        if (timeSinceUpdate > 65000 && timeSinceUpdate < 75000) { // Log once
+                                            addLog(`⚠️ RUG SIMULATION: No data for ${trade.symbol} for >60s. Marking as potential rug.`);
+                                        }
+                                    } else {
+                                        price = trade.currentPrice;
+                                    }
                                 }
                             } catch (error) {
-                                // Silent fail, keep old price
-                                if (isDemo && trade.currentPrice > 0) price = trade.currentPrice;
+                                price = 0;
                             }
                         }
 
@@ -481,14 +490,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
 
                             // Check liquidity drain (Rug Pull Detector)
-                            if (currentLiquidity > 0 && trade.lastPriceUpdate) {
-                                const prevLiq = (trade as any).lastLiquidity || currentLiquidity;
-                                // >20% drop is a rug
-                                if (prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
-                                    // Rug pull detected - exit immediately
+                            const prevLiq = (trade as any).lastLiquidity || 0;
+                            if (prevLiq > 0 && trade.lastPriceUpdate) {
+                                // Case A: Liquidity dropped >20% (partial rug)
+                                if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
                                     updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
                                     sellToken(trade.mint, 100);
                                     addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
+                                    return;
+                                }
+                                // Case B: RPC returning null for previously active token (total rug/delist)
+                                if (price <= 0.000000001 && Date.now() - trade.lastPriceUpdate > 45000) {
+                                    updates.set(trade.mint, { status: "selling" });
+                                    sellToken(trade.mint, 100);
+                                    addLog(`🚨 TOTAL RUG DETECTED: ${trade.symbol} disappeared from blockchain. Exiting.`);
                                     return;
                                 }
                             }
@@ -497,10 +512,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             const isFresh = price > 0;
                             const newLastPriceUpdate = isFresh ? Date.now() : (trade.lastPriceUpdate || Date.now());
 
-                            // Auto-close if stale for > 5 minutes (300000ms)
+                            // Auto-close if stale for > 3 minutes (180000ms)
                             // In Demo mode, we also auto-close to avoid "zombie" trades
-                            if (!isFresh && Date.now() - newLastPriceUpdate > 300000) {
-                                addLog(`⚠️ Token ${trade.symbol} stale >5m. Auto-closing as loss.`);
+                            if (!isFresh && Date.now() - newLastPriceUpdate > 180000) {
+                                addLog(`⚠️ Token ${trade.symbol} stale >3m. Auto-closing as potential rug loss.`);
                                 sellToken(trade.mint, 100);
                                 updates.set(trade.mint, { status: "closed" });
                                 return;
@@ -613,6 +628,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     return;
                 }
             }
+
+            // Simulate 1.5% slippage/friction on entry price for paper trading realism
+            buyPrice = buyPrice * 1.015;
 
             // Simulate 1% Pump.fun fee on entry (Realistic calculation)
             // Real trades pay 1% fee currently
