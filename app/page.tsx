@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { createConnection } from '../utils/solanaManager';
 import { usePumpTrader } from '../hooks/usePumpTrader';
@@ -116,6 +116,7 @@ export default function Home() {
     setProfitProtectionPercentage
   } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
   const [tradeHistory, setTradeHistory] = useState<Set<string>>(new Set());
+  const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
 
@@ -153,10 +154,18 @@ export default function Home() {
       return;
     }
 
-    // Duplication check within session
-    if (tradeHistory.has(token.mint)) {
+    // Duplication check within session (State + Ref for ultra-fast deduplication)
+    if (tradeHistory.has(token.mint) || processedMints.current.has(token.mint)) {
       return;
     }
+
+    // Check currently active trades to prevent duplicate positions
+    if (activeTrades.some(t => t.mint === token.mint && t.status !== 'closed')) {
+      return;
+    }
+
+    // Mark as processed immediately to prevent rapid-fire duplicates
+    processedMints.current.add(token.mint);
 
     // === ADVANCED RUG DETECTION (Early Filter) ===
     // This catches obvious scams BEFORE expensive analysis
