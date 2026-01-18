@@ -22,12 +22,16 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [wallet, setWallet] = useState<any>(null);
   // Initialize config with Helius key from localStorage if available (client-side only)
-  const [config, setConfig] = useState<any>(() => {
-    if (typeof window !== 'undefined') {
-      const savedHelius = localStorage.getItem('helius_api_key') || '';
-      return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 30, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: savedHelius, maxConcurrentTrades: 5 };
-    }
-    return { isRunning: false, mode: 'safe', amount: 0.01, takeProfit: 30, stopLoss: 10, isDemo: false, isSimulating: false, heliusKey: '', maxConcurrentTrades: 5 };
+  const [config, setConfig] = useState<any>({
+    isRunning: false,
+    mode: 'safe',
+    amount: 0.01,
+    takeProfit: 30,
+    stopLoss: 10,
+    isDemo: false,
+    isSimulating: false,
+    heliusKey: '',
+    maxConcurrentTrades: 5
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(0);
@@ -196,8 +200,9 @@ export default function Home() {
     }
 
     // Auto-stop if balance is critical (ONLY for real trading)
-    if (!config.isDemo && realBalance < 0.015) {
-      addLog("⚠️ CRITICAL BALANCE: Auto-stopping bot to save gas.");
+    // We stop if balance is less than 0.05 SOL + next trade amount to ensure we always have reserve for fees
+    if (!config.isDemo && realBalance < (config.amount + 0.05)) {
+      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + 0.05).toFixed(2)} SOL. Auto-stopping bot to save fee reserve.`);
       setConfig((prev: any) => ({ ...prev, isRunning: false }));
       return;
     }
@@ -428,19 +433,16 @@ export default function Home() {
 
       // Mode-based filtering with analysis scores
       // IMPORTANT: High-risk mode should still have MINIMUM quality standards
-      // "High risk" means buying newer/smaller tokens, NOT buying obvious scams
-
-      // Base thresholds - High risk mode is more lenient on age/size, but still needs quality
-      let minScore = config.mode === 'safe' ? 65 : config.mode === 'medium' || config.mode === 'custom' ? 50 : 40; // Increased from 30 to 40 for high-risk
+      let minScore = config.mode === 'safe' ? 65 : config.mode === 'medium' || config.mode === 'custom' ? 50 : 30;
       if (config.isDemo) {
         // Paper trading: Lower thresholds to allow more trades for testing
-        minScore = config.mode === 'safe' ? 55 : config.mode === 'medium' || config.mode === 'custom' ? 40 : 30; // Increased from 25 to 30 for high-risk
+        minScore = config.mode === 'safe' ? 55 : config.mode === 'medium' || config.mode === 'custom' ? 40 : 25;
       }
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality (don't go below 25 in real mode, 20 in demo)
       if (config.mode === 'high' && age < 120 && momentum > 2) {
-        minScore = config.isDemo ? 20 : 25; // Still maintain quality standards
+        minScore = config.isDemo ? 15 : 20;
       }
 
       // If RPC is failing (analysis might be incomplete), be very lenient

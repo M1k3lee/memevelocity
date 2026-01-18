@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
 
+const SOL_FEE_RESERVE = 0.05; // Keep 0.05 SOL for fees (roughly 10-50 sell transactions)
+
 export interface ActiveTrade {
     mint: string;
     symbol: string;
@@ -292,10 +294,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }));
             }
         } catch (error: any) {
-            addLog(`Sell Error: ${error.message}`);
+            setStats(prev => ({
+                ...prev,
+                losses: prev.losses + 1
+            }));
+
+            const msg = error.message || "";
             // If error is "Account not found" or similar, it means we don't have the token
-            if (error.message?.includes("Account") || error.message?.includes("not found") || error.message?.includes("0.00 SOL")) {
-                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "closed" } : t));
+            if (msg.includes("Account") || msg.includes("not found") || msg.includes("0.00 SOL")) {
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                    ...t,
+                    status: "closed",
+                    currentPrice: 0,
+                    pnlPercent: -100
+                } : t));
             } else {
                 // Otherwise, put it back to open so the bot/user can try again
                 setActiveTrades(prev => prev.map(t => t.mint === mint && t.status === "selling" ? { ...t, status: "open" } : t));
@@ -721,12 +733,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             return;
         }
 
-        // Pre-trade balance check: Amount + Priority Fee (~0.001) + Account Rent Buffer (0.002)
-        const safetyBuffer = amountSol <= 0.05 ? 0.01 : 0.025;
+        // Pre-trade balance check: Amount + Reserve (0.05)
+        // This ensures the user never gets stuck with no SOL for sell fees
         try {
             const bal = await getBalance(wallet.publicKey.toBase58(), connection);
-            if (bal < amountSol + safetyBuffer) {
-                addLog(`Error: Insufficient balance. Have ${bal.toFixed(4)} SOL, need ~${(amountSol + safetyBuffer).toFixed(4)} SOL (incl. fees/rent)`);
+            if (bal < amountSol + SOL_FEE_RESERVE) {
+                addLog(`Error: Insufficient balance. Have ${bal.toFixed(4)} SOL, need ~${(amountSol + SOL_FEE_RESERVE).toFixed(4)} SOL (incl. ${SOL_FEE_RESERVE} SOL reserve for fees)`);
                 return;
             }
         } catch (e) { }
@@ -811,8 +823,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     // Only close if it's been at least 1 minute and balance is still 0
                     const age = Date.now() - (trade.lastPriceChangeTime || 0);
                     if (age > 60000) {
-                        setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? { ...t, status: "closed" } : t));
-                        addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as closed.`);
+                        setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
+                            ...t,
+                            status: "closed",
+                            currentPrice: 0,
+                            pnlPercent: -100
+                        } : t));
+                        setStats(prev => ({ ...prev, losses: prev.losses + 1 }));
+                        addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as RUG loss.`);
                     } else {
                         addLog(`Synced: ${trade.symbol} balance not found yet, retrying later...`);
                     }

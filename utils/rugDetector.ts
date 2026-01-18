@@ -6,8 +6,8 @@ import { TokenData } from '../components/LiveFeed';
  */
 
 // Track recently seen token names to detect copycat scams
-const recentTokenNames = new Map<string, number>(); // name -> timestamp
-const NAME_COOLDOWN = 5 * 60 * 1000; // 5 minutes - reject tokens with same name seen recently
+const recentTokenNames = new Map<string, { timestamp: number, mint: string }>(); // name -> {timestamp, mint}
+const NAME_COOLDOWN = 5 * 60 * 1000; // 5 minutes
 
 // Suspicious name patterns that indicate scams
 // These are common scam token names that scammers use
@@ -36,8 +36,8 @@ const SUSPICIOUS_PATTERNS = [
 // Clean up old entries periodically
 setInterval(() => {
     const now = Date.now();
-    for (const [name, timestamp] of recentTokenNames.entries()) {
-        if (now - timestamp > NAME_COOLDOWN) {
+    for (const [name, data] of recentTokenNames.entries()) {
+        if (now - data.timestamp > NAME_COOLDOWN) {
             recentTokenNames.delete(name);
         }
     }
@@ -72,33 +72,31 @@ export function detectRug(
     if (name) {
         const normalizedName = name.toLowerCase().trim();
         const lastSeen = recentTokenNames.get(normalizedName);
-        
-        if (lastSeen) {
-            const timeSinceLastSeen = Date.now() - lastSeen;
+        if (lastSeen && lastSeen.mint !== token.mint) {
+            const timeSinceLastSeen = Date.now() - lastSeen.timestamp;
             // If we've seen this name recently (within cooldown), it's likely a copycat
             if (timeSinceLastSeen < NAME_COOLDOWN) {
-                // In high-risk mode, be more lenient but still warn
+                // In high-risk mode, be more lenient
                 if (riskMode === 'high') {
-                    // Only reject if seen very recently (within 2 minutes)
-                    if (timeSinceLastSeen < 2 * 60 * 1000) {
+                    // Only reject if seen very recently (within 60s)
+                    if (timeSinceLastSeen < 60 * 1000) {
                         isRug = true;
                         confidence = 95;
-                        reason = `🚨 COPYCAT SCAM: Token name "${token.symbol}" was seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago - likely copycat rug`;
+                        reason = `🚨 COPYCAT SCAM: Symbol "${token.symbol}" match found (${(timeSinceLastSeen / 1000).toFixed(0)}s ago)`;
                     } else {
-                        warnings.push(`⚠️ Duplicate name detected: "${token.symbol}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`);
-                        confidence = 60;
+                        warnings.push(`⚠️ Duplicate symbol: "${token.symbol}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`);
+                        confidence = 40;
                     }
                 } else {
-                    // Safe/Medium mode: Reject any duplicate name within cooldown
                     isRug = true;
                     confidence = 95;
-                    reason = `🚨 COPYCAT SCAM: Token name "${token.symbol}" was seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago - likely copycat rug`;
+                    reason = `🚨 COPYCAT SCAM: Symbol "${token.symbol}" match found (${(timeSinceLastSeen / 1000).toFixed(0)}s ago)`;
                 }
             }
         }
-        
-        // Record this name for future duplicate detection
-        recentTokenNames.set(normalizedName, Date.now());
+
+        // Record this name + mint for future detection
+        recentTokenNames.set(normalizedName, { timestamp: Date.now(), mint: token.mint });
     }
 
     // === Suspicious Name Patterns ===
@@ -154,13 +152,13 @@ export function detectRug(
             warnings.push(`⚠️ Very short name: "${token.symbol}" (${name.length} chars) - may be scam`);
             confidence = Math.max(confidence, 30);
         }
-        
+
         // Names with only numbers are suspicious
         if (/^\d+$/.test(name) && riskMode !== 'high') {
             warnings.push(`⚠️ Name is only numbers: "${token.symbol}" - suspicious`);
             confidence = Math.max(confidence, 40);
         }
-        
+
         // Names with excessive special characters
         const specialCharRatio = (name.match(/[^a-z0-9]/g) || []).length / name.length;
         if (specialCharRatio > 0.5 && name.length > 3) {
@@ -182,11 +180,11 @@ export function detectRug(
  */
 export function quickRugCheck(token: TokenData): { passed: boolean; reason?: string } {
     const detection = detectRug(token, 'medium'); // Use medium for quick check
-    
+
     if (detection.isRug) {
         return { passed: false, reason: detection.reason };
     }
-    
+
     return { passed: true };
 }
 
@@ -203,13 +201,13 @@ export function clearNameCache(): void {
 export function getRugStats(): { totalNamesTracked: number; recentNames: string[] } {
     const now = Date.now();
     const recentNames: string[] = [];
-    
-    for (const [name, timestamp] of recentTokenNames.entries()) {
-        if (now - timestamp < NAME_COOLDOWN) {
+
+    for (const [name, data] of recentTokenNames.entries()) {
+        if (now - data.timestamp < NAME_COOLDOWN) {
             recentNames.push(name);
         }
     }
-    
+
     return {
         totalNamesTracked: recentTokenNames.size,
         recentNames: recentNames.slice(0, 20) // Last 20
