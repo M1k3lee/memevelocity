@@ -304,14 +304,14 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                             type="range" min="0.01" max="1" step="0.01"
                             value={amount}
                             onChange={(e) => setAmount(parseFloat(e.target.value))}
-                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.05)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
+                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.02)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
                         />
-                        {amount + 0.05 > (realBalance || 0) && !isDemo && (
+                        {amount + 0.02 > (realBalance || 0) && !isDemo && (
                             <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
-                                <AlertTriangle size={10} /> Insufficient balance (need ~0.05 SOL reserve for fees).
+                                <AlertTriangle size={10} /> Insufficient balance (need ~0.02 SOL reserve for fees).
                             </p>
                         )}
-                        {amount < 0.05 && !isDemo && (
+                        {amount < 0.02 && !isDemo && (
                             <div className="mt-2 p-2 bg-purple-500/10 border border-purple-500/20 rounded">
                                 <p className="text-[10px] text-purple-400 font-bold mb-1 flex items-center gap-1">
                                     🚀 Micro-Growth Strategy Recommended

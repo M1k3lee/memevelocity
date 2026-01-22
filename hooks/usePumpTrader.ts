@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
 
-const SOL_FEE_RESERVE = 0.05; // Keep 0.05 SOL for fees (roughly 10-50 sell transactions)
+const SOL_FEE_RESERVE = 0.02; // Reduced from 0.05 to allow small balance trading
 
 export interface ActiveTrade {
     mint: string;
@@ -208,8 +208,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             // Set status to "selling" to prevent parallel attempts
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
 
-            // Scaled Priority Fee: 0.001 SOL base
-            const priorityFee = tradeAmountPaid <= 0.05 ? 0.001 : Math.max(0.001, Math.min(0.003, tradeAmountPaid * 0.05));
+            // Scaled Priority Fee: Extremely low for small trades to save balance
+            const priorityFee = tradeAmountPaid <= 0.05 ? 0.0003 : Math.max(0.0005, Math.min(0.002, tradeAmountPaid * 0.02));
 
             let transactionBuffer;
             try {
@@ -294,8 +294,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             // Revert status to OPEN if transaction just failed to land (prevent phantom losses)
             if (msg.includes("Account") || msg.includes("not found")) {
-                // Real rug/loss - only if not already closed
+                // Real rug/loss - remove and record final loss
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
+
+                // Only subtract if not already handled by sync
+                const lossAmount = trade.amountSolPaid || 0;
+                setStats(prev => ({
+                    ...prev,
+                    totalProfit: prev.totalProfit - lossAmount,
+                    losses: prev.losses + 1
+                }));
             } else {
                 // Temporary failure (slippage/gas), allow retry
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
@@ -752,8 +760,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } catch (e) { }
 
         try {
-            // Lower priority fee for small trades: 0.001 SOL or 2% of trade, whichever is smaller.
-            const priorityFee = amountSol <= 0.05 ? 0.001 : Math.max(0.001, Math.min(0.005, amountSol * 0.1));
+            // Lower priority fee for small trades: saving every lamport
+            const priorityFee = amountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, amountSol * 0.05));
 
             const transactionBuffer = await getTradeTransaction({
                 publicKey: wallet.publicKey.toBase58(),

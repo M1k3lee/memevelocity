@@ -138,7 +138,10 @@ export default function Home() {
     if (!config.isRunning) return;
 
     // 1. DEDUPLICATION (Return if already handled)
-    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) return;
+    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) {
+      // Allow re-analysis if we are explicitly retrying
+      if (!isRetrying) return;
+    }
 
     // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
     const timeSinceLastTrade = Date.now() - lastTradeTime;
@@ -151,12 +154,8 @@ export default function Home() {
 
     // Check currently active trades to prevent duplicate positions
     if (activeTrades.some(t => t.mint === token.mint && t.status !== 'closed')) {
-      processedMints.current.add(token.mint); // Mark as handled since we own it
       return;
     }
-
-    // 3. LOCK (Final gatekeeper)
-    processedMints.current.add(token.mint);
 
     // === ADVANCED RUG DETECTION (Early Filter) ===
     // This catches obvious scams BEFORE expensive analysis
@@ -204,8 +203,8 @@ export default function Home() {
     }
 
     // Auto-stop if balance is critical (ONLY for real trading)
-    // We stop if balance is less than 0.05 SOL + next trade amount to ensure we always have reserve for fees
-    const MIN_RESERVE = 0.05;
+    // We stop if balance is less than 0.02 SOL + next trade amount to ensure we always have reserve for fees
+    const MIN_RESERVE = 0.02;
     if (!config.isDemo && realBalance < (config.amount + MIN_RESERVE)) {
       addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot to save fee reserve.`);
       setConfig((prev: any) => ({ ...prev, isRunning: false }));
@@ -540,7 +539,8 @@ export default function Home() {
       // Use user-defined slippage if available, otherwise fall back to adaptive
       const slippage = config.advanced?.slippage || ((config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15);
 
-      processedMints.current.add(token.mint); // Finalized: Attempting Buy
+      // Finalize: Token successfully passed all filters
+      processedMints.current.add(token.mint);
       await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice);
     } catch (error: any) {
       addLog(`❌ Analysis Error for ${token.symbol}: ${error.message}`);
