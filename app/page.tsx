@@ -417,7 +417,12 @@ export default function Home() {
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
 
         // VELOCITY FAST TRACK: New tokens (<60s) with explosive initial volume
-        if (age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1) {
+        // PLUS BASIC RUG CHECK: Don't buy obvious scams even if they are fast
+        const isObviousRug = token.name.toLowerCase().includes("rug") ||
+          token.name.toLowerCase().includes("test") ||
+          token.symbol.toLowerCase().includes("rug");
+
+        if (!isObviousRug && age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1) {
           addLog(`🏎️ VELOCITY FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum`);
           addLog(`   🎯 EARLY IGNITION: Token is launching with conviction. Entering trade.`);
 
@@ -522,7 +527,7 @@ export default function Home() {
       // but we still define the display minScore here
       let minScore = 30;
       if (config.mode === 'safe') minScore = 65;
-      else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
+      else if (config.mode === 'medium' || config.mode === 'custom') minScore = 45;  // Lowered from 50 to 45
       else if (config.mode === 'velocity') minScore = 40;
       else if (config.mode === 'high') minScore = 30;
 

@@ -57,33 +57,33 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    // IMPROVED MEDIUM MODE: Tighter controls based on trade analysis
+    // BALANCED MEDIUM MODE: Sweet spot between quality and quantity
     const minBondingCurve = config?.minBondingCurve ?? (
         riskMode === 'safe' ? 5 :
-            riskMode === 'medium' ? 2 :  // Changed from 0.5 to 2 - avoid ultra-early rugs
+            riskMode === 'medium' ? 1 :  // Relaxed from 2 to 1 - catch more early opportunities
                 riskMode === 'velocity' ? 0.2 :
                     0
     );
     const maxBondingCurve = config?.maxBondingCurve ?? (
         riskMode === 'safe' ? 50 :
-            riskMode === 'medium' ? 60 :  // Changed from 80 to 60 - avoid late entries
+            riskMode === 'medium' ? 65 :  // Relaxed from 60 to 65 - allow slightly later entries
                 80
     );
     const minLiquidity = config?.minLiquidity ?? (
         riskMode === 'high' ? 1 :
             riskMode === 'velocity' ? 2 :
-                riskMode === 'medium' ? 5 :
+                riskMode === 'medium' ? 4 :  // Relaxed from 5 to 4 - catch more tokens
                     10
     );
     const maxDev = config?.maxDev ?? (
         riskMode === 'high' ? 20 :
-            riskMode === 'medium' ? 12 :  // Changed from 20 to 12 - critical for avoiding rugs
+            riskMode === 'medium' ? 15 :  // Relaxed from 12 to 15 - balanced approach
                 10
     );
     const maxTop10 = config?.maxTop10 ?? (
         riskMode === 'high' ? 80 :
             riskMode === 'velocity' ? 75 :
-                riskMode === 'medium' ? 50 :  // Changed from 60 to 50 - reduce whale risk
+                riskMode === 'medium' ? 55 :  // Relaxed from 50 to 55 - allow some concentration
                     60
     );
     const minVelocity = config?.minVelocity ?? 0;
@@ -160,8 +160,8 @@ export async function analyzeEnhanced(
         const currentMomentum = (age > 0) ? (liquidityDelta / age) * 60 : 0;
 
         let effectiveMinCurve = minBondingCurve;
-        // Improved thresholds: safe=1.5, medium=1.2, high/velocity=0.8
-        const momentumThreshold = riskMode === 'safe' ? 1.5 : riskMode === 'medium' ? 1.2 : 0.8;
+        // Balanced thresholds: safe=1.5, medium=1.0, high/velocity=0.6
+        const momentumThreshold = riskMode === 'safe' ? 1.5 : riskMode === 'medium' ? 1.0 : 0.6;
         if (currentMomentum > momentumThreshold && bondingCurveProgress < minBondingCurve) {
             effectiveMinCurve = 0; // Waiver for high momentum
             strengths.push(`🚀 Momentum Waiver: Strong growth (${currentMomentum.toFixed(1)} SOL/min) allows early entry`);
