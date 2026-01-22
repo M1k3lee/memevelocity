@@ -57,7 +57,7 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 2 : 0);
+    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 1.0 : 0);
     const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
     const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'medium' ? 5 : 10);
     const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : 10);
@@ -135,7 +135,8 @@ export async function analyzeEnhanced(
         const currentMomentum = (age > 0) ? (liquidityDelta / age) * 60 : 0;
 
         let effectiveMinCurve = minBondingCurve;
-        if (currentMomentum > 1.5 && bondingCurveProgress < minBondingCurve) {
+        const momentumThreshold = riskMode === 'safe' ? 1.5 : 0.8;
+        if (currentMomentum > momentumThreshold && bondingCurveProgress < minBondingCurve) {
             effectiveMinCurve = 0; // Waiver for high momentum
             strengths.push(`🚀 Momentum Waiver: Strong growth (${currentMomentum.toFixed(1)} SOL/min) allows early entry`);
             score += 10; // High momentum bonus

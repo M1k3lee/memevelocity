@@ -146,6 +146,7 @@ export default function Home() {
 
     if (isRetrying) {
       pendingRetries.current.delete(token.mint);
+      addLog(`🔄 Re-analyzing ${token.symbol} (Wait period over)...`);
     }
 
     // 1. DEDUPLICATION (Return if already handled)
@@ -512,7 +513,9 @@ export default function Home() {
           return;
         }
 
-        if (!isRetrying) {
+        if (isRetrying) {
+          addLog(`🚫 Retry Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
+        } else {
           addLog(`🚫 Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
         }
         return;
