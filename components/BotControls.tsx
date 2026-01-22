@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Settings, AlertTriangle } from 'lucide-react';
+import { Play, Square, Settings, AlertTriangle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface AdvancedConfig {
@@ -306,10 +306,20 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                             onChange={(e) => setAmount(parseFloat(e.target.value))}
                             className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.05)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
                         />
-                        {amount + 0.05 > realBalance && !isDemo && (
+                        {amount + 0.05 > (realBalance || 0) && !isDemo && (
                             <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
                                 <AlertTriangle size={10} /> Insufficient balance (need ~0.05 SOL reserve for fees).
                             </p>
+                        )}
+                        {amount < 0.05 && !isDemo && (
+                            <div className="mt-2 p-2 bg-purple-500/10 border border-purple-500/20 rounded">
+                                <p className="text-[10px] text-purple-400 font-bold mb-1 flex items-center gap-1">
+                                    🚀 Micro-Growth Strategy Recommended
+                                </p>
+                                <p className="text-[9px] text-gray-400 leading-tight">
+                                    Small trades have ~20% overhead due to SOL Rent (0.002) + Fees. Target 50-100% gains (High Risk) to grow effectively.
+                                </p>
+                            </div>
                         )}
                     </div>
 

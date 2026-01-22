@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { ArrowUpRight, ArrowDownRight, XCircle, RefreshCw, Search, ExternalLink } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, XCircle, RefreshCw, Search, ExternalLink, Trash2 } from 'lucide-react';
 import { ActiveTrade } from '../hooks/usePumpTrader';
 
 interface ActiveTradesProps {
@@ -10,9 +10,11 @@ interface ActiveTradesProps {
     onSync?: () => void;
     onRecover?: () => void;
     onClearAll?: () => void;
+    onCleanup?: () => void;
+    isCleaning?: boolean;
 }
 
-export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClearAll }: ActiveTradesProps) {
+export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClearAll, onCleanup, isCleaning }: ActiveTradesProps) {
     const openTrades = trades.filter(t => t.status === "open" || t.status === "selling");
 
     if (openTrades.length === 0) {
@@ -33,6 +35,15 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                         {onClearAll && (
                             <button onClick={onClearAll} className="text-xs flex items-center gap-1 text-red-500 hover:text-white transition-colors">
                                 <XCircle size={12} /> Clear All
+                            </button>
+                        )}
+                        {onCleanup && (
+                            <button
+                                onClick={onCleanup}
+                                disabled={isCleaning}
+                                className={`text-xs flex items-center gap-1 text-green-500 hover:text-white transition-colors ${isCleaning ? 'animate-pulse opacity-50' : ''}`}
+                            >
+                                <Trash2 size={12} /> {isCleaning ? 'Cleaning...' : 'Rescue SOL'}
                             </button>
                         )}
                     </div>
@@ -73,6 +84,16 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                             title="Clear local view"
                         >
                             <XCircle size={16} />
+                        </button>
+                    )}
+                    {onCleanup && (
+                        <button
+                            onClick={onCleanup}
+                            disabled={isCleaning}
+                            className={`p-2 transition-all ${isCleaning ? 'text-green-500 animate-spin' : 'text-gray-400 hover:text-green-500'}`}
+                            title="Rescue SOL Rent from empty accounts"
+                        >
+                            <Trash2 size={16} />
                         </button>
                     )}
                 </div>

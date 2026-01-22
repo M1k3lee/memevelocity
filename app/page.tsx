@@ -109,6 +109,8 @@ export default function Home() {
     setDemoMode,
     demoBalance,
     stats,
+    isCleaning,
+    cleanupWaste,
     vaultBalance,
     profitProtectionEnabled,
     profitProtectionPercent,
@@ -895,7 +897,7 @@ export default function Home() {
           {/* Main Center Area (Stats & Active Trades) */}
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
-              <ActiveTrades trades={activeTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} />
+              <ActiveTrades trades={activeTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} onCleanup={cleanupWaste} isCleaning={isCleaning} />
               <TradeHistory trades={tradeHistory} />
             </div>
           </div>

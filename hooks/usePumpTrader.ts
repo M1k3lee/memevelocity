@@ -43,6 +43,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const [isDemo, setIsDemo] = useState(false);
     const [demoBalance, setDemoBalance] = useState(10.0);
     const [stats, setStats] = useState({ totalProfit: 0, wins: 0, losses: 0 });
+    const [isCleaning, setIsCleaning] = useState(false);
 
     // Profit Protection Vault
     const [vaultBalance, setVaultBalance] = useState(0);
@@ -154,7 +155,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const revenue = rawRevenue * 0.97; // 3% friction
                 const profit = revenue - costBasis;
 
-                setDemoBalance(prev => prev + costBasis + profit);
+                // Simulate Rent Reclaim (0.00204 SOL) on 100% sell in paper mode for accuracy
+                const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
+                setDemoBalance(prev => prev + costBasis + profit + rentReclaim);
 
                 setStats(prev => ({
                     totalProfit: prev.totalProfit + profit,
@@ -636,9 +639,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             buyPrice = buyPrice * 1.015;
 
             // Simulate 1% Pump.fun fee on entry (Realistic calculation)
-            // Real trades pay 1% fee currently
             const effectiveSol = amountSol * 0.99;
-            const amountTokens = buyPrice > 0 ? effectiveSol / buyPrice : effectiveSol;
+
+            // PAPER TRADING REALISM: Deduct Rent (0.002 SOL)
+            // This is why live trading feels harder - rent eats ~10% of small trades.
+            const paperRent = 0.00204;
+            const tradeableSol = effectiveSol - paperRent;
+
+            const amountTokens = buyPrice > 0 ? tradeableSol / buyPrice : tradeableSol;
+
+            if (tradeableSol <= 0) {
+                addLog(`[DEMO] ❌ Trade amount too small to cover SOL rent (0.002 SOL).`);
+                setDemoBalance(prev => prev + amountSol);
+                return;
+            }
 
             const newTrade: ActiveTrade = {
                 mint,
@@ -837,7 +851,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? { ...t, amountTokens: bal } : t));
                     addLog(`Synced: Verified ${bal.toFixed(2)} tokens for ${trade.symbol}.`);
                 } else {
-                    // Only close if it's been at least 1 minute and balance is still 0
                     const age = Date.now() - (trade.lastPriceChangeTime || 0);
                     if (age > 60000) {
                         const closedTrade = {
@@ -855,7 +868,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             totalProfit: prev.totalProfit - lossAmount,
                             losses: prev.losses + 1
                         }));
-                        addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as RUG loss (-${lossAmount.toFixed(4)} SOL).`);
+                        addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as RUG loss.`);
                     } else {
                         addLog(`Synced: ${trade.symbol} balance not found yet, retrying later...`);
                     }
@@ -863,6 +876,101 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             } catch (e) {
                 console.error("Sync error for", trade.symbol, e);
             }
+        }
+
+        try {
+            const currentBal = await getBalance(wallet.publicKey.toBase58(), connection);
+            if (currentBal < 0.05) {
+                addLog("Checking for recoverable SOL rent...");
+                const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
+                const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                    programId: TOKEN_PROGRAM_ID
+                });
+
+                let reclaimedCount = 0;
+                for (const acc of accounts.value) {
+                    const info = acc.account.data.parsed.info;
+                    if (info.tokenAmount.uiAmount <= 0) {
+                        const mint = info.mint;
+                        if (!activeTrades.some(t => t.mint === mint)) {
+                            reclaimedCount++;
+                        }
+                    }
+                }
+                if (reclaimedCount > 0) {
+                    addLog(`💡 Found ${reclaimedCount} empty token accounts worth ~${(reclaimedCount * 0.00204).toFixed(4)} SOL.`);
+                    addLog(`👉 Use SolIncinerator or a similar tool to reclaim this rent.`);
+                }
+            }
+        } catch (e) {
+            console.error("Rent check error", e);
+        }
+    };
+
+    const cleanupWaste = async () => {
+        if (!wallet || isDemo) return;
+        setIsCleaning(true);
+        addLog("🧹 Starting wallet cleanup to rescue SOL rent...");
+
+        try {
+            const { Transaction, PublicKey, SystemProgram } = await import('@solana/web3.js');
+            const { TOKEN_PROGRAM_ID, createCloseAccountInstruction } = await import('@solana/spl-token');
+
+            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                programId: TOKEN_PROGRAM_ID
+            });
+
+            const emptyAccounts = accounts.value.filter(acc => {
+                const info = acc.account.data.parsed.info;
+                const balance = info.tokenAmount.uiAmount;
+                const mint = info.mint;
+                // Only close if balance is 0 AND not an active trade
+                return balance <= 0 && !activeTrades.some(t => t.mint === mint);
+            });
+
+            if (emptyAccounts.length === 0) {
+                addLog("✨ Wallet is already clean! No rent to rescue.");
+                setIsCleaning(false);
+                return;
+            }
+
+            addLog(`📝 Found ${emptyAccounts.length} accounts to close. Preparing rescue team...`);
+
+            // Limit to ~20 per transaction for safety
+            const batch = emptyAccounts.slice(0, 20);
+            const transaction = new Transaction();
+
+            for (const acc of batch) {
+                transaction.add(
+                    createCloseAccountInstruction(
+                        acc.pubkey,
+                        wallet.publicKey,
+                        wallet.publicKey,
+                        [],
+                        TOKEN_PROGRAM_ID
+                    )
+                );
+            }
+
+            const { blockhash } = await connection.getLatestBlockhash();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = wallet.publicKey;
+
+            transaction.sign(wallet);
+            const signature = await connection.sendRawTransaction(transaction.serialize());
+
+            addLog(`🚀 Rescue Mission Sent: ${signature.substring(0, 8)}...`);
+            await connection.confirmTransaction(signature);
+
+            const reclaimed = batch.length * 0.00204;
+            addLog(`✅ SUCCESS! Rescued ~${reclaimed.toFixed(4)} SOL from the void.`);
+            toast.success(`Rescued ${reclaimed.toFixed(4)} SOL!`);
+
+        } catch (error: any) {
+            addLog(`❌ Cleanup Failed: ${error.message}`);
+            toast.error("Cleanup Failed");
+        } finally {
+            setIsCleaning(false);
         }
     };
 
@@ -918,6 +1026,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         localStorage.removeItem('pump_trade_history');
         localStorage.removeItem('pump_stats');
         addLog("Summary: Portfolio, Trade History and Total PnL statistics have been reset.");
+
+        // Suggest rent reclaim
+        addLog("💡 Pro Tip: Use 'Sync' to check for any SOL rent you can reclaim from old accounts.");
     };
 
     // Helper to update a trade's properties (for staged profit taking, etc.)
@@ -993,6 +1104,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         setDemoMode,
         demoBalance,
         stats,
+        isCleaning,
+        cleanupWaste,
         // Vault
         vaultBalance,
         profitProtectionEnabled,
