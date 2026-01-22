@@ -48,7 +48,7 @@ export async function analyzeEnhanced(
     token: TokenData,
     connection: Connection,
     heliusKey?: string,
-    riskMode: 'safe' | 'medium' | 'high' = 'medium',
+    riskMode: 'safe' | 'medium' | 'high' | 'velocity' = 'medium',
     config?: AdvancedConfig
 ): Promise<EnhancedAnalysis> {
     const reasons: string[] = [];
@@ -57,11 +57,11 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 0.5 : 0);
+    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 0.5 : riskMode === 'velocity' ? 0.2 : 0);
     const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
-    const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'medium' ? 5 : 10);
+    const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'velocity' ? 2 : riskMode === 'medium' ? 5 : 10);
     const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : riskMode === 'medium' ? 20 : 10);
-    const maxTop10 = config?.maxTop10 ?? (riskMode === 'high' ? 80 : 60);
+    const maxTop10 = config?.maxTop10 ?? (riskMode === 'high' ? 80 : riskMode === 'velocity' ? 75 : 60);
     const minVelocity = config?.minVelocity ?? 0;
     const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
 
@@ -69,9 +69,10 @@ export async function analyzeEnhanced(
     // New tokens (<2 mins) only need 15-20 holders to be "safe"
     const minHolders = config?.minHolderCount ?? (
         riskMode === 'high' ? 10 :
-            age < 60 ? 15 :
-                age < 120 ? 25 :
-                    50
+            riskMode === 'velocity' ? 10 :
+                age < 60 ? 15 :
+                    age < 120 ? 25 :
+                        50
     );
 
     try {
@@ -437,7 +438,8 @@ export async function analyzeEnhanced(
             passed = score >= 50 && bondingCurveProgress >= minBondingCurve && bondingCurveProgress <= maxBondingCurve;
         } else {
             // Standard: Balanced
-            passed = score >= 30 && bondingCurveProgress >= minBondingCurve && bondingCurveProgress <= maxBondingCurve;
+            const minScore = riskMode === 'velocity' ? 40 : 30;
+            passed = score >= minScore && bondingCurveProgress >= minBondingCurve && bondingCurveProgress <= maxBondingCurve;
         }
 
         return {

@@ -817,6 +817,32 @@ export default function Home() {
         return;
       }
 
+      // === VELOCITY MODE: CASCADING TAKE PROFIT (CTP) ===
+      // Sells 25% of CURRENT balance at 25%, 50%, and 75% profit intervals
+      if (config.mode === 'velocity' && trade.buyPrice > 0) {
+        // TP at 25%
+        if (currentPnl >= 25 && !trade.partialSells[25]) {
+          addLog(`💰 VELOCITY CTP (25%): ${trade.symbol} hit 25% profit. Selling 25% of tokens...`);
+          sellToken(trade.mint, 25);
+          updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 25: true } });
+          return;
+        }
+        // TP at 50%
+        if (currentPnl >= 50 && !trade.partialSells[51]) { // Use 51 to avoid overlap if 50 is used elsewhere
+          addLog(`💰 VELOCITY CTP (50%): ${trade.symbol} hit 50% profit. Selling 25% of remaining tokens...`);
+          sellToken(trade.mint, 25);
+          updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 51: true } });
+          return;
+        }
+        // TP at 75%
+        if (currentPnl >= 75 && !trade.partialSells[75]) {
+          addLog(`💰 VELOCITY CTP (75%): ${trade.symbol} hit 75% profit. Selling 25% of remaining tokens (25% Moonbag remains)...`);
+          sellToken(trade.mint, 25);
+          updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 75: true } });
+          return;
+        }
+      }
+
       // Standard take profit (if no staged exits configured)
       if (!takeProfit2 && currentPnl >= takeProfit) {
         addLog(`🎯 TAKE PROFIT Triggered for ${trade.symbol} at ${currentPnl.toFixed(2)}%`);

@@ -24,7 +24,7 @@ interface BotConfig {
     amount: number;
     takeProfit: number;
     stopLoss: number;
-    mode: "safe" | "medium" | "high" | "scalp" | "first" | "custom";
+    mode: "safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom";
     isRunning: boolean;
     isDemo: boolean;
     isSimulating: boolean;
@@ -42,7 +42,7 @@ interface BotControlsProps {
 
 export default function BotControls({ onConfigChange, walletConnected, realBalance = 0 }: BotControlsProps) {
     const [isRunning, setIsRunning] = useState(false);
-    const [mode, setMode] = useState<"safe" | "medium" | "high" | "scalp" | "first" | "custom">("safe");
+    const [mode, setMode] = useState<"safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom">("safe");
     const [amount, setAmount] = useState(0.01);
     const [takeProfit, setTakeProfit] = useState(20);
     const [stopLoss, setStopLoss] = useState(10);
@@ -87,7 +87,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         });
     }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
-    const setPreset = (preset: "safe" | "medium" | "high" | "scalp" | "first" | "custom") => {
+    const setPreset = (preset: "safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom") => {
         setMode(preset);
         if (preset === "safe") {
             setAmount(0.01);
@@ -184,6 +184,25 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 avoidSnipers: false,
                 slippage: 40
             });
+        } else if (preset === "velocity") {
+            setAmount(0.015);
+            setTakeProfit(100);
+            setStopLoss(20);
+            setAdvancedConfig({
+                minLiquidity: 2,
+                maxLiquidity: 5000,
+                minVolume: 1,
+                minHolderCount: 10,
+                maxTop10: 75,
+                maxDev: 20,
+                minBondingCurve: 0.2,
+                maxBondingCurve: 80,
+                minVelocity: 0.3,
+                rugCheckStrictness: "standard",
+                requireSocials: false,
+                avoidSnipers: false,
+                slippage: 30
+            });
         }
     };
 
@@ -218,33 +237,40 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                         onClick={() => setPreset("medium")}
                         className={`p-3 rounded border transition-all ${mode === "medium" ? "border-[var(--warning)] bg-[rgba(255,204,0,0.1)] text-[var(--warning)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold">Medium</div>
+                        <div className="font-bold whitespace-nowrap">Medium</div>
                         <div className="text-[10px] opacity-70">Score: ≥50 | Balanced</div>
+                    </button>
+                    <button
+                        onClick={() => setPreset("velocity")}
+                        className={`p-3 rounded border transition-all ${mode === "velocity" ? "border-[#ffcc00] bg-[rgba(255,204,0,0.1)] text-[#ffcc00]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                    >
+                        <div className="font-bold whitespace-nowrap">🎯 VELOCITY</div>
+                        <div className="text-[10px] opacity-70">Educated Gamble</div>
                     </button>
                     <button
                         onClick={() => setPreset("high")}
                         className={`p-3 rounded border transition-all ${mode === "high" ? "border-[var(--danger)] bg-[rgba(255,0,85,0.1)] text-[var(--danger)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold">High Risk</div>
+                        <div className="font-bold whitespace-nowrap">High Risk</div>
                         <div className="text-[10px] opacity-70">Score: ≥30 | Aggressive</div>
                     </button>
                     <button
                         onClick={() => setPreset("scalp")}
                         className={`p-3 rounded border transition-all ${mode === "scalp" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold">⚡ SCALP</div>
-                        <div className="text-[10px] opacity-70">Momentum | Quick Exits</div>
+                        <div className="font-bold whitespace-nowrap">⚡ SCALP</div>
+                        <div className="text-[10px] opacity-70">Momentum | Quick Exit</div>
                     </button>
                     <button
                         onClick={() => setPreset("first")}
                         className={`p-3 rounded border transition-all ${mode === "first" ? "border-[#ff00ff] bg-[rgba(255,0,255,0.1)] text-[#ff00ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold">🚀 FIRST</div>
+                        <div className="font-bold whitespace-nowrap">🚀 FIRST</div>
                         <div className="text-[10px] opacity-70">6s exit | Sniper Mode</div>
                     </button>
                     <button
                         onClick={() => setPreset("custom")}
-                        className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                        className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400 col-span-2"}`}
                     >
                         <div className="font-bold">Custom</div>
                         <div className="text-[10px] opacity-70">Manual control</div>
