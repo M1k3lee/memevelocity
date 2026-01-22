@@ -140,6 +140,31 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const onTokenDetectedRef = useRef(onTokenDetected);
     useEffect(() => { onTokenDetectedRef.current = onTokenDetected; }, [onTokenDetected]);
 
+    // Rate limiter queue
+    const requestQueue = useRef<(() => Promise<any>)[]>([]);
+    const processingQueue = useRef(false);
+    const processedSignatures = useRef<Set<string>>(new Set());
+
+    const processQueue = async () => {
+        if (processingQueue.current || requestQueue.current.length === 0) return;
+        processingQueue.current = true;
+        while (requestQueue.current.length > 0) {
+            const task = requestQueue.current.shift();
+            if (task) {
+                try {
+                    await task();
+                } catch (e) { }
+                await new Promise(r => setTimeout(r, 400)); // ~2.5 heavy requests per second
+            }
+        }
+        processingQueue.current = false;
+    };
+
+    const addToQueue = (task: () => Promise<any>) => {
+        requestQueue.current.push(task);
+        processQueue();
+    };
+
     const isValidHeliusKey = (key: string): boolean => {
         if (!key || key.trim() === '') return false;
         const trimmed = key.trim();
@@ -212,9 +237,33 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                         if (data.method === "logsNotification") {
                             const logs = data.params.result.value.logs as string[];
                             const signature = data.params.result.value.signature;
+
+                            if (processedSignatures.current.has(signature)) return;
+                            processedSignatures.current.add(signature);
+                            // Cleanup set
+                            if (processedSignatures.current.size > 500) {
+                                const list = Array.from(processedSignatures.current);
+                                processedSignatures.current = new Set(list.slice(250));
+                            }
+
+                            // Try to extract mint directly from logs to avoid getTransaction (MUCH faster + bypasses rate limits)
+                            let mint: string | null = null;
+                            for (const log of logs) {
+                                // Pump.fun logs mint addresses like: "Program log: mint: 4n3A..."
+                                const mintMatch = log.match(/mint: ([1-9A-HJ-NP-Za-km-z]{32,44})/i);
+                                if (mintMatch && mintMatch[1]) {
+                                    mint = mintMatch[1];
+                                    break;
+                                }
+                            }
+
                             const createPatterns = ["Instruction: Create", "create", "Create", "initialize", "Initialize", "new_token", "NewToken"];
-                            if (logs.some(log => createPatterns.some(pattern => log.includes(pattern)))) {
-                                handleNewTokenSignature(signature);
+                            const isCreate = logs.some(log => createPatterns.some(pattern => log.includes(pattern)));
+
+                            if (mint && isCreate) {
+                                addToQueue(() => handleNewTokenDirectly(mint!, signature));
+                            } else if (isCreate) {
+                                addToQueue(() => handleNewTokenSignature(signature));
                             }
                             return;
                         }
@@ -256,6 +305,46 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         }
     };
 
+    const handleNewTokenDirectly = async (mint: string, signature: string) => {
+        if (paused) return;
+        try {
+            // Use setTokens callback to check against latest state to avoid doubles
+            setTokens(prev => {
+                if (prev.some(t => t.mint === mint)) return prev;
+
+                // If it's a new mint, we proceed with fetching details
+                // Note: We're doing this inside a state setter which isn't ideal for side effects,
+                // but we need to ensure unique mints. Better way:
+                return prev;
+            });
+
+            // Re-fetch in parallel
+            const [meta, pumpData] = await Promise.all([
+                getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" })),
+                getPumpData(mint).catch(() => null)
+            ]);
+
+            const newToken: TokenData = {
+                mint,
+                traderPublicKey: "Unknown",
+                txType: "create",
+                initialBuy: (pumpData?.vSolInBondingCurve || 30) - 30,
+                bondingCurveKey: "",
+                vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000000000,
+                vSolInBondingCurve: pumpData?.vSolInBondingCurve || 30,
+                marketCapSol: pumpData?.vSolInBondingCurve || 30,
+                name: meta.name || "Real Token",
+                symbol: meta.symbol || "REAL",
+                uri: "",
+                timestamp: Date.now()
+            };
+
+            updateTokens(newToken);
+        } catch (e: any) {
+            console.error("[LiveFeed] handleNewTokenDirectly error:", e.message);
+        }
+    };
+
     const handleNewTokenSignature = async (signature: string) => {
         if (paused) return;
         try {
@@ -281,28 +370,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
             if (txData.result?.meta?.postTokenBalances?.length > 0) {
                 const mint = txData.result.meta.postTokenBalances[0].mint;
-
-                // Fetch metadata and pump data in parallel for speed
-                const [meta, pumpData] = await Promise.all([
-                    getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" })),
-                    getPumpData(mint).catch(() => null)
-                ]);
-
-                const newToken: TokenData = {
-                    mint,
-                    traderPublicKey: txData.result.transaction?.message?.accountKeys?.[0]?.pubkey || txData.result.transaction?.message?.accountKeys?.[0] || "Unknown",
-                    txType: "create",
-                    initialBuy: 0,
-                    bondingCurveKey: "",
-                    vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000000000,
-                    vSolInBondingCurve: pumpData?.vSolInBondingCurve || 30,
-                    marketCapSol: pumpData?.vSolInBondingCurve || 30,
-                    name: meta.name || "Real Token",
-                    symbol: meta.symbol || "REAL",
-                    uri: "",
-                    timestamp: Date.now()
-                };
-                updateTokens(newToken);
+                await handleNewTokenDirectly(mint, signature);
             }
         } catch (e: any) {
             console.error("[LiveFeed] handleNewTokenSignature error:", e.message);

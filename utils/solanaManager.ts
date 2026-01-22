@@ -238,6 +238,10 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
     if (metadataCache.has(mintAddress)) return metadataCache.get(mintAddress)!;
     if (!heliusKey) return { name: "Unknown", symbol: "???" };
 
+    // Check cooldown
+    const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
+    if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "..." };
+
     try {
         const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${heliusKey}`, {
             method: 'POST',
@@ -252,6 +256,7 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
 
         // Handle 429 specifically for metadata
         if (response.status === 429) {
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 5000);
             return { name: "Rate Limited", symbol: "429" };
         }
 

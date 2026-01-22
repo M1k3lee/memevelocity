@@ -433,7 +433,13 @@ export default function Home() {
       const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
       const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
 
-      // 1. SNIPER TRAP CHECK: If token pumped too fast (>20 SOL in <30s), it's likely a bot trap
+      // 1. MOMENTUM HURDLE: If token is >30s old and has < 0.1 SOL growth, it's inactive.
+      // This saves HUNDREDS of RPC calls by skipping "Dead Air" tokens.
+      if (age > 30 && liquidityGrowth < 0.1 && config.mode !== 'high' && config.mode !== 'first') {
+        return;
+      }
+
+      // 2. SNIPER TRAP CHECK: If token pumped too fast (>20 SOL in <30s), it's likely a bot trap
       if (age < 30 && liquidityGrowth > 20 && config.mode !== 'high' && config.mode !== 'first') {
         addLog(`🚨 Sniper Trap Avoided: ${token.symbol} pumped +${liquidityGrowth.toFixed(2)} SOL in ${age.toFixed(1)}s. Too risky.`);
         return;
