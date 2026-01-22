@@ -44,6 +44,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const [demoBalance, setDemoBalance] = useState(10.0);
     const [stats, setStats] = useState({ totalProfit: 0, wins: 0, losses: 0 });
     const [isCleaning, setIsCleaning] = useState(false);
+    const processingMintsRef = useRef<Set<string>>(new Set());
 
     // Profit Protection Vault
     const [vaultBalance, setVaultBalance] = useState(0);
@@ -130,16 +131,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     // Define sellToken early so it can be used in useEffect
     const sellToken = useCallback(async (mint: string, amountPercent: number = 100) => {
         if (!wallet && !isDemo) return;
+        if (processingMintsRef.current.has(mint)) return;
 
         // Find the trade in current state
         const trade = activeTrades.find(t => t.mint === mint);
-        if (!trade) return;
+        if (!trade || trade.status === "closed" || trade.status === "selling") return;
 
-        // Protection against concurrent sells or already closed trades
-        if (trade.status === "selling" || trade.status === "closed") {
-            return;
-        }
-
+        processingMintsRef.current.add(mint);
         addLog(`Attempting to SELL ${amountPercent}% of ${trade.symbol}...`);
 
         try {
@@ -183,6 +181,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Profit: ${profit.toFixed(4)} SOL`);
                 toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`);
+                processingMintsRef.current.delete(mint);
                 return;
             }
 
@@ -295,13 +294,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             // Revert status to OPEN if transaction just failed to land (prevent phantom losses)
             if (msg.includes("Account") || msg.includes("not found")) {
-                // Real rug/loss
+                // Real rug/loss - only if not already closed
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-                setStats(prev => ({ ...prev, totalProfit: prev.totalProfit - (trade.amountSolPaid || 0), losses: prev.losses + 1 }));
             } else {
                 // Temporary failure (slippage/gas), allow retry
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
             }
+        } finally {
+            processingMintsRef.current.delete(mint);
         }
     }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
 
@@ -593,6 +593,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             return;
         }
 
+        if (processingMintsRef.current.has(mint)) return;
+        processingMintsRef.current.add(mint);
+
         addLog(`Initiating ${isDemo ? '[DEMO] ' : ''}BUY for ${symbol} (${amountSol} SOL)...`);
 
         if (isDemo) {
@@ -836,6 +839,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             addLog(`Buy Failed: ${errorMsg}`);
             toast.error(`Buy Failed: ${symbol}`, { description: errorMsg });
+        } finally {
+            processingMintsRef.current.delete(mint);
         }
     };
 

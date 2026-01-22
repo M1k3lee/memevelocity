@@ -135,36 +135,28 @@ export default function Home() {
   };
 
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
-    if (!config.isRunning) {
-      return;
-    }
-    // Rate limiting: Minimum time between trades
+    if (!config.isRunning) return;
+
+    // 1. DEDUPLICATION (Return if already handled)
+    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) return;
+
+    // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
     const timeSinceLastTrade = Date.now() - lastTradeTime;
-    if (timeSinceLastTrade < minTimeBetweenTrades) {
-      addLog(`⏱️ Rate limit: Waiting ${((minTimeBetweenTrades - timeSinceLastTrade) / 1000).toFixed(1)}s before next trade`);
-      return;
-    }
+    if (timeSinceLastTrade < minTimeBetweenTrades) return;
 
-    // Limit concurrent trades
     const openTradesCount = activeTrades.filter(t => t.status === "open").length;
-    if (openTradesCount >= (config.maxConcurrentTrades || 1)) {
-      addLog(`Max open trades (${config.maxConcurrentTrades || 1}) reached, skipping ${token.symbol}.`);
-      return;
-    }
+    if (openTradesCount >= (config.maxConcurrentTrades || 1)) return;
 
-    if (!wallet && !config.isDemo) {
-      return;
-    }
-
-    // Duplication check within session (State + Ref for ultra-fast deduplication)
-    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) {
-      return;
-    }
+    if (!wallet && !config.isDemo) return;
 
     // Check currently active trades to prevent duplicate positions
     if (activeTrades.some(t => t.mint === token.mint && t.status !== 'closed')) {
+      processedMints.current.add(token.mint); // Mark as handled since we own it
       return;
     }
+
+    // 3. LOCK (Final gatekeeper)
+    processedMints.current.add(token.mint);
 
     // === ADVANCED RUG DETECTION (Early Filter) ===
     // This catches obvious scams BEFORE expensive analysis
