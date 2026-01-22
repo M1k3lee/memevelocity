@@ -33,6 +33,7 @@ export interface ActiveTrade {
     partialSells?: { [percent: number]: boolean }; // Track staged sells (50%, 30%, etc.)
     originalAmount?: number; // Track original position size for partial sells
     lastLiquidity?: number; // Track liquidity for rug detection
+    isPaper?: boolean; // New: Tracks if this was a demo/paper trade
 }
 
 export const usePumpTrader = (wallet: Keypair | null, connection: Connection, heliusKey?: string) => {
@@ -61,7 +62,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
         const savedStats = localStorage.getItem('pump_stats');
         if (savedStats) {
-            try { setStats(JSON.parse(savedStats)); } catch (e) { }
+            try {
+                const s = JSON.parse(savedStats);
+                // Reset stats if they are insanely high (cleanup old paper data if user wants, but here we just load)
+                setStats(s);
+            } catch (e) { }
         }
         const savedVault = localStorage.getItem('pump_vault_balance');
         if (savedVault) {
@@ -140,10 +145,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 if (profitProtectionEnabled && profit > 0) {
                     const simulateVault = profit * (profitProtectionPercent / 100);
-                    // REMOVED: setVaultBalance(prev => prev + profitToVault);
                     // Profit protection is now only for real trades as per user request
                     addLog(`ℹ️ [PAPER] Would have protected ${simulateVault.toFixed(4)} SOL to vault`);
                 }
+
+                // Add isPaper flag to distinguish in history
+                trade.isPaper = true;
 
                 // Add principal + remaining profit to trading balance
                 setDemoBalance(prev => prev + costBasis + profitToTrading);
@@ -241,28 +248,52 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 });
             }
 
-            const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
-            addLog(`Sell Tx Sent: ${signature.substring(0, 8)}...`);
+            let signature = "";
+            try {
+                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+                addLog(`Sell Tx Sent: ${signature.substring(0, 8)}... Waiting for confirmation.`);
 
-            // Real Trade Stats Update
+                // Track the transaction ID and set status to selling
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling", txId: signature } : t));
+
+                const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+
+                if (confirmation.value.err) {
+                    throw new Error(`Transaction failed on-chain`);
+                }
+                addLog(`✅ Sell Confirmed for ${trade.symbol}!`);
+            } catch (err: any) {
+                addLog(`❌ Sell Failed for ${trade.symbol}: ${err.message}`);
+                // Revert status to open so we can try again
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
+                return;
+            }
+
+            // Real Trade Stats Update - ONLY ON SUCCESS
             const sellPrice = trade.currentPrice || 0;
-            // Realistic SOL received estimate (1% fee + 1% avg slippage/priority = ~2% friction)
             const estimatedSolReceived = amountToSell * sellPrice * 0.98;
             const estimatedCostBasis = (trade.buyPrice || sellPrice) * (trade.amountTokens * (amountPercent / 100));
             const estimatedProfit = estimatedSolReceived - estimatedCostBasis;
 
-            // Profit Protection: Skim percentage of profit to vault for real trades too
             if (profitProtectionEnabled && estimatedProfit > 0) {
                 const profitToVault = estimatedProfit * (profitProtectionPercent / 100);
-                setVaultBalance(prev => prev + profitToVault);
-                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL (${profitProtectionPercent}%) from REAL trade to vault`);
+                setVaultBalance(prev => {
+                    const newVal = prev + profitToVault;
+                    localStorage.setItem('pump_vault_balance', newVal.toString());
+                    return newVal;
+                });
+                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL from confirmed REAL profit.`);
             }
 
-            setStats(prev => ({
-                totalProfit: prev.totalProfit + estimatedProfit,
-                wins: estimatedProfit > 0 ? prev.wins + 1 : prev.wins,
-                losses: estimatedProfit <= 0 ? prev.losses + 1 : prev.losses
-            }));
+            setStats(prev => {
+                const newStats = {
+                    totalProfit: prev.totalProfit + estimatedProfit,
+                    wins: estimatedProfit > 0 ? prev.wins + 1 : prev.wins,
+                    losses: estimatedProfit <= 0 ? prev.losses + 1 : prev.losses
+                };
+                localStorage.setItem('pump_stats', JSON.stringify(newStats));
+                return newStats;
+            });
 
             // Only close trade locally if 100% sell
             if (amountPercent >= 99) {
@@ -784,13 +815,19 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             connection.confirmTransaction(signature, 'confirmed').then((res) => {
                 if (!res.value.err) {
                     addLog(`✅ Buy Confirmed for ${symbol}!`);
+                    // Update initial price if we have it
+                    if (initialPrice) {
+                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: initialPrice, isPaper: false } : t));
+                    }
                 } else {
-                    addLog(`❌ Buy Failed on-chain for ${symbol}.`);
+                    addLog(`❌ Buy Failed on-chain for ${symbol}. Removing from internal tracker.`);
+                    setActiveTrades(prev => prev.filter(t => t.mint !== mint));
                 }
                 syncTrades();
-            }).catch(() => {
-                // Fallback to sync after 15s if confirmTransaction times out
-                setTimeout(() => syncTrades(), 15000);
+            }).catch((e) => {
+                addLog(`⚠️ Buy Confirmation Timeout for ${symbol}. Bot will sync balance automatically.`);
+                // Keep it in activeTrades, syncTrades will verify balance shortly
+                setTimeout(() => syncTrades(), 5000);
             });
         } catch (error: any) {
             let errorMsg = error.message || "Unknown error";
@@ -902,12 +939,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             addLog(`❌ Invalid withdrawal amount. Vault has ${vaultBalance.toFixed(4)} SOL`);
             return;
         }
-        setVaultBalance(prev => prev - amount);
+        setVaultBalance(prev => {
+            const newVal = Math.max(0, prev - amount);
+            localStorage.setItem('pump_vault_balance', newVal.toString());
+            return newVal;
+        });
         if (isDemo) {
             setDemoBalance(prev => prev + amount);
-            addLog(`💰 Withdrew ${amount.toFixed(4)} SOL from vault to trading balance`);
+            addLog(`💰 Withdrew ${amount.toFixed(4)} SOL from vault to PAPER balance`);
         } else {
-            addLog(`💰 Released ${amount.toFixed(4)} SOL from vault protection`);
+            // REAL Withdrawal log
+            addLog(`💰 Released ${amount.toFixed(4)} SOL from vault protection back to available balance.`);
+            addLog(`ℹ️ Note: Vault funds stay in your wallet for safety. This just updates the bot's tradeable limit.`);
         }
     };
 

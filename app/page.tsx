@@ -532,9 +532,10 @@ export default function Home() {
         : undefined;
 
       setLastTradeTime(Date.now());
-      // ADAPTIVE SLIPPAGE: Higher for riskier/faster modes
-      const dynamicSlippage = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15;
-      await buyToken(token.mint, token.symbol, positionSize, dynamicSlippage, initialPrice);
+      // Use user-defined slippage if available, otherwise fall back to adaptive
+      const slippage = config.advanced?.slippage || ((config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15);
+
+      await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice);
     } catch (error: any) {
       addLog(`❌ Analysis Error for ${token.symbol}: ${error.message}`);
       console.error("Token analysis error:", error);

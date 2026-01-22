@@ -17,6 +17,7 @@ export interface AdvancedConfig {
     rugCheckStrictness: "lenient" | "standard" | "strict";
     requireSocials: boolean;
     avoidSnipers: boolean;
+    slippage: number;
 }
 
 interface BotConfig {
@@ -62,7 +63,8 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         minVelocity: 0.5,
         rugCheckStrictness: "strict",
         requireSocials: false,
-        avoidSnipers: true
+        avoidSnipers: true,
+        slippage: 20
     });
 
     // Update parent whenever config changes
@@ -91,7 +93,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.01);
             setTakeProfit(20);
             setStopLoss(10);
-            // setMaxConcurrentTrades(1); // Decoupled: User sets this manually
             setAdvancedConfig({
                 minLiquidity: 10,
                 maxLiquidity: 1000,
@@ -104,13 +105,13 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 minVelocity: 0.5,
                 rugCheckStrictness: "strict",
                 requireSocials: false,
-                avoidSnipers: true
+                avoidSnipers: true,
+                slippage: 15
             });
         } else if (preset === "medium") {
             setAmount(0.02);
             setTakeProfit(50);
             setStopLoss(15);
-            // setMaxConcurrentTrades(2); 
             setAdvancedConfig({
                 minLiquidity: 5,
                 maxLiquidity: 2000,
@@ -123,13 +124,13 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 minVelocity: 0.2,
                 rugCheckStrictness: "standard",
                 requireSocials: false,
-                avoidSnipers: false
+                avoidSnipers: false,
+                slippage: 20
             });
         } else if (preset === "high") {
             setAmount(0.03);
             setTakeProfit(100);
             setStopLoss(30);
-            // setMaxConcurrentTrades(3); 
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 5000,
@@ -142,32 +143,32 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 minVelocity: 0,
                 rugCheckStrictness: "lenient",
                 requireSocials: false,
-                avoidSnipers: false
+                avoidSnipers: false,
+                slippage: 25
             });
         } else if (preset === "scalp") {
-            setAmount(0.01); // Smaller positions for quick exits
-            setTakeProfit(50); // Will be overridden by speed trader
-            setStopLoss(10); // Tight stop
-            // setMaxConcurrentTrades(2); 
+            setAmount(0.01);
+            setTakeProfit(50);
+            setStopLoss(10);
             setAdvancedConfig({
                 minLiquidity: 8,
                 maxLiquidity: 1000,
-                minVolume: 10, // Needs high volume
+                minVolume: 10,
                 minHolderCount: 50,
                 maxTop10: 60,
                 maxDev: 10,
-                minBondingCurve: 10, // Wait for some progress
+                minBondingCurve: 10,
                 maxBondingCurve: 70,
-                minVelocity: 1, // Needs high velocity
+                minVelocity: 1,
                 rugCheckStrictness: "standard",
                 requireSocials: false,
-                avoidSnipers: true
+                avoidSnipers: true,
+                slippage: 30
             });
         } else if (preset === "first") {
-            setAmount(0.01); // Small positions - high frequency
-            setTakeProfit(30); // Will be overridden by first buyer
-            setStopLoss(8); // Very tight stop
-            // setMaxConcurrentTrades(2); 
+            setAmount(0.01);
+            setTakeProfit(30);
+            setStopLoss(8);
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 500,
@@ -176,14 +177,14 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 maxTop10: 90,
                 maxDev: 50,
                 minBondingCurve: 0,
-                maxBondingCurve: 10, // Very early
+                maxBondingCurve: 10,
                 minVelocity: 0,
                 rugCheckStrictness: "lenient",
                 requireSocials: false,
-                avoidSnipers: false
+                avoidSnipers: false,
+                slippage: 40
             });
         }
-        // "custom" mode doesn't change any settings - user has full control
     };
 
     const toggleRun = () => {
@@ -209,7 +210,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("safe")}
                         className={`p-3 rounded border transition-all ${mode === "safe" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Multi-layer analysis, score ≥65/100, strict entry"
                     >
                         <div className="font-bold whitespace-nowrap">Safe-ish</div>
                         <div className="text-[10px] opacity-70">Score: ≥65 | Strict Entry</div>
@@ -217,7 +217,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("medium")}
                         className={`p-3 rounded border transition-all ${mode === "medium" ? "border-[var(--warning)] bg-[rgba(255,204,0,0.1)] text-[var(--warning)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Balanced filters, score ≥50/100"
                     >
                         <div className="font-bold">Medium</div>
                         <div className="text-[10px] opacity-70">Score: ≥50 | Balanced</div>
@@ -225,7 +224,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("high")}
                         className={`p-3 rounded border transition-all ${mode === "high" ? "border-[var(--danger)] bg-[rgba(255,0,85,0.1)] text-[var(--danger)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Minimal filters, score ≥30/100, faster trades. Avoids rugs but takes more risks."
                     >
                         <div className="font-bold">High Risk</div>
                         <div className="text-[10px] opacity-70">Score: ≥30 | Aggressive</div>
@@ -233,7 +231,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("scalp")}
                         className={`p-3 rounded border transition-all ${mode === "scalp" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Speed trading: Quick in/out on momentum"
                     >
                         <div className="font-bold">⚡ SCALP</div>
                         <div className="text-[10px] opacity-70">Momentum | Quick Exits</div>
@@ -241,7 +238,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("first")}
                         className={`p-3 rounded border transition-all ${mode === "first" ? "border-[#ff00ff] bg-[rgba(255,0,255,0.1)] text-[#ff00ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="First Buyer: Buy immediately, sell after 6s or when momentum detected"
                     >
                         <div className="font-bold">🚀 FIRST</div>
                         <div className="text-[10px] opacity-70">6s exit | Sniper Mode</div>
@@ -249,25 +245,16 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <button
                         onClick={() => setPreset("custom")}
                         className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                        title="Custom: Full manual control over all settings"
                     >
                         <div className="font-bold">Custom</div>
                         <div className="text-[10px] opacity-70">Manual control</div>
                     </button>
                 </div>
-                {mode !== "custom" && (
-                    <p className="text-[10px] text-gray-500 mt-2 italic">
-                        💡 Adjust settings below to customize this strategy. Mode stays active.
-                    </p>
-                )}
             </div>
 
-            {/* Demo Mode Toggle */}
             <div className="flex items-center justify-between mb-6 bg-[#1a1a1a] p-3 rounded border border-[#333]">
                 <div className="flex flex-col">
-                    <span className="font-bold text-white flex items-center gap-2">
-                        Paper Trading
-                    </span>
+                    <span className="font-bold text-white flex items-center gap-2">Paper Trading</span>
                     <span className="text-xs text-gray-400">Fake balance trade (Zero Risk)</span>
                 </div>
                 <button
@@ -278,12 +265,9 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 </button>
             </div>
 
-            {/* Market Feed Toggle */}
             <div className="flex items-center justify-between mb-6 bg-[#1a1a1a] p-3 rounded border border-[#333]">
                 <div className="flex flex-col">
-                    <span className="font-bold text-white flex items-center gap-2">
-                        Market Data
-                    </span>
+                    <span className="font-bold text-white flex items-center gap-2">Market Data</span>
                     <span className="text-xs text-gray-400">Use live tokens vs simulator</span>
                 </div>
                 <button
@@ -294,7 +278,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 </button>
             </div>
 
-            {/* Advanced Filtering Tabs */}
             <div className="flex mb-6 border-b border-[#333]">
                 <button
                     onClick={() => setActiveTab('basic')}
@@ -311,85 +294,78 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             </div>
 
             {activeTab === 'basic' ? (
-                <>
+                <div className="space-y-4 mb-8">
+                    <div>
+                        <label className="text-gray-400 text-sm flex justify-between">
+                            Trade Amount (SOL)
+                            <span className="text-white">{amount} SOL</span>
+                        </label>
+                        <input
+                            type="range" min="0.01" max="1" step="0.01"
+                            value={amount}
+                            onChange={(e) => setAmount(parseFloat(e.target.value))}
+                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.05)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
+                        />
+                        {amount + 0.05 > realBalance && !isDemo && (
+                            <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
+                                <AlertTriangle size={10} /> Insufficient balance (need ~0.05 SOL reserve for fees).
+                            </p>
+                        )}
+                    </div>
 
-
-                    <div className="space-y-4 mb-8">
-                        <div>
-                            <label className="text-gray-400 text-sm flex justify-between">
-                                Trade Amount (SOL)
-                                <span className="text-white">{amount} SOL</span>
-                            </label>
+                    <div className="flex gap-4">
+                        <div className="flex-1">
+                            <label className="text-gray-400 text-sm">Take Profit (%)</label>
                             <input
-                                type="range" min="0.01" max="1" step="0.01"
-                                value={amount}
-                                onChange={(e) => setAmount(parseFloat(e.target.value))}
-                                className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.05)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
+                                type="number"
+                                value={takeProfit}
+                                onChange={(e) => setTakeProfit(parseInt(e.target.value))}
+                                className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
                             />
-                            {amount + 0.05 > realBalance && !isDemo && (
-                                <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
-                                    <AlertTriangle size={10} /> Insufficient balance (need ~0.05 SOL reserve for fees).
-                                </p>
-                            )}
                         </div>
-
-                        <div className="flex gap-4">
-                            <div className="flex-1">
-                                <label className="text-gray-400 text-sm">Take Profit (%)</label>
-                                <input
-                                    type="number"
-                                    value={takeProfit}
-                                    onChange={(e) => setTakeProfit(parseInt(e.target.value))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
-                                />
-                            </div>
-                            <div className="flex-1">
-                                <label className="text-gray-400 text-sm">Stop Loss (%)</label>
-                                <input
-                                    type="number"
-                                    value={stopLoss}
-                                    onChange={(e) => setStopLoss(parseInt(e.target.value))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="text-gray-400 text-sm flex justify-between">
-                                Max Concurrent Trades
-                                <span className="text-white">{maxConcurrentTrades}</span>
-                            </label>
+                        <div className="flex-1">
+                            <label className="text-gray-400 text-sm">Stop Loss (%)</label>
                             <input
-                                type="range" min="1" max="10" step="1"
-                                value={maxConcurrentTrades}
-                                onChange={(e) => setMaxConcurrentTrades(parseInt(e.target.value))}
-                                className="w-full h-2 bg-[#222] rounded-lg appearance-none cursor-pointer mt-2"
+                                type="number"
+                                value={stopLoss}
+                                onChange={(e) => setStopLoss(parseInt(e.target.value))}
+                                className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white mt-1"
                             />
-                            <p className="text-[10px] text-gray-500 mt-1 italic">Limits how many tokens the bot will hold at once.</p>
-                        </div>
-
-                        <div className="flex items-center justify-between bg-[#1a1a1a] p-3 rounded border border-[#333] mt-4">
-                            <div className="flex flex-col">
-                                <span className="font-bold text-white text-sm">Dynamic Position Sizing</span>
-                                <span className="text-[10px] text-gray-400">Increase size on high-confidence trades</span>
-                            </div>
-                            <button
-                                onClick={() => setDynamicSizing(!dynamicSizing)}
-                                className={`text-xs px-3 py-1 rounded transition-colors ${dynamicSizing ? 'bg-purple-600 text-white' : 'bg-[#333] text-gray-400'}`}
-                            >
-                                {dynamicSizing ? "ON" : "OFF"}
-                            </button>
                         </div>
                     </div>
 
-                </>
+                    <div>
+                        <label className="text-gray-400 text-sm flex justify-between">
+                            Max Concurrent Trades
+                            <span className="text-white">{maxConcurrentTrades}</span>
+                        </label>
+                        <input
+                            type="range" min="1" max="10" step="1"
+                            value={maxConcurrentTrades}
+                            onChange={(e) => setMaxConcurrentTrades(parseInt(e.target.value))}
+                            className="w-full h-2 bg-[#222] rounded-lg appearance-none cursor-pointer mt-2"
+                        />
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#1a1a1a] p-3 rounded border border-[#333] mt-4">
+                        <div className="flex flex-col">
+                            <span className="font-bold text-white text-sm">Dynamic Position Sizing</span>
+                            <span className="text-[10px] text-gray-400">Increase size on high-confidence trades</span>
+                        </div>
+                        <button
+                            onClick={() => setDynamicSizing(!dynamicSizing)}
+                            className={`text-xs px-3 py-1 rounded transition-colors ${dynamicSizing ? 'bg-purple-600 text-white' : 'bg-[#333] text-gray-400'}`}
+                        >
+                            {dynamicSizing ? "ON" : "OFF"}
+                        </button>
+                    </div>
+                </div>
             ) : (
-                <div className="space-y-4 mb-8 animate-fade-in">
+                <div className="space-y-4 mb-8">
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
                         <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                             <AlertTriangle size={14} className="text-yellow-500" /> Rug Protection
                         </h3>
-
                         <div className="mb-3">
                             <label className="text-gray-400 text-xs flex justify-between mb-1">
                                 Rug Check Strictness
@@ -400,21 +376,18 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                                     <button
                                         key={s}
                                         onClick={() => setAdvancedConfig(prev => ({ ...prev, rugCheckStrictness: s }))}
-                                        className={`flex-1 py-1 text-xs rounded border ${advancedConfig.rugCheckStrictness === s
-                                            ? 'bg-blue-900/30 border-blue-500 text-blue-400'
-                                            : 'bg-[#222] border-[#333] text-gray-500 hover:border-[#444]'}`}
+                                        className={`flex-1 py-1 text-xs rounded border ${advancedConfig.rugCheckStrictness === s ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'bg-[#222] border-[#333] text-gray-500'}`}
                                     >
-                                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                                        {s}
                                     </button>
                                 ))}
                             </div>
                         </div>
-
-                        <div className="flex justify-between items-center mb-2">
+                        <div className="flex justify-between items-center">
                             <label className="text-gray-400 text-xs">Avoid Snipers</label>
                             <button
                                 onClick={() => setAdvancedConfig(prev => ({ ...prev, avoidSnipers: !prev.avoidSnipers }))}
-                                className={`w-10 h-5 rounded-full transition-colors relative ${advancedConfig.avoidSnipers ? 'bg-green-600' : 'bg-[#333]'}`}
+                                className={`w-10 h-5 rounded-full relative transition-colors ${advancedConfig.avoidSnipers ? 'bg-green-600' : 'bg-[#333]'}`}
                             >
                                 <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${advancedConfig.avoidSnipers ? 'translate-x-5' : ''}`} />
                             </button>
@@ -422,93 +395,49 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     </div>
 
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
-                        <h3 className="text-sm font-bold text-white mb-3">Bonding Curve & Liquidity</h3>
-
-                        <div className="grid grid-cols-2 gap-3 mb-3">
-                            <div>
-                                <label className="text-gray-400 text-xs block mb-1">Min Liquidity (SOL)</label>
-                                <input
-                                    type="number"
-                                    value={advancedConfig.minLiquidity}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minLiquidity: parseFloat(e.target.value) }))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-gray-400 text-xs block mb-1">Min Volume (SOL)</label>
-                                <input
-                                    type="number"
-                                    value={advancedConfig.minVolume}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minVolume: parseFloat(e.target.value) }))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="mb-3">
-                            <label className="text-gray-400 text-xs block mb-1">
-                                Bonding Curve Progress ({advancedConfig.minBondingCurve}% - {advancedConfig.maxBondingCurve}%)
-                            </label>
-                            <div className="flex gap-2 items-center">
-                                <input
-                                    type="number"
-                                    value={advancedConfig.minBondingCurve}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minBondingCurve: parseFloat(e.target.value) }))}
-                                    className="w-16 bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                                <span className="text-gray-500 text-xs">to</span>
-                                <input
-                                    type="number"
-                                    value={advancedConfig.maxBondingCurve}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, maxBondingCurve: parseFloat(e.target.value) }))}
-                                    className="w-16 bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                            </div>
-                        </div>
-
+                        <h3 className="text-sm font-bold text-white mb-3">Execution Settings</h3>
                         <div>
-                            <label className="text-gray-400 text-xs block mb-1">Min Velocity (SOL/min)</label>
+                            <label className="text-gray-400 text-xs flex justify-between mb-1">
+                                Max Slippage (%)
+                                <span className="text-white font-bold">{advancedConfig.slippage}%</span>
+                            </label>
                             <input
-                                type="number"
-                                step="0.1"
-                                value={advancedConfig.minVelocity}
-                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minVelocity: parseFloat(e.target.value) }))}
-                                className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
+                                type="range" min="1" max="99" step="1"
+                                value={advancedConfig.slippage}
+                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, slippage: parseInt(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                             />
+                            <p className="text-[9px] text-gray-500 mt-1">Increase for fast tokens to avoid slippage errors.</p>
                         </div>
                     </div>
 
                     <div className="bg-[#1a1a1a] p-4 rounded border border-[#333]">
-                        <h3 className="text-sm font-bold text-white mb-3">Holder Analysis</h3>
-
+                        <h3 className="text-sm font-bold text-white mb-3">Bonding Curve & Liquidity</h3>
                         <div className="grid grid-cols-2 gap-3 mb-3">
-                            <div>
-                                <label className="text-gray-400 text-xs block mb-1">Max Dev Holding (%)</label>
-                                <input
-                                    type="number"
-                                    value={advancedConfig.maxDev}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, maxDev: parseFloat(e.target.value) }))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-gray-400 text-xs block mb-1">Max Top 10 (%)</label>
-                                <input
-                                    type="number"
-                                    value={advancedConfig.maxTop10}
-                                    onChange={(e) => setAdvancedConfig(prev => ({ ...prev, maxTop10: parseFloat(e.target.value) }))}
-                                    className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="text-gray-400 text-xs block mb-1">Min Holders</label>
                             <input
-                                type="number"
-                                value={advancedConfig.minHolderCount}
-                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minHolderCount: parseInt(e.target.value) }))}
-                                className="w-full bg-[#121212] border border-[#222] rounded p-1.5 text-white text-sm"
+                                type="number" placeholder="Min Liquidity"
+                                value={advancedConfig.minLiquidity}
+                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minLiquidity: parseFloat(e.target.value) }))}
+                                className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white text-xs"
+                            />
+                            <input
+                                type="number" placeholder="Min Volume"
+                                value={advancedConfig.minVolume}
+                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minVolume: parseFloat(e.target.value) }))}
+                                className="w-full bg-[#121212] border border-[#222] rounded p-2 text-white text-xs"
+                            />
+                        </div>
+                        <div className="flex gap-2 items-center">
+                            <input
+                                type="number" value={advancedConfig.minBondingCurve}
+                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, minBondingCurve: parseFloat(e.target.value) }))}
+                                className="w-16 bg-[#121212] border border-[#222] rounded p-2 text-white text-xs"
+                            />
+                            <span className="text-gray-500 text-xs">to</span>
+                            <input
+                                type="number" value={advancedConfig.maxBondingCurve}
+                                onChange={(e) => setAdvancedConfig(prev => ({ ...prev, maxBondingCurve: parseFloat(e.target.value) }))}
+                                className="w-16 bg-[#121212] border border-[#222] rounded p-2 text-white text-xs"
                             />
                         </div>
                     </div>
@@ -517,19 +446,9 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
 
             <button
                 onClick={toggleRun}
-                className={`w-full py-4 rounded-lg font-bold text-lg flex justify-center items-center gap-2 transition-all shadow-lg ${isRunning
-                    ? "bg-red-500/20 text-red-500 border border-red-500/50 hover:bg-red-500/30"
-                    : "btn-primary"}`}
+                className={`w-full py-4 rounded-lg font-bold text-lg flex justify-center items-center gap-2 transition-all shadow-lg mt-4 ${isRunning ? "bg-red-500/20 text-red-500 border border-red-500/50" : "btn-primary"}`}
             >
-                {isRunning ? (
-                    <>
-                        <Square fill="currentColor" size={18} /> STOP BOT
-                    </>
-                ) : (
-                    <>
-                        <Play fill="currentColor" size={18} /> {isDemo ? "START PAPER TRADING" : "START LIVE TRADING"}
-                    </>
-                )}
+                {isRunning ? <><Square fill="currentColor" size={18} /> STOP BOT</> : <><Play fill="currentColor" size={18} /> {isDemo ? "START PAPER TRADING" : "START LIVE TRADING"}</>}
             </button>
 
             {!walletConnected && !isDemo && (
@@ -537,16 +456,6 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <AlertTriangle size={12} /> Connect wallet to start live trading
                 </div>
             )}
-
-            {(!localStorage.getItem('helius_api_key')) && (
-                <div className="mt-4 p-2 bg-red-500/10 text-red-500 text-[10px] rounded border border-red-500/20 flex gap-2 items-center">
-                    <AlertTriangle size={12} /> Helius API Key Missing: Bot will use slow public RPC.
-                </div>
-            )}
-
-            <div className="mt-4 text-xs text-gray-500 text-center">
-                * Works with Pump.fun via Direct RPC. No VPN needed for API.
-            </div>
         </div>
     );
 }
