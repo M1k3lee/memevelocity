@@ -96,6 +96,7 @@ export default function Home() {
 
   const {
     activeTrades,
+    tradeHistory,
     buyToken,
     sellToken,
     syncTrades,
@@ -117,7 +118,7 @@ export default function Home() {
     setProfitProtectionPercentage,
     clearVault
   } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
-  const [tradeHistory, setTradeHistory] = useState<Set<string>>(new Set());
+  const [sessionMints, setSessionMints] = useState<Set<string>>(new Set());
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
@@ -157,7 +158,7 @@ export default function Home() {
     }
 
     // Duplication check within session (State + Ref for ultra-fast deduplication)
-    if (tradeHistory.has(token.mint) || processedMints.current.has(token.mint)) {
+    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) {
       return;
     }
 
@@ -249,7 +250,7 @@ export default function Home() {
         const tp2Text = firstSignal.exitStrategy.takeProfit2 ? `, 30% @ ${firstSignal.exitStrategy.takeProfit2}%` : '';
         addLog(`   Exit Strategy: ${firstSignal.exitStrategy.timeBasedExit}s hold | Staged: 50% @ ${firstSignal.exitStrategy.takeProfit}%${tp2Text} | SL ${firstSignal.exitStrategy.stopLoss}%`);
 
-        setTradeHistory(prev => new Set(prev).add(token.mint));
+        setSessionMints(prev => new Set(prev).add(token.mint));
 
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -309,7 +310,7 @@ export default function Home() {
         addLog(`   Confidence: ${speedSignal.confidence}% | Momentum: ${speedSignal.momentum.toFixed(2)} SOL/min`);
         addLog(`   Exit Strategy: TP ${speedSignal.exitStrategy.takeProfit}% | SL ${speedSignal.exitStrategy.stopLoss}% | Max Hold: ${speedSignal.exitStrategy.maxHoldTime}s`);
 
-        setTradeHistory(prev => new Set(prev).add(token.mint));
+        setSessionMints(prev => new Set(prev).add(token.mint));
 
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -348,7 +349,7 @@ export default function Home() {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ NEW + MOMENTUM: Early momentum play (rug checks passed)`);
 
-          setTradeHistory(prev => new Set(prev).add(token.mint));
+          setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
@@ -364,7 +365,7 @@ export default function Home() {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ STRONG MOMENTUM: High buy activity detected (rug checks passed)`);
 
-          setTradeHistory(prev => new Set(prev).add(token.mint));
+          setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
@@ -525,7 +526,7 @@ export default function Home() {
       positionSize = Math.max(positionSize, config.amount * 0.3); // Never less than 0.3x base
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
-      setTradeHistory(prev => new Set(prev).add(token.mint));
+      setSessionMints(prev => new Set(prev).add(token.mint));
 
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
         ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
@@ -548,7 +549,7 @@ export default function Home() {
       // Custom mode: User has full control, proceed if they've configured it
       // Other modes: Proceed if not in safe mode
       if (config.mode === 'custom' || config.mode !== 'safe') {
-        setTradeHistory(prev => new Set(prev).add(token.mint));
+        setSessionMints(prev => new Set(prev).add(token.mint));
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
@@ -895,7 +896,7 @@ export default function Home() {
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
               <ActiveTrades trades={activeTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} />
-              <TradeHistory trades={activeTrades} />
+              <TradeHistory trades={tradeHistory} />
             </div>
           </div>
 
