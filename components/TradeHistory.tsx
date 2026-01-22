@@ -48,7 +48,9 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                                                 <span className={`font-bold ${trade.pnlPercent >= 0 ? "text-green-400/80" : "text-red-400/80"}`}>
                                                     {trade.symbol}
                                                 </span>
-                                                {trade.txId?.startsWith("SIM") || trade.mint.startsWith("SIM") ? (
+                                                {trade.isPaper ? (
+                                                    <span className="text-[8px] text-purple-400 bg-purple-400/10 px-1 rounded uppercase font-bold border border-purple-400/20">Paper</span>
+                                                ) : trade.txId?.startsWith("SIM") || trade.mint.startsWith("SIM") || trade.txId?.startsWith("DEMO") ? (
                                                     <span className="text-[8px] text-blue-500 bg-blue-500/10 px-1 rounded uppercase">Demo</span>
                                                 ) : (
                                                     <a

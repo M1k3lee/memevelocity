@@ -248,6 +248,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 });
             }
 
+            // Track balance before sell for 100% accuracy
+            const balanceBefore = await getBalance(wallet.publicKey.toBase58(), connection);
+
             let signature = "";
             try {
                 signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
@@ -269,31 +272,32 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 return;
             }
 
-            // Real Trade Stats Update - ONLY ON SUCCESS
-            const sellPrice = trade.currentPrice || 0;
-            const estimatedSolReceived = amountToSell * sellPrice * 0.98;
-            const estimatedCostBasis = (trade.buyPrice || sellPrice) * (trade.amountTokens * (amountPercent / 100));
-            const estimatedProfit = estimatedSolReceived - estimatedCostBasis;
+            // Fetch balance after for REAL profit calculation
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for indexing
+            const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
+            const actualProfit = balanceAfter - balanceBefore;
 
-            if (profitProtectionEnabled && estimatedProfit > 0) {
-                const profitToVault = estimatedProfit * (profitProtectionPercent / 100);
+            if (profitProtectionEnabled && actualProfit > 0) {
+                const profitToVault = actualProfit * (profitProtectionPercent / 100);
                 setVaultBalance(prev => {
                     const newVal = prev + profitToVault;
                     localStorage.setItem('pump_vault_balance', newVal.toString());
                     return newVal;
                 });
-                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL from confirmed REAL profit.`);
+                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL from ACTUAL on-chain profit.`);
             }
 
             setStats(prev => {
                 const newStats = {
-                    totalProfit: prev.totalProfit + estimatedProfit,
-                    wins: estimatedProfit > 0 ? prev.wins + 1 : prev.wins,
-                    losses: estimatedProfit <= 0 ? prev.losses + 1 : prev.losses
+                    totalProfit: (prev.totalProfit || 0) + actualProfit,
+                    wins: actualProfit > 0 ? (prev.wins || 0) + 1 : (prev.wins || 0),
+                    losses: actualProfit <= 0 ? (prev.losses || 0) + 1 : (prev.losses || 0)
                 };
                 localStorage.setItem('pump_stats', JSON.stringify(newStats));
                 return newStats;
             });
+
+            const sellPrice = trade.currentPrice || 0;
 
             // Only close trade locally if 100% sell
             if (amountPercent >= 99) {
@@ -812,12 +816,32 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             subscribeToToken(mint);
 
             // Wait for confirmation to be sure
-            connection.confirmTransaction(signature, 'confirmed').then((res) => {
+            connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
                 if (!res.value.err) {
-                    addLog(`✅ Buy Confirmed for ${symbol}!`);
-                    // Update initial price if we have it
-                    if (initialPrice) {
-                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: initialPrice, isPaper: false } : t));
+                    addLog(`✅ Buy Confirmed for ${symbol}! Fetching on-chain costs...`);
+
+                    // CRITICAL FIX: Fetch actual token balance to calculate REAL entry price
+                    try {
+                        // Small delay to ensure balance is indexed
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
+
+                        if (actualTokens > 0) {
+                            const realBuyPrice = amountSol / actualTokens;
+                            addLog(`📊 On-chain Entry Price: ${realBuyPrice.toFixed(9)} SOL (Tokens: ${actualTokens.toLocaleString()})`);
+
+                            setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                                ...t,
+                                buyPrice: realBuyPrice,
+                                amountTokens: actualTokens,
+                                isPaper: false
+                            } : t));
+                        } else {
+                            // Fallback if balance fetch fails
+                            setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, isPaper: false } : t));
+                        }
+                    } catch (e) {
+                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, isPaper: false } : t));
                     }
                 } else {
                     addLog(`❌ Buy Failed on-chain for ${symbol}. Removing from internal tracker.`);
@@ -922,8 +946,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     const clearTrades = () => {
         setActiveTrades([]);
+        setStats({ totalProfit: 0, wins: 0, losses: 0 });
         localStorage.removeItem('pump_active_trades');
-        addLog("Summary: Portfolio wiped (local data only).");
+        localStorage.removeItem('pump_stats');
+        addLog("Summary: Portfolio and Total PnL statistics have been reset.");
     };
 
     // Helper to update a trade's properties (for staged profit taking, etc.)
