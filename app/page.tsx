@@ -218,14 +218,12 @@ export default function Home() {
       // The enhanced analyzer will try to fetch more data but can work with what we have
     }
 
-    // Auto-stop if balance is critical (ONLY for real trading)
-    // We stop if balance is less than 0.02 SOL + next trade amount to ensure we always have reserve for fees
+    // Auto-stop if balance is critical (ONLY for real trading with real wallet)
+    // Demo mode has its own balance management in usePumpTrader
     const MIN_RESERVE = 0.02;
     const currentBal = balanceRef.current;
 
-    if (!config.isDemo) {
-      if (!wallet) return; // Silent return if disconnected 
-
+    if (!config.isDemo && wallet) {
       // IMPORTANT: If balance is still -1, it means the RPC fetch hasn't returned yet.
       // We skip the check to avoid "False Zero" auto-stops.
       if (currentBal === -1) return;
