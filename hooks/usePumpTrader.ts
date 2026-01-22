@@ -263,12 +263,15 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 losses: netProfit <= 0 ? prev.losses + 1 : prev.losses
             }));
 
+            // Clamp PnL for sanity (max -100% loss)
+            const finalPnlPercent = Math.max(-100, realizedPnlPercent);
+
             if (amountPercent >= 99) {
                 const closedTrade: ActiveTrade = {
                     ...trade,
                     status: "closed" as const,
                     currentPrice: trade.currentPrice,
-                    pnlPercent: realizedPnlPercent, // Accurate percentage based on SOL delta
+                    pnlPercent: finalPnlPercent, // Accurate percentage
                     txId: signature
                 };
                 setTradeHistory(prev => {
@@ -533,7 +536,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                 return;
                             }
 
-                            // Prepare update object
                             const update: any = {
                                 buyPrice,
                                 currentPrice: priceToUse,
@@ -543,6 +545,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                 lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
                                 lastLiquidity: currentLiquidity > 0 ? currentLiquidity : (trade as any).lastLiquidity
                             };
+
+                            // Prevent Buy Price clobbering: Locked once set > 0
+                            if (trade.buyPrice > 0 && buyPrice === priceToUse && priceToUse !== trade.buyPrice) {
+                                update.buyPrice = trade.buyPrice;
+                            }
 
                             updates.set(trade.mint, update);
                         }
@@ -882,7 +889,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             losses: prev.losses + 1
                         }));
                         addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as RUG loss.`);
-                    } else {
+                    } else if (!processingMintsRef.current.has(trade.mint)) {
                         addLog(`Synced: ${trade.symbol} balance not found yet, retrying later...`);
                     }
                 }
