@@ -39,9 +39,6 @@ export default function WalletManager({
     const [wallet, setWallet] = useState<any>(null);
     const [balance, setBalance] = useState<number>(0);
 
-    useEffect(() => {
-        if (onBalanceChange) onBalanceChange(balance);
-    }, [balance, onBalanceChange]);
     const [showKey, setShowKey] = useState(false);
     const [importKey, setImportKey] = useState("");
     const [view, setView] = useState<"create" | "view">("create");
@@ -96,8 +93,10 @@ export default function WalletManager({
     const refreshBalance = async (pubKey: string) => {
         try {
             const bal = await getBalance(pubKey, connection);
-            setBalance(bal);
-            if (onBalanceChange) onBalanceChange(bal); // CRITICAL: Update parent state for trading logic
+            if (bal !== null) {
+                setBalance(bal);
+                if (onBalanceChange) onBalanceChange(bal); // CRITICAL: Update parent state for trading logic
+            }
         } catch (e) {
             console.error("Refresh balance failed:", e);
         }

@@ -47,14 +47,14 @@ export const generateWallet = () => {
     };
 };
 
-export const getBalance = async (publicKeyString: string, conn: Connection = connection) => {
+export const getBalance = async (publicKeyString: string, conn: Connection = connection): Promise<number | null> => {
     try {
         const publicKey = new PublicKey(publicKeyString);
         const balance = await conn.getBalance(publicKey);
         return balance / LAMPORTS_PER_SOL;
     } catch (error) {
-        console.error("Error fetching balance:", error);
-        return 0;
+        console.warn("RPC Error fetching balance:", error);
+        return null; // Return null instead of 0 to distinguish error from empty wallet
     }
 };
 

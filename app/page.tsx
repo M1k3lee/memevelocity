@@ -36,6 +36,8 @@ export default function Home() {
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(0);
+  const balanceRef = useRef(0);
+  const flickerCount = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -126,14 +128,14 @@ export default function Home() {
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
   const pendingRetries = useRef<Set<string>>(new Set());
 
-  const handleWalletChange = (newWallet: any) => {
+  const handleWalletChange = useCallback((newWallet: any) => {
     setWallet(newWallet);
-  };
+  }, []);
 
-  const handleConfigChange = (newConfig: any) => {
+  const handleConfigChange = useCallback((newConfig: any) => {
     setConfig(newConfig);
     setDemoMode(newConfig.isDemo);
-  };
+  }, [setDemoMode]);
 
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) return;
@@ -210,10 +212,28 @@ export default function Home() {
     // Auto-stop if balance is critical (ONLY for real trading)
     // We stop if balance is less than 0.02 SOL + next trade amount to ensure we always have reserve for fees
     const MIN_RESERVE = 0.02;
-    if (!config.isDemo && realBalance < (config.amount + MIN_RESERVE)) {
-      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot.`);
-      setConfig((prev: any) => ({ ...prev, isRunning: false }));
-      return;
+    const currentBal = balanceRef.current;
+
+    if (!config.isDemo) {
+      if (!wallet) return; // Silent return if disconnected momentarily
+
+      if (currentBal === 0) {
+        // Flicker protection: If balance is exactly 0, it might be a refresh glitch
+        // Increment flicker count and return. If it stays 0 for 3 checks, then stop.
+        flickerCount.current++;
+        if (flickerCount.current < 3) {
+          console.log(`[onTokenDetected] Potential balance flicker (0.00), check ${flickerCount.current}/3`);
+          return;
+        }
+      } else {
+        flickerCount.current = 0; // Reset on good reading
+      }
+
+      if (currentBal < (config.amount + MIN_RESERVE)) {
+        addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot.`);
+        setConfig((prev: any) => ({ ...prev, isRunning: false }));
+        return;
+      }
     }
 
     // Demo mode: Stop if balance gets too low (prevent burning through all demo SOL)

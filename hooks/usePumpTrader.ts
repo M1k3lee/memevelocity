@@ -247,7 +247,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             // REAL-TIME ACCURATE PnL CALCULATION
             await new Promise(resolve => setTimeout(resolve, 2000)); // wait for index
             const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
-            const revenue = balanceAfter - balanceBefore;
+            const revenue = (balanceAfter ?? 0) - (balanceBefore ?? 0);
             const costBasis = tradeAmountPaid * (amountPercent / 100);
             const netProfit = revenue - costBasis;
             const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
@@ -760,6 +760,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         // This ensures the user never gets stuck with no SOL for sell fees
         try {
             const bal = await getBalance(wallet.publicKey.toBase58(), connection);
+            if (bal === null) {
+                addLog(`⚠️ Balance verify failed (Network). Skipping ${symbol} to avoid risk.`);
+                return;
+            }
             if (bal < amountSol + SOL_FEE_RESERVE) {
                 addLog(`Error: Insufficient balance. Have ${bal.toFixed(4)} SOL, need ~${(amountSol + SOL_FEE_RESERVE).toFixed(4)} SOL (incl. ${SOL_FEE_RESERVE} SOL reserve for fees)`);
                 return;
@@ -900,7 +904,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
         try {
             const currentBal = await getBalance(wallet.publicKey.toBase58(), connection);
-            if (currentBal < 0.05) {
+            if (currentBal !== null && currentBal < 0.05) {
                 addLog("Checking for recoverable SOL rent...");
                 const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
                 const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
