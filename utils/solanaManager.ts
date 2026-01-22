@@ -136,18 +136,41 @@ export const getHolderCount = async (mintAddress: string, conn: Connection = con
 
 
 
-// Shared fallback connection to avoid overhead
-const publicFallbackConnection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-
-// Track rate limit cooldowns per mint
+// Rate limit and error tracking
 const rateLimitCoolDowns = new Map<string, number>();
+let globalRpcErrorCount = 0;
+let lastGlobalErrorTime = 0;
+
+const handleRpcError = (method: string, error: any) => {
+    const errorMsg = String(error?.message || error);
+    const isRateLimit = errorMsg.includes('429') || errorMsg.includes('Too Many Requests');
+    const isAccessDenied = errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('Access denied');
+
+    if (isRateLimit || isAccessDenied) {
+        globalRpcErrorCount++;
+        lastGlobalErrorTime = Date.now();
+        console.warn(`[solanaManager] RPC ${isRateLimit ? 'Rate Limit' : 'Access Denied'} on ${method}. Total errors: ${globalRpcErrorCount}`);
+    }
+    return { isRateLimit, isAccessDenied };
+};
+
+const isCircuitBroken = () => {
+    // If we've had 10 errors in the last 60 seconds, wait
+    if (globalRpcErrorCount > 10 && (Date.now() - lastGlobalErrorTime) < 60000) {
+        return true;
+    }
+    // Periodic reset
+    if ((Date.now() - lastGlobalErrorTime) > 120000) {
+        globalRpcErrorCount = 0;
+    }
+    return false;
+};
 
 export const getPumpData = async (mintAddress: string, conn: Connection = connection) => {
-    // Basic rate limit check
+    if (isCircuitBroken()) return null;
+
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
-    if (Date.now() < coolDownUntil) {
-        return null; // Skip during cooldown
-    }
+    if (Date.now() < coolDownUntil) return null;
 
     try {
         const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
@@ -164,49 +187,16 @@ export const getPumpData = async (mintAddress: string, conn: Connection = connec
         const vSolInBondingCurve = Number(account.data.readBigUInt64LE(16)) / LAMPORTS_PER_SOL;
         const tokenTotalSupply = Number(account.data.readBigUInt64LE(24));
 
-        // Bonding curve progress calculation
         const bondingCurveProgress = Math.max(0, Math.min(100,
             100 - (((vTokensInBondingCurve - 206900000) * 100) / 793100000)
         ));
 
-        // Clear cooldown on success
         rateLimitCoolDowns.delete(mintAddress);
-
         return { vTokensInBondingCurve, vSolInBondingCurve, tokenTotalSupply, bondingCurveProgress };
     } catch (e: any) {
-        const errorMsg = e?.message || String(e);
-        const isRateLimit = errorMsg.includes('429') || errorMsg.includes('Too Many Requests');
-        const isAccessDenied = errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('Access denied');
-
+        const { isRateLimit, isAccessDenied } = handleRpcError('getPumpData', e);
         if (isRateLimit) {
-            console.warn(`[getPumpData] Rate limit hit for ${mintAddress.substring(0, 8)}... Cooling down.`);
-            // Apply 5s cooldown
-            rateLimitCoolDowns.set(mintAddress, Date.now() + 5000);
-        } else if (isAccessDenied) {
-            console.warn(`[getPumpData] Access denied for ${mintAddress.substring(0, 8)}... - trying public RPC fallback`);
-            try {
-                // Use shared fallback connection instead of creating a new one
-                const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-                const mint = new PublicKey(mintAddress);
-                const [bondingCurve] = PublicKey.findProgramAddressSync(
-                    [Buffer.from("bonding-curve"), mint.toBuffer()],
-                    PUMP_FUN_PROGRAM_ID
-                );
-                const account = await publicFallbackConnection.getAccountInfo(bondingCurve);
-                if (account) {
-                    const vTokensInBondingCurve = Number(account.data.readBigUInt64LE(8));
-                    const vSolInBondingCurve = Number(account.data.readBigUInt64LE(16)) / LAMPORTS_PER_SOL;
-                    const tokenTotalSupply = Number(account.data.readBigUInt64LE(24));
-                    const bondingCurveProgress = Math.max(0, Math.min(100,
-                        100 - (((vTokensInBondingCurve - 206900000) * 100) / 793100000)
-                    ));
-                    return { vTokensInBondingCurve, vSolInBondingCurve, tokenTotalSupply, bondingCurveProgress };
-                }
-            } catch (fallbackError: any) {
-                if (String(fallbackError).includes('429')) {
-                    rateLimitCoolDowns.set(mintAddress, Date.now() + 10000); // Longer cooldown for fallback
-                }
-            }
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 10000); // 10s backoff for this token
         }
         return null;
     }
@@ -232,13 +222,15 @@ export const getPumpPrice = async (mintAddress: string, conn: Connection = conne
     return price;
 };
 
-const metadataCache = new Map<string, { name: string, symbol: string }>();
+// Exported cache to allow LiveFeed to pre-populate it
+export const metadataCache = new Map<string, { name: string, symbol: string }>();
 
 export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) => {
     if (metadataCache.has(mintAddress)) return metadataCache.get(mintAddress)!;
     if (!heliusKey) return { name: "Unknown", symbol: "???" };
 
-    // Check cooldown
+    if (isCircuitBroken()) return { name: "RPC Blocked", symbol: "BLOCK" };
+
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
     if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "..." };
 
@@ -254,10 +246,16 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
             })
         });
 
-        // Handle 429 specifically for metadata
         if (response.status === 429) {
-            rateLimitCoolDowns.set(mintAddress, Date.now() + 5000);
+            handleRpcError('getTokenMetadata (429)', null);
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 15000);
             return { name: "Rate Limited", symbol: "429" };
+        }
+
+        if (response.status === 403) {
+            handleRpcError('getTokenMetadata (403)', null);
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 30000);
+            return { name: "Forbidden", symbol: "403" };
         }
 
         const data = await response.json();

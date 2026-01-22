@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, memo } from 'react';
 import { Activity, ExternalLink, TrendingUp, RefreshCw, WifiOff, ShieldAlert, ShieldCheck, Zap, AlertTriangle, Pause, Play } from 'lucide-react';
-import { getTokenMetadata, getPumpData } from '../utils/solanaManager';
+import { getTokenMetadata, getPumpData, metadataCache } from '../utils/solanaManager';
 import { quickRugCheck, detectRug } from '../utils/rugDetector';
 
 export interface TokenData {
@@ -154,7 +154,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 try {
                     await task();
                 } catch (e) { }
-                await new Promise(r => setTimeout(r, 400)); // ~2.5 heavy requests per second
+                await new Promise(r => setTimeout(r, 1000)); // 1.0 RPS safety limit
             }
         }
         processingQueue.current = false;
@@ -269,6 +269,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                         }
                     }
                     if (data.mint) {
+                        // PRE-POPULATE CACHE: If we got mint data from PumpPortal WS, save it!
+                        if (data.name && data.symbol) {
+                            metadataCache.set(data.mint, { name: data.name, symbol: data.symbol });
+                        }
+
                         // Normalize vSol to SOL (PumpPortal sends lamports)
                         const vSol = data.vSolInBondingCurve ? data.vSolInBondingCurve / 1e9 : 0;
                         const newToken: TokenData = {
