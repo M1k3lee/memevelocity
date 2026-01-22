@@ -22,17 +22,20 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [wallet, setWallet] = useState<any>(null);
   // Initialize config with Helius key from localStorage if available (client-side only)
-  const [config, setConfig] = useState<any>({
-    isRunning: false,
-    mode: 'safe',
-    amount: 0.01,
-    takeProfit: 30,
-    stopLoss: 10,
-    isDemo: false,
-    isSimulating: false,
-    heliusKey: '',
-    maxConcurrentTrades: 5,
-    dynamicSizing: true
+  const [config, setConfig] = useState<any>(() => {
+    const savedKey = typeof window !== 'undefined' ? localStorage.getItem('helius_api_key') : '';
+    return {
+      isRunning: false,
+      mode: 'safe',
+      amount: 0.01,
+      takeProfit: 30,
+      stopLoss: 10,
+      isDemo: false,
+      isSimulating: false,
+      heliusKey: savedKey || '',
+      maxConcurrentTrades: 5,
+      dynamicSizing: true
+    };
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(-1); // -1 = Loading/Waiting for RPC
@@ -86,15 +89,16 @@ export default function Home() {
   });
 
   useEffect(() => {
-    console.log(`[page.tsx] Connection useEffect - config.heliusKey: ${config.heliusKey ? config.heliusKey.substring(0, 8) + '...' : 'empty'}`);
+    // Only update if key actually changed to avoid unnecessary resets
     if (config.heliusKey) {
       console.log(`[page.tsx] Updating connection with Helius key: ${config.heliusKey.substring(0, 8)}...`);
       setConnection(createConnection(config.heliusKey));
-    } else {
+    } else if (mounted) {
+      // Only revert to public if we are mounted and explicitly have no key
       console.log(`[page.tsx] No Helius key, using public RPC`);
       setConnection(createConnection());
     }
-  }, [config.heliusKey]);
+  }, [config.heliusKey, mounted]);
 
   const {
     activeTrades,
