@@ -401,6 +401,30 @@ export default function Home() {
       }
     }
 
+    // === VELOCITY MODE: MOMENTUM FAST TRACK ===
+    if (config.mode === 'velocity') {
+      try {
+        const age = (Date.now() - token.timestamp) / 1000;
+        const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
+        const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
+
+        // VELOCITY FAST TRACK: New tokens (<60s) with explosive initial volume
+        if (age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1) {
+          addLog(`🏎️ VELOCITY FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum`);
+          addLog(`   🎯 EARLY IGNITION: Token is launching with conviction. Entering trade.`);
+
+          setSessionMints(prev => new Set(prev).add(token.mint));
+          const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
+            ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+            : undefined;
+
+          setLastTradeTime(Date.now());
+          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
+          return;
+        }
+      } catch (e) { }
+    }
+
     // === ENHANCED TOKEN ANALYSIS (Safe/Medium/High modes) - Based on Research ===
     try {
       // ENTRY CONFIRMATION: Wait for momentum confirmation before buying
@@ -465,17 +489,32 @@ export default function Home() {
       } else {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
-        // Custom mode uses medium risk level (balanced approach)
-        const riskMode = config.mode === 'high' ? 'high' : config.mode === 'medium' || config.mode === 'custom' ? 'medium' : 'safe';
+        // Mapping: high -> high, velocity -> velocity, medium/custom -> medium, safe -> safe
+        const riskModeMap: Record<string, 'safe' | 'medium' | 'high' | 'velocity'> = {
+          'safe': 'safe',
+          'medium': 'medium',
+          'velocity': 'velocity',
+          'high': 'high',
+          'custom': 'medium'
+        };
+        const riskMode = riskModeMap[config.mode] || 'medium';
         analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode, config.advanced);
       }
 
       // Mode-based filtering with analysis scores
       // IMPORTANT: High-risk mode should still have MINIMUM quality standards
-      let minScore = config.mode === 'safe' ? 65 : config.mode === 'medium' || config.mode === 'custom' ? 50 : 30;
+      // Mode-based filtering with analysis scores
+      // IMPORTANT: Velocity mode score requirement is handled inside analyzeEnhanced (passed = 40)
+      // but we still define the display minScore here
+      let minScore = 30;
+      if (config.mode === 'safe') minScore = 65;
+      else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
+      else if (config.mode === 'velocity') minScore = 40;
+      else if (config.mode === 'high') minScore = 30;
+
       if (config.isDemo) {
         // Paper trading: Lower thresholds to allow more trades for testing
-        minScore = config.mode === 'safe' ? 55 : config.mode === 'medium' || config.mode === 'custom' ? 40 : 25;
+        minScore = Math.max(15, minScore - 10);
       }
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
