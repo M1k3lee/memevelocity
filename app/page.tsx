@@ -798,6 +798,16 @@ export default function Home() {
         return;
       }
 
+      // MEDIUM MODE BREAK-EVEN PROTECTION: Sell 80% at 25% profit to reclaim original SOL
+      // Only for Medium mode and only if takeProfit is set higher than 25%
+      if (config.mode === 'medium' && currentPnl >= 25 && takeProfit > 25 && !trade.partialSells[80] && !trade.partialSells[50]) {
+        addLog(`🛡️ BREAK-EVEN PROTECTION: ${trade.symbol} hit 25% profit. Selling 80% to secure original SOL...`);
+        sellToken(trade.mint, 80);
+        // Mark 80% as sold to prevent repeats or higher staged sells
+        updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 80: true } });
+        return;
+      }
+
       // Second profit target (5x = 400%) - Sell 30% more (total 80% sold, 20% held)
       if (takeProfit2 && currentPnl >= takeProfit2 && !trade.partialSells[80]) {
         addLog(`🚀 STAGED TP2: ${trade.symbol} hit ${currentPnl.toFixed(1)}% (target: ${takeProfit2}%). Selling 30% more (20% held for lottery)...`);

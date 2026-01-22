@@ -71,7 +71,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (savedStats) {
             try {
                 const s = JSON.parse(savedStats);
-                // Reset stats if they are insanely high (cleanup old paper data if user wants, but here we just load)
                 setStats(s);
             } catch (e) { }
         }
@@ -95,7 +94,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     }, [activeTrades]);
 
     useEffect(() => {
-        localStorage.setItem('pump_trade_history', JSON.stringify(tradeHistory.slice(0, 100))); // Keep last 100
+        localStorage.setItem('pump_trade_history', JSON.stringify(tradeHistory.slice(0, 100)));
     }, [tradeHistory]);
 
     useEffect(() => {
@@ -118,7 +117,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         localStorage.setItem('pump_profit_protection_percent', profitProtectionPercent.toString());
     }, [profitProtectionPercent]);
 
-
     const setDemoMode = (enabled: boolean) => setIsDemo(enabled);
 
     const addLog = useCallback((msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 50)), []);
@@ -133,7 +131,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (!wallet && !isDemo) return;
         if (processingMintsRef.current.has(mint)) return;
 
-        // Find the trade in current state
         const trade = activeTrades.find(t => t.mint === mint);
         if (!trade || trade.status === "closed" || trade.status === "selling") return;
 
@@ -145,7 +142,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const sellPrice = trade.currentPrice || 0;
                 const costBasis = (trade.buyPrice || 0) * (trade.amountTokens || 0) * (amountPercent / 100);
 
-                // If trade is STALE (>2m), assume price is dead (0) for stats to stay honest
                 const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 120000);
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
@@ -153,7 +149,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const revenue = rawRevenue * 0.97; // 3% friction
                 const profit = revenue - costBasis;
 
-                // Simulate Rent Reclaim (0.00204 SOL) on 100% sell in paper mode for accuracy
                 const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
                 setDemoBalance(prev => prev + costBasis + profit + rentReclaim);
 
@@ -180,14 +175,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }
 
                 addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Profit: ${profit.toFixed(4)} SOL`);
-                toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`);
                 processingMintsRef.current.delete(mint);
                 return;
             }
 
             if (!wallet) return;
 
-            // REAL WALLET SELL LOGIC
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
             if (balance === 0) {
                 if (Date.now() - (trade.lastPriceChangeTime || 0) > 60000) {
@@ -205,10 +198,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const amountToSell = balance * (amountPercent / 100);
             const tradeAmountPaid = trade.amountSolPaid || 0.03;
 
-            // Set status to "selling" to prevent parallel attempts
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
 
-            // Scaled Priority Fee: Extremely low for small trades to save balance
             const priorityFee = tradeAmountPaid <= 0.05 ? 0.0003 : Math.max(0.0005, Math.min(0.002, tradeAmountPaid * 0.02));
 
             let transactionBuffer;
@@ -224,7 +215,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     pool: "pump"
                 });
             } catch (err: any) {
-                // Secondary check/retry with higher slippage
                 transactionBuffer = await getTradeTransaction({
                     publicKey: wallet.publicKey.toBase58(),
                     action: "sell",
@@ -244,8 +234,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const confirmation = await connection.confirmTransaction(signature, 'confirmed');
             if (confirmation.value.err) throw new Error("On-chain execution failed");
 
-            // REAL-TIME ACCURATE PnL CALCULATION
-            await new Promise(resolve => setTimeout(resolve, 2000)); // wait for index
+            await new Promise(resolve => setTimeout(resolve, 2000));
             const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
             const revenue = (balanceAfter ?? 0) - (balanceBefore ?? 0);
             const costBasis = tradeAmountPaid * (amountPercent / 100);
@@ -263,7 +252,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 losses: netProfit <= 0 ? prev.losses + 1 : prev.losses
             }));
 
-            // Clamp PnL for sanity (max -100% loss)
             const finalPnlPercent = Math.max(-100, realizedPnlPercent);
 
             if (amountPercent >= 99) {
@@ -271,7 +259,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     ...trade,
                     status: "closed" as const,
                     currentPrice: trade.currentPrice,
-                    pnlPercent: finalPnlPercent, // Accurate percentage
+                    pnlPercent: finalPnlPercent,
                     txId: signature
                 };
                 setTradeHistory(prev => {
@@ -294,13 +282,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } catch (error: any) {
             const msg = error.message || "Execution error";
             addLog(`❌ Sell Failed for ${trade.symbol}: ${msg}`);
-
-            // Revert status to OPEN if transaction just failed to land (prevent phantom losses)
             if (msg.includes("Account") || msg.includes("not found")) {
-                // Real rug/loss - remove and record final loss
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-
-                // Only subtract if not already handled by sync
                 const lossAmount = trade.amountSolPaid || 0;
                 setStats(prev => ({
                     ...prev,
@@ -308,7 +291,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     losses: prev.losses + 1
                 }));
             } else {
-                // Temporary failure (slippage/gas), allow retry
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
             }
         } finally {
@@ -316,286 +298,119 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
     }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
 
-    // WebSocket for Price Updates on Active Trades
+    // --- PRICE CALCULATION ENGINE ---
+
+    const updatePrices = useCallback(async () => {
+        const openTrades = activeTrades.filter(t => t.status === "open");
+        if (openTrades.length === 0) return;
+
+        const tradesToPoll = isDemo ? openTrades : openTrades.slice(0, 10);
+        const BATCH_SIZE = 5;
+        const updates: Map<string, Partial<ActiveTrade>> = new Map();
+
+        for (let i = 0; i < tradesToPoll.length; i += BATCH_SIZE) {
+            const batch = tradesToPoll.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (trade) => {
+                try {
+                    let price = 0;
+                    let currentLiquidity = 0;
+
+                    if (trade.mint.startsWith('SIM') && !isDemo) {
+                        const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug");
+                        const basePrice = trade.currentPrice > 0 ? trade.currentPrice : (trade.buyPrice > 0 ? trade.buyPrice : 0.000001);
+                        const change = 1 + (Math.random() * 0.1 - 0.05) + (isRug ? -0.01 : 0.005);
+                        price = Math.max(0.000001, basePrice * change);
+                    } else {
+                        try {
+                            const pumpData = await getPumpData(trade.mint, connection);
+                            if (pumpData) {
+                                currentLiquidity = pumpData.vSolInBondingCurve;
+                                if (pumpData.vTokensInBondingCurve > 0 && pumpData.vSolInBondingCurve > 0) {
+                                    price = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1000000;
+                                }
+                            }
+                            if (price === 0) {
+                                const fetchedPrice = await getPumpPrice(trade.mint, connection);
+                                if (fetchedPrice > 0) price = fetchedPrice;
+                            }
+                        } catch (error) { price = 0; }
+                    }
+
+                    const priceToUse = price > 0 ? price : (trade.currentPrice > 0 ? trade.currentPrice : 0);
+                    if (priceToUse > 0) {
+                        let buyPrice = trade.buyPrice;
+                        if (buyPrice === 0 || buyPrice < 0.000000001) buyPrice = priceToUse;
+
+                        const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
+                        const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
+
+                        const prevLiq = trade.lastLiquidity || 0;
+                        if (prevLiq > 0 && trade.lastPriceUpdate) {
+                            if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
+                                updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
+                                sellToken(trade.mint, 100);
+                                addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
+                                return;
+                            }
+                        }
+
+                        updates.set(trade.mint, {
+                            buyPrice,
+                            currentPrice: priceToUse,
+                            pnlPercent: pnl,
+                            highestPrice,
+                            lastPriceUpdate: Date.now(),
+                            lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
+                            lastLiquidity: currentLiquidity > 0 ? currentLiquidity : trade.lastLiquidity
+                        });
+                    }
+                } catch (e) { }
+            }));
+        }
+
+        if (updates.size > 0) {
+            setActiveTrades(prev => prev.map(t => updates.has(t.mint) ? { ...t, ...updates.get(t.mint) } : t));
+        }
+    }, [activeTrades, connection, isDemo, addLog, sellToken]);
+
+    // WebSocket Hook
     useEffect(() => {
         if (!wallet && !isDemo) return;
-
-        const url = heliusKey
-            ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}`
-            : 'wss://pumpportal.fun/api/data';
-
+        const url = heliusKey ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'wss://pumpportal.fun/api/data';
         const ws = new WebSocket(url);
         wsRef.current = ws;
 
         ws.onopen = () => {
-            if (heliusKey) {
-                // Subscribe to trades via logs for tokens in active trades
-                const mints = activeTrades.map(t => t.mint);
-                if (mints.length > 0) {
-                    const payload = {
-                        jsonrpc: "2.0",
-                        id: 1,
-                        method: "logsSubscribe",
-                        params: [
-                            { mentions: mints },
-                            { commitment: "processed" }
-                        ]
-                    };
-                    ws.send(JSON.stringify(payload));
-                }
-            } else {
-                // Resubscribe to existing trades if any
-                const mints = activeTrades.map(t => t.mint);
-                if (mints.length > 0) {
+            const mints = activeTrades.filter(t => t.status === "open").map(t => t.mint);
+            if (mints.length > 0) {
+                if (heliusKey) {
+                    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: mints }, { commitment: "processed" }] }));
+                } else {
                     ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: mints }));
                 }
             }
         };
 
         ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-
-                // Handle Helius log notifications for trades
-                if (heliusKey && data.method === "logsNotification") {
-                    const logs = data.params.result.value.logs as string[];
-                    // In a real scenario, we'd parse the logs for bonding curve changes.
-                    return;
-                }
-
-                if (data.mint && data.vSolInBondingCurve && data.vTokensInBondingCurve) {
-                    // Standard PumpPortal price calculation: (vSol_SOL / vTokens) * 1M
-                    // Convert vSol from lamports to SOL
-                    const price = ((data.vSolInBondingCurve / 1000000000) / data.vTokensInBondingCurve) * 1000000;
-
-                    setActiveTrades(prev => prev.map(trade => {
-                        if (trade.mint === data.mint && trade.status === "open") {
-                            // Ensure buyPrice is set (use current price if not set)
-                            let buyPrice = trade.buyPrice;
-                            if (buyPrice === 0 || buyPrice < 0.000000001) {
-                                buyPrice = price;
-                            }
-
-                            const pnl = buyPrice > 0 ? ((price - buyPrice) / buyPrice) * 100 : 0;
-
-                            // Track highest price for trailing stop
-                            const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, price) : price;
-
-                            return {
-                                ...trade,
-                                buyPrice, // Update buyPrice if it was invalid
-                                currentPrice: price,
-                                pnlPercent: pnl,
-                                highestPrice,
-                                lastPriceUpdate: Date.now(),
-                                lastPriceChangeTime: price !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime
-                            };
-                        }
-                        return trade;
-                    }));
-                }
-            } catch (e) { }
+            const data = JSON.parse(event.data);
+            if ((heliusKey && data.method === "logsNotification") || (data.mint && (data.vSolInBondingCurve || data.price))) {
+                updatePrices();
+            }
         };
 
-        return () => {
-            ws.close();
-        };
-    }, [wallet, heliusKey, isDemo, activeTrades.length]); // Added activeTrades.length to resubscribe on new trades
+        return () => ws.close();
+    }, [wallet, heliusKey, isDemo, activeTrades.length, updatePrices]);
 
-    // Poll price for active trades - faster for first buyer mode and demo mode
+    // Polling Hook (2s Heartbeat)
     useEffect(() => {
-        // Check if any trades are in first buyer mode (very short hold times)
-        const hasFirstBuyerTrades = activeTrades.some(t =>
-            t.status === "open" &&
-            t.exitStrategy &&
-            t.exitStrategy.maxHoldTime < 10
-        );
-
-        // DYNAMIC POLLING: Scale interval based on number of active trades to avoid RPC rate limits
-        // Total requests per minute = (60 / pollInterval) * tradesToPoll
-        const openTradesCount = activeTrades.filter(t => t.status === "open").length;
-
-        let pollInterval = 1500; // Base interval
-        if (hasFirstBuyerTrades || isDemo) {
-            // Scale interval: 1s for 1 trade, 2s for 5 trades, up to 5s for 10+ trades
-            pollInterval = Math.max(1000, Math.min(5000, 500 * openTradesCount));
-        } else {
-            // Even more conservative for real trading to preserve Helius credits
-            pollInterval = Math.max(2000, Math.min(10000, 1000 * openTradesCount));
-        }
-
-        // Immediate price update on mount/change (don't wait for interval)
-        const updatePrices = async () => {
-            const openTrades = activeTrades.filter(t => t.status === "open");
-            // For first buyer mode or demo mode, poll all trades more frequently
-            const tradesToPoll = (hasFirstBuyerTrades || isDemo) ? openTrades : openTrades.slice(0, 10);
-            if (tradesToPoll.length === 0) return;
-
-            // PARALLEL EXECUTION: Fix for "hanging" app
-            // Instead of awaiting each trade sequentially, we process them in parallel batches
-            // This prevents UI blocking and increases trade reaction speed significantly
-            const BATCH_SIZE = 5;
-            const updates: Map<string, Partial<ActiveTrade>> = new Map();
-
-            // Process trades in concurrent batches to avoid rate limits but stay fast
-            for (let i = 0; i < tradesToPoll.length; i += BATCH_SIZE) {
-                const batch = tradesToPoll.slice(i, i + BATCH_SIZE);
-
-                await Promise.all(batch.map(async (trade) => {
-                    try {
-                        let price = 0;
-                        let currentLiquidity = 0;
-
-                        // DEMO MODE: Always use REAL prices from blockchain (even for demo trades)
-                        if (trade.mint.startsWith('SIM') && !isDemo) {
-                            // Simplify SIM logic for performance/reliability
-                            const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug");
-                            const basePrice = trade.currentPrice > 0 ? trade.currentPrice : (trade.buyPrice > 0 ? trade.buyPrice : 0.000001);
-                            // Random walk with drift
-                            const change = 1 + (Math.random() * 0.1 - 0.05) + (isRug ? -0.01 : 0.005);
-                            price = Math.max(0.000001, basePrice * change);
-                        } else {
-                            // REAL PRICE FETCHING (Parallelized)
-                            try {
-                                // Try to get full pump data (liquidity + price)
-                                const pumpData = await getPumpData(trade.mint, connection);
-                                if (pumpData) {
-                                    currentLiquidity = pumpData.vSolInBondingCurve;
-                                    if (pumpData.vTokensInBondingCurve > 0 && pumpData.vSolInBondingCurve > 0) {
-                                        price = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1000000;
-                                    }
-                                }
-
-                                // Fallback if calculation failed
-                                if (price === 0) {
-                                    const fetchedPrice = await getPumpPrice(trade.mint, connection);
-                                    if (fetchedPrice > 0) price = fetchedPrice;
-                                }
-
-                                // Paper Trading Realism: If RPC fails, keep price for 60s grace period.
-                                // After 60s, assume token has rugged/stopped and set price to 0.
-                                if (price === 0 && isDemo && trade.currentPrice > 0) {
-                                    const timeSinceUpdate = Date.now() - (trade.lastPriceUpdate || Date.now());
-                                    if (timeSinceUpdate > 60000) { // 60s grace period
-                                        price = 0.000000001; // Effectively 0 to trigger Stop Loss
-                                        if (timeSinceUpdate > 65000 && timeSinceUpdate < 75000) { // Log once
-                                            addLog(`⚠️ RUG SIMULATION: No data for ${trade.symbol} for >60s. Marking as potential rug.`);
-                                        }
-                                    } else {
-                                        price = trade.currentPrice;
-                                    }
-                                }
-                            } catch (error) {
-                                price = 0;
-                            }
-                        }
-
-                        const priceToUse = price > 0 ? price : (trade.currentPrice > 0 ? trade.currentPrice : 0);
-
-                        if (priceToUse > 0) {
-                            // Calculate updates locally (don't set state yet)
-                            let buyPrice = trade.buyPrice;
-                            if (buyPrice === 0 || buyPrice < 0.000000001) {
-                                buyPrice = priceToUse;
-                            }
-
-                            const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
-                            const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
-
-                            // Check liquidity drain (Rug Pull Detector)
-                            const prevLiq = (trade as any).lastLiquidity || 0;
-                            if (prevLiq > 0 && trade.lastPriceUpdate) {
-                                // Case A: Liquidity dropped >20% (partial rug)
-                                if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
-                                    updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
-                                    sellToken(trade.mint, 100);
-                                    addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
-                                    return;
-                                }
-                                // Case B: RPC returning null for previously active token (total rug/delist)
-                                if (price <= 0.000000001 && Date.now() - trade.lastPriceUpdate > 45000) {
-                                    updates.set(trade.mint, { status: "selling" });
-                                    sellToken(trade.mint, 100);
-                                    addLog(`🚨 TOTAL RUG DETECTED: ${trade.symbol} disappeared from blockchain. Exiting.`);
-                                    return;
-                                }
-                            }
-
-                            // Only update timestamp if we got a fresh price from network
-                            const isFresh = price > 0;
-                            const newLastPriceUpdate = isFresh ? Date.now() : (trade.lastPriceUpdate || Date.now());
-
-                            // Auto-close if stale for > 3 minutes (180000ms)
-                            // In Demo mode, we also auto-close to avoid "zombie" trades
-                            if (!isFresh && Date.now() - newLastPriceUpdate > 180000) {
-                                addLog(`⚠️ Token ${trade.symbol} stale >3m. Auto-closing as potential rug loss.`);
-                                sellToken(trade.mint, 100);
-                                const closedTrade = { ...trade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
-                                setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
-                                updates.set(trade.mint, { status: "closed" }); // This will be filtered in the map below
-                                return;
-                            }
-
-                            const update: any = {
-                                buyPrice,
-                                currentPrice: priceToUse,
-                                pnlPercent: pnl,
-                                highestPrice,
-                                lastPriceUpdate: newLastPriceUpdate,
-                                lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
-                                lastLiquidity: currentLiquidity > 0 ? currentLiquidity : (trade as any).lastLiquidity
-                            };
-
-                            // Prevent Buy Price clobbering: Locked once set > 0
-                            if (trade.buyPrice > 0 && buyPrice === priceToUse && priceToUse !== trade.buyPrice) {
-                                update.buyPrice = trade.buyPrice;
-                            }
-
-                            updates.set(trade.mint, update);
-                        }
-                    } catch (e) {
-                        // Ignore individual trade errors to keep the batch moving
-                    }
-                }));
-            }
-
-            // Apply ALL updates in ONE state change (Batching) to prevent re-renders
-            if (updates.size > 0) {
-                setActiveTrades(prev => prev.filter(t => {
-                    const update = updates.get(t.mint);
-                    return !update || update.status !== "closed";
-                }).map(t => {
-                    if (updates.has(t.mint)) {
-                        const update = updates.get(t.mint);
-                        return { ...t, ...update };
-                    }
-                    return t;
-                }));
-            }
-        };
-
-        // Run immediately on mount/change
-        updatePrices();
-
-        // Then run on interval
-        const interval = setInterval(updatePrices, pollInterval);
-
+        const interval = setInterval(updatePrices, 2000);
         return () => clearInterval(interval);
-    }, [activeTrades, connection, isDemo, addLog, sellToken]);
+    }, [updatePrices]);
 
-    // Subscribe when a new trade is added
     const subscribeToToken = (mint: string) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             if (heliusKey) {
-                wsRef.current.send(JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: 1,
-                    method: "logsSubscribe",
-                    params: [
-                        { mentions: [mint] },
-                        { commitment: "processed" }
-                    ]
-                }));
+                wsRef.current.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [mint] }, { commitment: "processed" }] }));
             } else {
                 wsRef.current.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] }));
             }
@@ -616,248 +431,86 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (isDemo) {
             if (demoBalance < amountSol) {
                 addLog("[DEMO] Insufficient funds for trade.");
+                processingMintsRef.current.delete(mint);
                 return;
             }
-
-            // Demo mode: Stop trading if balance gets too low (prevent burning through all demo SOL)
             if (demoBalance < amountSol * 2) {
-                addLog("[DEMO] ⚠️ Low demo balance - stopping to prevent total loss. Reset demo balance to continue.");
+                addLog("[DEMO] ⚠️ Low demo balance - stopping.");
+                processingMintsRef.current.delete(mint);
                 return;
             }
 
             setDemoBalance(prev => prev - amountSol);
-
-
-            // DEMO MODE: Use REAL token prices from blockchain
-            // If initialPrice is not provided, fetch it from the blockchain
-            let buyPrice = initialPrice || 0;
+            let buyPrice = initialPrice || await getPumpPrice(mint, connection);
             if (buyPrice === 0) {
-                // Fetch real price from blockchain for demo trades
-                try {
-                    buyPrice = await getPumpPrice(mint, connection);
-                    if (buyPrice === 0) {
-                        // Try one more time with a small delay
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        buyPrice = await getPumpPrice(mint, connection);
-
-                        if (buyPrice === 0) {
-                            addLog(`[DEMO] ❌ Unable to fetch valid price for ${symbol}. Skipping trade.`);
-                            setDemoBalance(prev => prev + amountSol); // Refund
-                            return;
-                        }
-                    }
-                } catch (e) {
-                    addLog(`[DEMO] ❌ Error fetching price for ${symbol}. Skipping trade.`);
-                    setDemoBalance(prev => prev + amountSol); // Refund
-                    return;
-                }
-            }
-
-            // Simulate 1.5% slippage/friction on entry price for paper trading realism
-            buyPrice = buyPrice * 1.015;
-
-            // Simulate 1% Pump.fun fee on entry (Realistic calculation)
-            const effectiveSol = amountSol * 0.99;
-
-            // PAPER TRADING REALISM: Deduct Rent (0.002 SOL)
-            // This is why live trading feels harder - rent eats ~10% of small trades.
-            const paperRent = 0.00204;
-            const tradeableSol = effectiveSol - paperRent;
-
-            const amountTokens = buyPrice > 0 ? tradeableSol / buyPrice : tradeableSol;
-
-            if (tradeableSol <= 0) {
-                addLog(`[DEMO] ❌ Trade amount too small to cover SOL rent (0.002 SOL).`);
+                addLog(`[DEMO] ❌ No valid price for ${symbol}. Skipping.`);
                 setDemoBalance(prev => prev + amountSol);
+                processingMintsRef.current.delete(mint);
                 return;
             }
 
+            buyPrice *= 1.015;
+            const tradeableSol = (amountSol * 0.99) - 0.00204;
+            const amountTokens = tradeableSol / buyPrice;
+
             const newTrade: ActiveTrade = {
-                mint,
-                symbol,
-                buyPrice,
-                amountTokens,
-                amountSolPaid: amountSol, // Track original investment
-                currentPrice: buyPrice,
-                pnlPercent: 0,
-                status: "open",
-                txId: `DEMO-${Date.now()}`, // Changed from SIM to DEMO to indicate demo trade
-                buyTime: Date.now(),
-                exitStrategy,
-                originalAmount: amountSol
+                mint, symbol, buyPrice, amountTokens, amountSolPaid: amountSol,
+                currentPrice: buyPrice, pnlPercent: 0, status: "open",
+                txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy, originalAmount: amountSol
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
-
-            // CRITICAL: Immediately fetch real price to ensure buyPrice is accurate
-            // This prevents issues where buyPrice is 0 or placeholder
-            // Also fetch price immediately and then again after a short delay to ensure it's current
-            setTimeout(async () => {
-                try {
-                    const realPrice = await getPumpPrice(mint, connection);
-                    if (realPrice > 0) {
-                        setActiveTrades(prev => prev.map(t => {
-                            if (t.mint === mint && t.status === "open") {
-                                const updatedBuyPrice = t.buyPrice === 0 || t.buyPrice < 0.000000001 ? realPrice : t.buyPrice;
-                                const updatedPnl = updatedBuyPrice > 0 ? ((realPrice - updatedBuyPrice) / updatedBuyPrice) * 100 : 0;
-                                addLog(`[DEMO] ${symbol} price update: buyPrice=${updatedBuyPrice.toFixed(9)}, current=${realPrice.toFixed(9)}, PnL=${updatedPnl.toFixed(2)}%`);
-                                return {
-                                    ...t,
-                                    buyPrice: updatedBuyPrice,
-                                    currentPrice: realPrice,
-                                    pnlPercent: updatedPnl
-                                };
-                            }
-                            return t;
-                        }));
-                    } else {
-                        addLog(`[DEMO] ${symbol} price fetch returned 0 - will retry on next poll`);
-                    }
-                } catch (e: any) {
-                    console.error(`[DEMO] Error fetching initial price for ${symbol}:`, e.message);
-                    addLog(`[DEMO] ${symbol} price fetch error: ${e.message}`);
-                }
-            }, 1000); // 1 second delay to ensure trade is in state
-
-            // Also fetch again after 3 seconds to ensure we have the latest price
-            setTimeout(async () => {
-                try {
-                    const realPrice = await getPumpPrice(mint, connection);
-                    if (realPrice > 0) {
-                        setActiveTrades(prev => prev.map(t => {
-                            if (t.mint === mint && t.status === "open" && (t.buyPrice === 0 || t.buyPrice < 0.000000001)) {
-                                const updatedPnl = realPrice > 0 ? ((realPrice - realPrice) / realPrice) * 100 : 0;
-                                addLog(`[DEMO] ${symbol} second price update: ${realPrice.toFixed(9)} SOL`);
-                                return {
-                                    ...t,
-                                    buyPrice: realPrice,
-                                    currentPrice: realPrice,
-                                    pnlPercent: updatedPnl
-                                };
-                            }
-                            return t;
-                        }));
-                    }
-                } catch (e) {
-                    // Silent fail on second attempt
-                }
-            }, 3000);
-
-            addLog(`[DEMO] Paper trade placed for ${symbol} at ${buyPrice > 0.000001 ? buyPrice.toFixed(9) : 'market'} SOL (tracking real price)`);
-            toast.success(`[DEMO] Bought ${symbol}`, { description: `Amount: ${amountSol} SOL` });
+            toast.success(`[DEMO] Bought ${symbol}`);
+            processingMintsRef.current.delete(mint);
             return;
         }
 
         if (!wallet) return;
-
-        // Internal dedupe check
         if (activeTrades.some(t => t.mint === mint)) {
-            console.log("[buyToken] Already in activeTrades, skipping");
+            processingMintsRef.current.delete(mint);
             return;
         }
 
-        // Pre-trade balance check: Amount + Reserve (0.05)
-        // This ensures the user never gets stuck with no SOL for sell fees
         try {
             const bal = await getBalance(wallet.publicKey.toBase58(), connection);
-            if (bal === null) {
-                addLog(`⚠️ Balance verify failed (Network). Skipping ${symbol} to avoid risk.`);
+            if (bal === null || bal < amountSol + SOL_FEE_RESERVE) {
+                addLog(`Error: Insufficient balance. Need ${amountSol + SOL_FEE_RESERVE} SOL.`);
                 return;
             }
-            if (bal < amountSol + SOL_FEE_RESERVE) {
-                addLog(`Error: Insufficient balance. Have ${bal.toFixed(4)} SOL, need ~${(amountSol + SOL_FEE_RESERVE).toFixed(4)} SOL (incl. ${SOL_FEE_RESERVE} SOL reserve for fees)`);
-                return;
-            }
-        } catch (e) { }
 
-        try {
-            // Lower priority fee for small trades: saving every lamport
             const priorityFee = amountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, amountSol * 0.05));
-
             const transactionBuffer = await getTradeTransaction({
                 publicKey: wallet.publicKey.toBase58(),
-                action: "buy",
-                mint,
-                amount: amountSol,
-                denominatedInSol: "true",
-                slippage,
-                priorityFee,
-                pool: "pump"
+                action: "buy", mint, amount: amountSol, denominatedInSol: "true",
+                slippage, priorityFee, pool: "pump"
             });
 
             const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
             addLog(`Buy Tx Sent: ${signature.substring(0, 8)}...`);
 
             const newTrade: ActiveTrade = {
-                mint,
-                symbol,
-                buyPrice: initialPrice || 0,
-                amountTokens: 0,
-                amountSolPaid: amountSol,
-                currentPrice: initialPrice || 0,
-                pnlPercent: 0,
-                status: "open",
-                txId: signature,
-                lastPriceChangeTime: Date.now(),
-                buyTime: Date.now(),
-                exitStrategy,
-                originalAmount: amountSol
+                mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: amountSol,
+                currentPrice: initialPrice || 0, pnlPercent: 0, status: "open", txId: signature,
+                buyTime: Date.now(), exitStrategy, originalAmount: amountSol
             };
 
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
 
-            // Wait for confirmation to be sure
             connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
                 if (!res.value.err) {
-                    addLog(`✅ Buy Confirmed for ${symbol}! Fetching on-chain costs...`);
-
-                    // CRITICAL FIX: Fetch actual token balance to calculate REAL entry price
-                    try {
-                        // Small delay to ensure balance is indexed
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
-
-                        if (actualTokens > 0) {
-                            const realBuyPrice = amountSol / actualTokens;
-                            addLog(`📊 On-chain Entry Price: ${realBuyPrice.toFixed(9)} SOL (Tokens: ${actualTokens.toLocaleString()})`);
-
-                            setActiveTrades(prev => prev.map(t => t.mint === mint ? {
-                                ...t,
-                                buyPrice: realBuyPrice,
-                                amountTokens: actualTokens,
-                                isPaper: false
-                            } : t));
-                        } else {
-                            // Fallback if balance fetch fails
-                            setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, isPaper: false } : t));
-                        }
-                    } catch (e) {
-                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, isPaper: false } : t));
+                    await new Promise(r => setTimeout(r, 2000));
+                    const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
+                    if (actualTokens > 0) {
+                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: amountSol / actualTokens, amountTokens: actualTokens } : t));
                     }
                 } else {
-                    addLog(`❌ Buy Failed on-chain for ${symbol}. Removing from internal tracker.`);
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
                 }
                 syncTrades();
-            }).catch((e) => {
-                addLog(`⚠️ Buy Confirmation Timeout for ${symbol}. Bot will sync balance automatically.`);
-                // Keep it in activeTrades, syncTrades will verify balance shortly
-                setTimeout(() => syncTrades(), 5000);
             });
         } catch (error: any) {
-            let errorMsg = error.message || "Unknown error";
-
-            if (errorMsg.includes("0x1772") || errorMsg.includes("TooMuchSolRequired")) {
-                errorMsg = "Slippage error: Price moved too fast. Try higher slippage.";
-            } else if (errorMsg.includes("0x1") || errorMsg.includes("Insufficient lamports")) {
-                errorMsg = "Balance error: Insufficient SOL for trade + fees.";
-            } else if (errorMsg.includes("Simulation failed")) {
-                errorMsg = "Trade Simulation Failed (Price might have moved too fast)";
-            }
-
-            addLog(`Buy Failed: ${errorMsg}`);
-            toast.error(`Buy Failed: ${symbol}`, { description: errorMsg });
+            addLog(`Buy Failed: ${error.message}`);
         } finally {
             processingMintsRef.current.delete(mint);
         }
@@ -865,280 +518,91 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     const syncTrades = async () => {
         if (isDemo || !wallet) return;
-        addLog("Syncing portfolio with blockchain...");
-
-        const openTrades = activeTrades.filter(t => t.status === "open");
-        for (const trade of openTrades) {
+        addLog("Syncing portfolio...");
+        for (const trade of activeTrades.filter(t => t.status === "open")) {
             try {
                 const bal = await getTokenBalance(wallet.publicKey.toBase58(), trade.mint, connection);
                 if (bal > 0) {
                     setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? { ...t, amountTokens: bal } : t));
-                    addLog(`Synced: Verified ${bal.toFixed(2)} tokens for ${trade.symbol}.`);
-                } else {
-                    const age = Date.now() - (trade.lastPriceChangeTime || 0);
-                    if (age > 60000) {
-                        const closedTrade = {
-                            ...trade,
-                            status: "closed" as const,
-                            currentPrice: 0,
-                            pnlPercent: -100
-                        };
-                        setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
-                        setActiveTrades(prev => prev.filter(t => t.mint !== trade.mint));
-
-                        const lossAmount = trade.amountSolPaid || 0;
-                        setStats(prev => ({
-                            ...prev,
-                            totalProfit: prev.totalProfit - lossAmount,
-                            losses: prev.losses + 1
-                        }));
-                        addLog(`Synced: ${trade.symbol} has 0 balance after 60s. Marking as RUG loss.`);
-                    } else if (!processingMintsRef.current.has(trade.mint)) {
-                        addLog(`Synced: ${trade.symbol} balance not found yet, retrying later...`);
-                    }
+                } else if (Date.now() - (trade.buyTime || 0) > 60000) {
+                    setActiveTrades(prev => prev.filter(t => t.mint !== trade.mint));
                 }
-            } catch (e) {
-                console.error("Sync error for", trade.symbol, e);
-            }
-        }
-
-        try {
-            const currentBal = await getBalance(wallet.publicKey.toBase58(), connection);
-            if (currentBal !== null && currentBal < 0.05) {
-                addLog("Checking for recoverable SOL rent...");
-                const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
-                const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                    programId: TOKEN_PROGRAM_ID
-                });
-
-                let reclaimedCount = 0;
-                for (const acc of accounts.value) {
-                    const info = acc.account.data.parsed.info;
-                    if (info.tokenAmount.uiAmount <= 0) {
-                        const mint = info.mint;
-                        if (!activeTrades.some(t => t.mint === mint)) {
-                            reclaimedCount++;
-                        }
-                    }
-                }
-                if (reclaimedCount > 0) {
-                    addLog(`💡 Found ${reclaimedCount} empty token accounts worth ~${(reclaimedCount * 0.00204).toFixed(4)} SOL.`);
-                    addLog(`👉 Use SolIncinerator or a similar tool to reclaim this rent.`);
-                }
-            }
-        } catch (e) {
-            console.error("Rent check error", e);
+            } catch (e) { }
         }
     };
 
     const cleanupWaste = async () => {
         if (!wallet || isDemo) return;
         setIsCleaning(true);
-        addLog("🧹 Starting wallet cleanup to rescue SOL rent...");
-
+        addLog("🧹 Cleanup in progress...");
         try {
-            const { Transaction, PublicKey, SystemProgram } = await import('@solana/web3.js');
+            const { Transaction } = await import('@solana/web3.js');
             const { TOKEN_PROGRAM_ID, createCloseAccountInstruction } = await import('@solana/spl-token');
-
-            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                programId: TOKEN_PROGRAM_ID
-            });
-
-            const emptyAccounts = accounts.value.filter(acc => {
-                const info = acc.account.data.parsed.info;
-                const balance = info.tokenAmount.uiAmount;
-                const mint = info.mint;
-                // Only close if balance is 0 AND not an active trade
-                return balance <= 0 && !activeTrades.some(t => t.mint === mint);
-            });
-
-            if (emptyAccounts.length === 0) {
-                addLog("✨ Wallet is already clean! No rent to rescue.");
-                setIsCleaning(false);
-                return;
-            }
-
-            addLog(`📝 Found ${emptyAccounts.length} accounts to close. Preparing rescue team...`);
-
-            // Limit to ~20 per transaction for safety
-            const batch = emptyAccounts.slice(0, 20);
+            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { programId: TOKEN_PROGRAM_ID });
+            const toClose = accounts.value.filter(acc => acc.account.data.parsed.info.tokenAmount.uiAmount <= 0 && !activeTrades.some(t => t.mint === acc.account.data.parsed.info.mint)).slice(0, 20);
+            if (toClose.length === 0) { setIsCleaning(false); return; }
             const transaction = new Transaction();
-
-            for (const acc of batch) {
-                transaction.add(
-                    createCloseAccountInstruction(
-                        acc.pubkey,
-                        wallet.publicKey,
-                        wallet.publicKey,
-                        [],
-                        TOKEN_PROGRAM_ID
-                    )
-                );
-            }
-
+            toClose.forEach(acc => transaction.add(createCloseAccountInstruction(acc.pubkey, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM_ID)));
             const { blockhash } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = wallet.publicKey;
-
             transaction.sign(wallet);
-            const signature = await connection.sendRawTransaction(transaction.serialize());
-
-            addLog(`🚀 Rescue Mission Sent: ${signature.substring(0, 8)}...`);
-            await connection.confirmTransaction(signature);
-
-            const reclaimed = batch.length * 0.00204;
-            addLog(`✅ SUCCESS! Rescued ~${reclaimed.toFixed(4)} SOL from the void.`);
-            toast.success(`Rescued ${reclaimed.toFixed(4)} SOL!`);
-
-        } catch (error: any) {
-            addLog(`❌ Cleanup Failed: ${error.message}`);
-            toast.error("Cleanup Failed");
-        } finally {
-            setIsCleaning(false);
-        }
+            const sig = await connection.sendRawTransaction(transaction.serialize());
+            addLog(`Cleanup Tx Sent: ${sig.substring(0, 8)}...`);
+            await connection.confirmTransaction(sig);
+            addLog(`✅ Rescued ${(toClose.length * 0.00204).toFixed(4)} SOL`);
+        } catch (e: any) { addLog(`Cleanup Failed: ${e.message}`); } finally { setIsCleaning(false); }
     };
 
     const recoverTrades = async () => {
         if (isDemo || !wallet) return;
-        addLog("Scanning wallet for existing tokens...");
+        addLog("Scanning for untracked tokens...");
         try {
             const { PublicKey } = await import('@solana/web3.js');
-            const userPub = wallet.publicKey;
-            const accounts = await connection.getParsedTokenAccountsByOwner(userPub, {
-                programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-            });
-
+            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA") });
             for (const acc of accounts.value) {
                 const info = acc.account.data.parsed.info;
-                const mint = info.mint;
-                const balance = info.tokenAmount.uiAmount;
-
-                if (balance > 0 && !activeTrades.some(t => t.mint === mint)) {
-                    // It's a token we have but aren't tracking. Check if it's a pump token.
-                    if (mint.endsWith('pump')) {
-                        addLog(`Found untracked token: ${mint.substring(0, 6)}...`);
-                        const meta = await getTokenMetadata(mint, heliusKey);
-                        const price = await getPumpPrice(mint, connection);
-
-                        const recoveredTrade: ActiveTrade = {
-                            mint,
-                            symbol: meta.symbol,
-                            buyPrice: price,
-                            amountTokens: balance,
-                            amountSolPaid: balance * price, // Estimate cost basis so PnL isn't 0
-                            originalAmount: balance * price,
-                            currentPrice: price,
-                            pnlPercent: 0,
-                            status: "open",
-                            lastPriceChangeTime: Date.now()
-                        };
-                        setActiveTrades(prev => [recoveredTrade, ...prev]);
-                    }
+                if (info.tokenAmount.uiAmount > 0 && !activeTrades.some(t => t.mint === info.mint) && info.mint.endsWith('pump')) {
+                    const meta = await getTokenMetadata(info.mint, heliusKey);
+                    const price = await getPumpPrice(info.mint, connection);
+                    setActiveTrades(prev => [{ mint: info.mint, symbol: meta.symbol, buyPrice: price, amountTokens: info.tokenAmount.uiAmount, amountSolPaid: info.tokenAmount.uiAmount * price, currentPrice: price, pnlPercent: 0, status: "open", buyTime: Date.now() }, ...prev]);
                 }
             }
-            addLog("Wallet scan complete.");
-        } catch (e: any) {
-            addLog(`Scan Error: ${e.message}`);
-        }
+            addLog("Scan complete.");
+        } catch (e: any) { addLog(`Scan Error: ${e.message}`); }
     };
 
     const clearTrades = () => {
-        setActiveTrades([]);
-        setTradeHistory([]);
-        setStats({ totalProfit: 0, wins: 0, losses: 0 });
-        localStorage.removeItem('pump_active_trades');
-        localStorage.removeItem('pump_trade_history');
-        localStorage.removeItem('pump_stats');
-        addLog("Summary: Portfolio, Trade History and Total PnL statistics have been reset.");
-
-        // Suggest rent reclaim
-        addLog("💡 Pro Tip: Use 'Sync' to check for any SOL rent you can reclaim from old accounts.");
+        setActiveTrades([]); setTradeHistory([]); setStats({ totalProfit: 0, wins: 0, losses: 0 });
+        localStorage.removeItem('pump_active_trades'); localStorage.removeItem('pump_trade_history'); localStorage.removeItem('pump_stats');
+        addLog("Summary: Reset complete.");
     };
 
-    // Helper to update a trade's properties (for staged profit taking, etc.)
     const updateTrade = (mint: string, updates: Partial<ActiveTrade>) => {
-        setActiveTrades(prev => prev.map(t =>
-            t.mint === mint ? { ...t, ...updates } : t
-        ));
+        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, ...updates } : t));
     };
 
-    // Vault Management Functions
     const withdrawFromVault = (amount: number) => {
-        if (amount <= 0 || amount > vaultBalance) {
-            addLog(`❌ Invalid withdrawal amount. Vault has ${vaultBalance.toFixed(4)} SOL`);
-            return;
-        }
-        setVaultBalance(prev => {
-            const newVal = Math.max(0, prev - amount);
-            localStorage.setItem('pump_vault_balance', newVal.toString());
-            return newVal;
-        });
-        if (isDemo) {
-            setDemoBalance(prev => prev + amount);
-            addLog(`💰 Withdrew ${amount.toFixed(4)} SOL from vault to PAPER balance`);
-        } else {
-            // REAL Withdrawal log
-            addLog(`💰 Released ${amount.toFixed(4)} SOL from vault protection back to available balance.`);
-            addLog(`ℹ️ Note: Vault funds stay in your wallet for safety. This just updates the bot's tradeable limit.`);
-        }
+        if (amount <= 0 || amount > vaultBalance) return;
+        setVaultBalance(prev => prev - amount);
+        if (isDemo) setDemoBalance(prev => prev + amount);
+        addLog(`Vault Withdrawal: ${amount.toFixed(4)} SOL`);
     };
 
     const moveVaultToTrading = (amount: number) => {
-        if (amount <= 0 || amount > vaultBalance) {
-            addLog(`❌ Invalid transfer amount. Vault has ${vaultBalance.toFixed(4)} SOL`);
-            return;
-        }
-        setVaultBalance(prev => prev - amount);
-        setDemoBalance(prev => prev + amount);
-        addLog(`📊 Moved ${amount.toFixed(4)} SOL from vault to trading balance`);
+        if (amount <= 0 || amount > vaultBalance) return;
+        setVaultBalance(prev => prev - amount); setDemoBalance(prev => prev + amount);
+        addLog(`Vault Transfer: ${amount.toFixed(4)} SOL`);
     };
 
-    const toggleProfitProtection = () => {
-        setProfitProtectionEnabled(prev => !prev);
-        addLog(`🔒 Profit Protection ${!profitProtectionEnabled ? 'ENABLED' : 'DISABLED'}`);
-    };
-
-    const setProfitProtectionPercentage = (percent: number) => {
-        if (percent < 0 || percent > 50) {
-            addLog(`❌ Protection percentage must be between 0-50%`);
-            return;
-        }
-        setProfitProtectionPercent(percent);
-        addLog(`🔒 Profit Protection set to ${percent}%`);
-    };
-
-    const clearVault = () => {
-        setVaultBalance(0);
-        localStorage.removeItem('pump_vault_balance');
-        addLog("🔒 Profit Protection Vault wiped clean.");
-    };
+    const toggleProfitProtection = () => setProfitProtectionEnabled(prev => !prev);
+    const setProfitProtectionPercentage = (percent: number) => setProfitProtectionPercent(percent);
+    const clearVault = () => { setVaultBalance(0); localStorage.removeItem('pump_vault_balance'); };
 
     return {
-        activeTrades,
-        tradeHistory,
-        buyToken,
-        sellToken,
-        syncTrades,
-        recoverTrades,
-        clearTrades,
-        updateTrade,
-        logs,
-        addLog,
-        clearLogs,
-        setDemoMode,
-        demoBalance,
-        stats,
-        isCleaning,
-        cleanupWaste,
-        // Vault
-        vaultBalance,
-        profitProtectionEnabled,
-        profitProtectionPercent,
-        withdrawFromVault,
-        moveVaultToTrading,
-        toggleProfitProtection,
-        setProfitProtectionPercentage,
-        clearVault
+        activeTrades, tradeHistory, buyToken, sellToken, syncTrades, recoverTrades, clearTrades, updateTrade,
+        logs, addLog, clearLogs, setDemoMode, demoBalance, stats, isCleaning, cleanupWaste,
+        vaultBalance, profitProtectionEnabled, profitProtectionPercent, withdrawFromVault, moveVaultToTrading,
+        toggleProfitProtection, setProfitProtectionPercentage, clearVault
     };
 };
-// Trigger Build: 01/22/2026 14:39:21
