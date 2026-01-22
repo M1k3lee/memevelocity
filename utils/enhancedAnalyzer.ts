@@ -57,11 +57,35 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 0.5 : riskMode === 'velocity' ? 0.2 : 0);
-    const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
-    const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'velocity' ? 2 : riskMode === 'medium' ? 5 : 10);
-    const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : riskMode === 'medium' ? 20 : 10);
-    const maxTop10 = config?.maxTop10 ?? (riskMode === 'high' ? 80 : riskMode === 'velocity' ? 75 : 60);
+    // IMPROVED MEDIUM MODE: Tighter controls based on trade analysis
+    const minBondingCurve = config?.minBondingCurve ?? (
+        riskMode === 'safe' ? 5 :
+            riskMode === 'medium' ? 2 :  // Changed from 0.5 to 2 - avoid ultra-early rugs
+                riskMode === 'velocity' ? 0.2 :
+                    0
+    );
+    const maxBondingCurve = config?.maxBondingCurve ?? (
+        riskMode === 'safe' ? 50 :
+            riskMode === 'medium' ? 60 :  // Changed from 80 to 60 - avoid late entries
+                80
+    );
+    const minLiquidity = config?.minLiquidity ?? (
+        riskMode === 'high' ? 1 :
+            riskMode === 'velocity' ? 2 :
+                riskMode === 'medium' ? 5 :
+                    10
+    );
+    const maxDev = config?.maxDev ?? (
+        riskMode === 'high' ? 20 :
+            riskMode === 'medium' ? 12 :  // Changed from 20 to 12 - critical for avoiding rugs
+                10
+    );
+    const maxTop10 = config?.maxTop10 ?? (
+        riskMode === 'high' ? 80 :
+            riskMode === 'velocity' ? 75 :
+                riskMode === 'medium' ? 50 :  // Changed from 60 to 50 - reduce whale risk
+                    60
+    );
     const minVelocity = config?.minVelocity ?? 0;
     const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
 
@@ -130,13 +154,14 @@ export async function analyzeEnhanced(
             }
         }
 
-        // SWEET SPOT BRIDGE: If token has high momentum (>1.5 SOL/min), loosen curves
+        // SWEET SPOT BRIDGE: If token has high momentum, loosen curves
         const currentLiquidity = pumpData.vSolInBondingCurve;
         const liquidityDelta = currentLiquidity - 30;
         const currentMomentum = (age > 0) ? (liquidityDelta / age) * 60 : 0;
 
         let effectiveMinCurve = minBondingCurve;
-        const momentumThreshold = riskMode === 'safe' ? 1.5 : 0.8;
+        // Improved thresholds: safe=1.5, medium=1.2, high/velocity=0.8
+        const momentumThreshold = riskMode === 'safe' ? 1.5 : riskMode === 'medium' ? 1.2 : 0.8;
         if (currentMomentum > momentumThreshold && bondingCurveProgress < minBondingCurve) {
             effectiveMinCurve = 0; // Waiver for high momentum
             strengths.push(`🚀 Momentum Waiver: Strong growth (${currentMomentum.toFixed(1)} SOL/min) allows early entry`);
