@@ -60,7 +60,7 @@ export async function analyzeEnhanced(
     const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 0.5 : 0);
     const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
     const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'medium' ? 5 : 10);
-    const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : 10);
+    const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : riskMode === 'medium' ? 20 : 10);
     const maxTop10 = config?.maxTop10 ?? (riskMode === 'high' ? 80 : 60);
     const minVelocity = config?.minVelocity ?? 0;
     const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
