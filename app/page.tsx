@@ -113,7 +113,8 @@ export default function Home() {
     withdrawFromVault,
     moveVaultToTrading,
     toggleProfitProtection,
-    setProfitProtectionPercentage
+    setProfitProtectionPercentage,
+    clearVault
   } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
   const [tradeHistory, setTradeHistory] = useState<Set<string>>(new Set());
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
@@ -911,6 +912,7 @@ export default function Home() {
                 onMoveVaultToTrading={moveVaultToTrading}
                 onToggleProfitProtection={toggleProfitProtection}
                 onSetProfitProtectionPercent={setProfitProtectionPercentage}
+                onClearVault={clearVault}
                 isDemo={config.isDemo}
               />
             </div>

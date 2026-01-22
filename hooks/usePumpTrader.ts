@@ -139,10 +139,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 let profitToTrading = profit;
 
                 if (profitProtectionEnabled && profit > 0) {
-                    profitToVault = profit * (profitProtectionPercent / 100);
-                    profitToTrading = profit - profitToVault;
-                    setVaultBalance(prev => prev + profitToVault);
-                    addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL (${profitProtectionPercent}%) to vault`);
+                    const simulateVault = profit * (profitProtectionPercent / 100);
+                    // REMOVED: setVaultBalance(prev => prev + profitToVault);
+                    // Profit protection is now only for real trades as per user request
+                    addLog(`ℹ️ [PAPER] Would have protected ${simulateVault.toFixed(4)} SOL to vault`);
                 }
 
                 // Add principal + remaining profit to trading balance
@@ -935,6 +935,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         addLog(`🔒 Profit Protection set to ${percent}%`);
     };
 
+    const clearVault = () => {
+        setVaultBalance(0);
+        localStorage.removeItem('pump_vault_balance');
+        addLog("🔒 Profit Protection Vault wiped clean.");
+    };
+
     return {
         activeTrades,
         buyToken,
@@ -956,6 +962,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         withdrawFromVault,
         moveVaultToTrading,
         toggleProfitProtection,
-        setProfitProtectionPercentage
+        setProfitProtectionPercentage,
+        clearVault
     };
 };

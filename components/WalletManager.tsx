@@ -18,6 +18,7 @@ interface WalletManagerProps {
     onMoveVaultToTrading?: (amount: number) => void;
     onToggleProfitProtection?: () => void;
     onSetProfitProtectionPercent?: (percent: number) => void;
+    onClearVault?: () => void;
     isDemo?: boolean;
 }
 
@@ -32,6 +33,7 @@ export default function WalletManager({
     onMoveVaultToTrading,
     onToggleProfitProtection,
     onSetProfitProtectionPercent,
+    onClearVault,
     isDemo = false
 }: WalletManagerProps) {
     const [wallet, setWallet] = useState<any>(null);
@@ -179,8 +181,8 @@ export default function WalletManager({
                                 <button
                                     onClick={onToggleProfitProtection}
                                     className={`text-xs px-3 py-1 rounded transition-colors ${profitProtectionEnabled
-                                            ? 'bg-green-600 text-white'
-                                            : 'bg-gray-600 text-gray-300'
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-gray-600 text-gray-300'
                                         }`}
                                 >
                                     {profitProtectionEnabled ? 'ON' : 'OFF'}
@@ -214,6 +216,17 @@ export default function WalletManager({
 
                             {vaultBalance > 0 && (
                                 <div className="flex gap-2">
+                                    <button
+                                        onClick={() => {
+                                            if (confirm("Are you sure you want to WIPE the vault? This cannot be undone (and is recommended before turning on real trading if it contains paper SOL).")) {
+                                                onClearVault?.();
+                                            }
+                                        }}
+                                        className="bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[10px] px-2 py-2 rounded border border-red-500/30 transition-colors"
+                                        title="Wipe Paper SOL"
+                                    >
+                                        🗑️ Wipe
+                                    </button>
                                     <button
                                         onClick={() => {
                                             const amount = prompt(`Move to trading balance (Max: ${vaultBalance.toFixed(4)} SOL):`);
@@ -360,6 +373,17 @@ export default function WalletManager({
 
                 {vaultBalance > 0 && (
                     <div className="flex gap-2">
+                        <button
+                            onClick={() => {
+                                if (confirm("Are you sure you want to WIPE the vault? This cannot be undone.")) {
+                                    onClearVault?.();
+                                }
+                            }}
+                            className="bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[10px] px-2 py-2 rounded border border-red-500/30 transition-colors"
+                            title="Wipe Vault"
+                        >
+                            🗑️ Wipe
+                        </button>
                         <button
                             onClick={() => {
                                 const amount = prompt(`Withdraw from vault (Max: ${vaultBalance.toFixed(4)} SOL):`);
