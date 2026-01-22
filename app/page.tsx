@@ -124,6 +124,7 @@ export default function Home() {
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
+  const pendingRetries = useRef<Set<string>>(new Set());
 
   const handleWalletChange = (newWallet: any) => {
     setWallet(newWallet);
@@ -136,6 +137,10 @@ export default function Home() {
 
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) return;
+
+    if (isRetrying) {
+      pendingRetries.current.delete(token.mint);
+    }
 
     // 1. DEDUPLICATION (Return if already handled)
     if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) {
@@ -391,10 +396,10 @@ export default function Home() {
         return;
       }
 
-      // 3. ORGANIC CONFIRMATION: For new tokens (<30s), wait for some activity (unless high risk mode)
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
         if (liquidityGrowth < 0.1) {
-          if (!isRetrying) {
+          if (!isRetrying && !pendingRetries.current.has(token.mint)) {
+            pendingRetries.current.add(token.mint);
             addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Retrying analysis in 10s...`);
             setTimeout(() => onTokenDetected(token, true), 10000);
           }
