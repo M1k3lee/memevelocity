@@ -31,7 +31,8 @@ export default function Home() {
     isDemo: false,
     isSimulating: false,
     heliusKey: '',
-    maxConcurrentTrades: 5
+    maxConcurrentTrades: 5,
+    dynamicSizing: true
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(0);
@@ -211,8 +212,9 @@ export default function Home() {
 
     // Auto-stop if balance is critical (ONLY for real trading)
     // We stop if balance is less than 0.05 SOL + next trade amount to ensure we always have reserve for fees
-    if (!config.isDemo && realBalance < (config.amount + 0.05)) {
-      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + 0.05).toFixed(2)} SOL. Auto-stopping bot to save fee reserve.`);
+    const MIN_RESERVE = 0.05;
+    if (!config.isDemo && realBalance < (config.amount + MIN_RESERVE)) {
+      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot to save fee reserve.`);
       setConfig((prev: any) => ({ ...prev, isRunning: false }));
       return;
     }
@@ -499,8 +501,16 @@ export default function Home() {
       // Higher score = larger position (up to 2x base amount)
       // Lower score = smaller position (down to 0.5x base amount)
       let positionSize = config.amount;
-      const scoreMultiplier = Math.max(0.5, Math.min(2.0, (analysis.score / 50))); // 0.5x to 2.0x
-      positionSize = config.amount * scoreMultiplier;
+      if (config.dynamicSizing) {
+        const scoreMultiplier = Math.max(0.5, Math.min(2.0, (analysis.score / 50))); // 0.5x to 2.0x
+        positionSize = config.amount * scoreMultiplier;
+
+        if (Math.abs(positionSize - config.amount) > 0.001) {
+          addLog(`💰 Dynamic Sizing: ${positionSize.toFixed(4)} SOL (${scoreMultiplier > 1 ? '+' : ''}${((scoreMultiplier - 1) * 100).toFixed(0)}% based on score ${analysis.score})`);
+        }
+      } else {
+        addLog(`💰 Fixed Position: ${positionSize.toFixed(4)} SOL (Dynamic Sizing OFF)`);
+      }
 
       // Portfolio heat management: Reduce position size if too many trades open
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
@@ -513,10 +523,6 @@ export default function Home() {
       // Cap position size for safety
       positionSize = Math.min(positionSize, config.amount * 2); // Never more than 2x base
       positionSize = Math.max(positionSize, config.amount * 0.3); // Never less than 0.3x base
-
-      if (Math.abs(positionSize - config.amount) > 0.001) {
-        addLog(`💰 Position Size: ${positionSize.toFixed(4)} SOL (${scoreMultiplier > 1 ? '+' : ''}${((scoreMultiplier - 1) * 100).toFixed(0)}% based on score ${analysis.score})`);
-      }
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
       setTradeHistory(prev => new Set(prev).add(token.mint));

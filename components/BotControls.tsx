@@ -29,6 +29,7 @@ interface BotConfig {
     isSimulating: boolean;
     heliusKey: string;
     maxConcurrentTrades: number;
+    dynamicSizing: boolean;
     advanced: AdvancedConfig;
 }
 
@@ -47,6 +48,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
     const [isDemo, setIsDemo] = useState(false);
     const [isSimulating, setIsSimulating] = useState(false);
     const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(1);
+    const [dynamicSizing, setDynamicSizing] = useState(true);
     const [activeTab, setActiveTab] = useState<'basic' | 'advanced'>('basic');
     const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>({
         minLiquidity: 10,
@@ -78,9 +80,10 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             isSimulating,
             heliusKey,
             maxConcurrentTrades,
+            dynamicSizing,
             advanced: advancedConfig
         });
-    }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, advancedConfig]);
+    }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
     const setPreset = (preset: "safe" | "medium" | "high" | "scalp" | "first" | "custom") => {
         setMode(preset);
@@ -363,6 +366,19 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                                 className="w-full h-2 bg-[#222] rounded-lg appearance-none cursor-pointer mt-2"
                             />
                             <p className="text-[10px] text-gray-500 mt-1 italic">Limits how many tokens the bot will hold at once.</p>
+                        </div>
+
+                        <div className="flex items-center justify-between bg-[#1a1a1a] p-3 rounded border border-[#333] mt-4">
+                            <div className="flex flex-col">
+                                <span className="font-bold text-white text-sm">Dynamic Position Sizing</span>
+                                <span className="text-[10px] text-gray-400">Increase size on high-confidence trades</span>
+                            </div>
+                            <button
+                                onClick={() => setDynamicSizing(!dynamicSizing)}
+                                className={`text-xs px-3 py-1 rounded transition-colors ${dynamicSizing ? 'bg-purple-600 text-white' : 'bg-[#333] text-gray-400'}`}
+                            >
+                                {dynamicSizing ? "ON" : "OFF"}
+                            </button>
                         </div>
                     </div>
 
