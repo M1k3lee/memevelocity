@@ -220,13 +220,18 @@ export default function Home() {
 
     // Auto-stop if balance is critical (ONLY for real trading with real wallet)
     // Demo mode has its own balance management in usePumpTrader
-    const MIN_RESERVE = 0.02;
+    const MIN_RESERVE = 0.01; // Reduced from 0.02 to allow more trades
     const currentBal = balanceRef.current;
+    // Reuse timeSinceLastTrade from line 163
 
     if (!config.isDemo && wallet) {
       // IMPORTANT: If balance is still -1, it means the RPC fetch hasn't returned yet.
       // We skip the check to avoid "False Zero" auto-stops.
       if (currentBal === -1) return;
+
+      // Don't check balance immediately after a trade (give 10s grace period for balance to update)
+      const timeSinceLastTrade = Date.now() - lastTradeTime;
+      if (timeSinceLastTrade < 10000) return;
 
       if (currentBal === 0) {
         // Flicker protection: If balance is exactly 0, it might be a refresh glitch
@@ -236,8 +241,9 @@ export default function Home() {
         flickerCount.current = 0; // Reset on good reading
       }
 
+      // Only auto-stop if balance is truly insufficient for next trade + fees
       if (currentBal < (config.amount + MIN_RESERVE)) {
-        addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot.`);
+        addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(4)} SOL. Auto-stopping bot.`);
         setConfig((prev: any) => ({ ...prev, isRunning: false }));
         return;
       }
