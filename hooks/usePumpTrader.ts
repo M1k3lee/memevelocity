@@ -129,40 +129,32 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     // Define sellToken early so it can be used in useEffect
     const sellToken = useCallback(async (mint: string, amountPercent: number = 100) => {
         if (!wallet && !isDemo) return;
+
+        // Find the trade in current state
         const trade = activeTrades.find(t => t.mint === mint);
         if (!trade) return;
+
+        // Protection against concurrent sells or already closed trades
+        if (trade.status === "selling" || trade.status === "closed") {
+            return;
+        }
 
         addLog(`Attempting to SELL ${amountPercent}% of ${trade.symbol}...`);
 
         try {
             if (isDemo) {
                 const sellPrice = trade.currentPrice || 0;
-                const costBasis = trade.buyPrice * trade.amountTokens * (amountPercent / 100);
+                const costBasis = (trade.buyPrice || 0) * (trade.amountTokens || 0) * (amountPercent / 100);
 
                 // If trade is STALE (>2m), assume price is dead (0) for stats to stay honest
                 const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 120000);
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
-                const rawRevenue = trade.amountTokens * effectiveSellPrice * (amountPercent / 100);
-                // Increased friction to 3% (1% fee + 2% avg slippage/impact) for realism
-                const revenue = rawRevenue * 0.97;
+                const rawRevenue = (trade.amountTokens || 0) * effectiveSellPrice * (amountPercent / 100);
+                const revenue = rawRevenue * 0.97; // 3% friction
                 const profit = revenue - costBasis;
 
-                // Profit Protection: Skim percentage of profit to vault
-                let profitToVault = 0;
-                let profitToTrading = profit;
-
-                if (profitProtectionEnabled && profit > 0) {
-                    const simulateVault = profit * (profitProtectionPercent / 100);
-                    // Profit protection is now only for real trades as per user request
-                    addLog(`ℹ️ [PAPER] Would have protected ${simulateVault.toFixed(4)} SOL to vault`);
-                }
-
-                // Add isPaper flag to distinguish in history
-                trade.isPaper = true;
-
-                // Add principal + remaining profit to trading balance
-                setDemoBalance(prev => prev + costBasis + profitToTrading);
+                setDemoBalance(prev => prev + costBasis + profit);
 
                 setStats(prev => ({
                     totalProfit: prev.totalProfit + profit,
@@ -170,213 +162,145 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     losses: profit <= 0 ? prev.losses + 1 : prev.losses
                 }));
 
-                if (amountPercent >= 99) {
-                    const closedTrade = {
-                        ...trade,
-                        status: "closed" as const,
-                        amountTokens: 0,
-                        amountSolPaid: 0,
-                        currentPrice: effectiveSellPrice,
-                        pnlPercent: trade.buyPrice > 0 ? ((effectiveSellPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0
-                    };
-                    setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
-                    setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-                } else {
-                    setActiveTrades(prev => prev.map(t => {
-                        if (t.mint === mint) {
-                            const remainingTokens = t.amountTokens * (1 - amountPercent / 100);
-                            const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
-                            const remainingSolPaid = (originalCost) * (1 - amountPercent / 100);
+                const closedTrade: ActiveTrade = {
+                    ...trade,
+                    status: "closed" as const,
+                    currentPrice: effectiveSellPrice,
+                    pnlPercent: trade.buyPrice > 0 ? ((effectiveSellPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0,
+                    isPaper: true
+                };
 
-                            return {
-                                ...t,
-                                status: "open",
-                                amountTokens: remainingTokens,
-                                amountSolPaid: remainingSolPaid,
-                                currentPrice: effectiveSellPrice,
-                                pnlPercent: t.buyPrice > 0 ? ((effectiveSellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
-                            };
-                        }
-                        return t;
-                    }));
+                if (amountPercent >= 99) {
+                    setTradeHistory(prev => {
+                        if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (trade.buyTime || 0)) < 1000)) return prev;
+                        return [closedTrade, ...prev].slice(0, 100);
+                    });
+                    setActiveTrades(prev => prev.filter(t => t.mint !== mint));
                 }
-                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Rev: ${revenue.toFixed(4)} SOL, Profit: ${profit > 0 ? '+' : ''}${profit.toFixed(4)} SOL`);
-                toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`, { description: `Profit: ${profit > 0 ? '+' : ''}${profit.toFixed(4)} SOL` });
+
+                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Profit: ${profit.toFixed(4)} SOL`);
+                toast.success(`[DEMO] Sold ${amountPercent}% of ${trade.symbol}`);
                 return;
             }
 
             if (!wallet) return;
 
-            // Ensure we have current balance
+            // REAL WALLET SELL LOGIC
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
-
             if (balance === 0) {
-                // If balance is 0 but we thought we had tokens, maybe we already sold?
-                // Check if trade is old (>1 min) - if so, just close it locally
                 if (Date.now() - (trade.lastPriceChangeTime || 0) > 60000) {
-                    addLog(`Sell Failed: No balance for ${trade.symbol}. Assuming sold external/rug. Closing as loss.`);
-                    setActiveTrades(prev => prev.map(t => t.mint === mint ? {
-                        ...t,
-                        status: "closed",
-                        currentPrice: 0,
-                        pnlPercent: -100
-                    } : t));
-                } else {
-                    addLog(`Sell Failed: No balance found for ${trade.symbol} (yet)`);
+                    addLog(`Sell: No balance for ${trade.symbol}. Closing as RUG loss.`);
+                    const closedTrade: ActiveTrade = { ...trade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
+                    setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
+                    setActiveTrades(prev => prev.filter(t => t.mint !== mint));
+
+                    const lossAmount = trade.amountSolPaid || 0;
+                    setStats(prev => ({ ...prev, totalProfit: prev.totalProfit - lossAmount, losses: prev.losses + 1 }));
                 }
                 return;
             }
 
             const amountToSell = balance * (amountPercent / 100);
+            const tradeAmountPaid = trade.amountSolPaid || 0.03;
 
-            // Set status to "selling" locally to indicate progress if not already set (e.g. by rug detector)
+            // Set status to "selling" to prevent parallel attempts
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
 
-            // Skip dust sells if not 100%
-            if (amountPercent < 100 && (amountToSell * trade.currentPrice) < 0.001) {
-                addLog(`Skipped dust sell for ${trade.symbol} (Value too low)`);
-                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
-                return;
-            }
+            // Scaled Priority Fee: 0.001 SOL base
+            const priorityFee = tradeAmountPaid <= 0.05 ? 0.001 : Math.max(0.001, Math.min(0.003, tradeAmountPaid * 0.05));
 
-            const priorityFee = Math.max(0.001, Math.min(0.005, (trade.amountSolPaid || 0.1) * 0.1));
-
-            // Retry logic for transaction building
             let transactionBuffer;
             try {
                 transactionBuffer = await getTradeTransaction({
                     publicKey: wallet.publicKey.toBase58(),
                     action: "sell",
                     mint,
-                    amount: amountToSell, // Sell actual token amount, not SOL value
+                    amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: 20, // Increased slippage for sells to ensure exit
+                    slippage: 25,
                     priorityFee,
                     pool: "pump"
                 });
             } catch (err: any) {
-                // Retry once with higher slippage if failed
-                console.warn("Sell tx build failed, retrying with higher slippage...");
+                // Secondary check/retry with higher slippage
                 transactionBuffer = await getTradeTransaction({
                     publicKey: wallet.publicKey.toBase58(),
                     action: "sell",
                     mint,
                     amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: 50, // High slippage to force exit
-                    priorityFee: 0.005, // High priority fee
+                    slippage: 50,
+                    priorityFee: 0.003,
                     pool: "pump"
                 });
             }
 
-            // Track balance before sell for 100% accuracy
             const balanceBefore = await getBalance(wallet.publicKey.toBase58(), connection);
+            const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+            addLog(`Sell Tx Sent: ${signature.substring(0, 8)}...`);
 
-            let signature = "";
-            try {
-                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
-                addLog(`Sell Tx Sent: ${signature.substring(0, 8)}... Waiting for confirmation.`);
+            const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+            if (confirmation.value.err) throw new Error("On-chain execution failed");
 
-                // Track the transaction ID and set status to selling
-                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling", txId: signature } : t));
-
-                const confirmation = await connection.confirmTransaction(signature, 'confirmed');
-
-                if (confirmation.value.err) {
-                    throw new Error(`Transaction failed on-chain`);
-                }
-                addLog(`✅ Sell Confirmed for ${trade.symbol}!`);
-            } catch (err: any) {
-                addLog(`❌ Sell Failed for ${trade.symbol}: ${err.message}`);
-                // Revert status to open so we can try again
-                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
-                return;
-            }
-
-            // Fetch balance after for REAL profit calculation
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for indexing
+            // REAL-TIME ACCURATE PnL CALCULATION
+            await new Promise(resolve => setTimeout(resolve, 2000)); // wait for index
             const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
             const revenue = balanceAfter - balanceBefore;
-
-            // REAL Net Profit Calculation: Revenue - Cost
-            const costBasis = (trade.amountSolPaid || 0) * (amountPercent / 100);
+            const costBasis = tradeAmountPaid * (amountPercent / 100);
             const netProfit = revenue - costBasis;
+            const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
 
             if (profitProtectionEnabled && netProfit > 0) {
-                const profitToVault = netProfit * (profitProtectionPercent / 100);
-                setVaultBalance(prev => {
-                    const newVal = prev + profitToVault;
-                    localStorage.setItem('pump_vault_balance', newVal.toString());
-                    return newVal;
-                });
-                addLog(`🔒 Protected ${profitToVault.toFixed(4)} SOL from ACTUAL on-chain profit.`);
+                const skim = netProfit * (profitProtectionPercent / 100);
+                setVaultBalance(prev => prev + skim);
             }
 
-            setStats(prev => {
-                const newStats = {
-                    totalProfit: (prev.totalProfit || 0) + netProfit,
-                    wins: netProfit > 0 ? (prev.wins || 0) + 1 : (prev.wins || 0),
-                    losses: netProfit <= 0 ? (prev.losses || 0) + 1 : (prev.losses || 0)
-                };
-                localStorage.setItem('pump_stats', JSON.stringify(newStats));
-                return newStats;
-            });
-
-            const sellPrice = trade.currentPrice || 0;
-
-            // Only close trade locally if 100% sell
-            if (amountPercent >= 99) {
-                const closedTrade = {
-                    ...trade,
-                    status: "closed" as const,
-                    currentPrice: sellPrice,
-                    pnlPercent: trade.buyPrice > 0 ? ((sellPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0
-                };
-
-                setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
-                setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-            } else {
-                // If partial sell, update local amounts
-                setActiveTrades(prev => prev.map(t => {
-                    if (t.mint === mint) {
-                        const remainingTokens = t.amountTokens * (1 - amountPercent / 100);
-                        const remainingSolPaid = (t.amountSolPaid || 0) * (1 - amountPercent / 100);
-                        return {
-                            ...t,
-                            status: "open",
-                            amountTokens: remainingTokens,
-                            amountSolPaid: remainingSolPaid
-                        };
-                    }
-                    return t;
-                }));
-            }
-        } catch (error: any) {
-            // If it failed before we could track balance change, record a loss of the cost basis
-            const tradeCost = (trade.amountSolPaid || 0) * (amountPercent / 100);
             setStats(prev => ({
-                ...prev,
-                totalProfit: prev.totalProfit - tradeCost,
-                losses: prev.losses + 1
+                totalProfit: prev.totalProfit + netProfit,
+                wins: netProfit > 0 ? prev.wins + 1 : prev.wins,
+                losses: netProfit <= 0 ? prev.losses + 1 : prev.losses
             }));
 
-            const msg = error.message || "";
-            // If error is "Account not found" or similar, it means we don't have the token
-            if (msg.includes("Account") || msg.includes("not found") || msg.includes("0.00 SOL")) {
-                const closedTrade = {
+            if (amountPercent >= 99) {
+                const closedTrade: ActiveTrade = {
                     ...trade,
                     status: "closed" as const,
-                    currentPrice: 0,
-                    pnlPercent: -100
+                    currentPrice: trade.currentPrice,
+                    pnlPercent: realizedPnlPercent, // Accurate percentage based on SOL delta
+                    txId: signature
                 };
-                setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
+                setTradeHistory(prev => {
+                    if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (trade.buyTime || 0)) < 1000)) return prev;
+                    return [closedTrade, ...prev].slice(0, 100);
+                });
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
             } else {
-                // Otherwise, put it back to open so the bot/user can try again
-                setActiveTrades(prev => prev.map(t => t.mint === mint && t.status === "selling" ? { ...t, status: "open" } : t));
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                    ...t,
+                    status: "open",
+                    amountTokens: t.amountTokens * (1 - amountPercent / 100),
+                    amountSolPaid: (t.amountSolPaid || 0) * (1 - amountPercent / 100)
+                } : t));
+            }
+
+            addLog(`✅ Sell Confirmed! Realized: ${netProfit > 0 ? '+' : ''}${netProfit.toFixed(4)} SOL (${realizedPnlPercent.toFixed(1)}%)`);
+            toast.success(`Sold ${trade.symbol}! PnL: ${netProfit.toFixed(4)} SOL`);
+
+        } catch (error: any) {
+            const msg = error.message || "Execution error";
+            addLog(`❌ Sell Failed for ${trade.symbol}: ${msg}`);
+
+            // Revert status to OPEN if transaction just failed to land (prevent phantom losses)
+            if (msg.includes("Account") || msg.includes("not found")) {
+                // Real rug/loss
+                setActiveTrades(prev => prev.filter(t => t.mint !== mint));
+                setStats(prev => ({ ...prev, totalProfit: prev.totalProfit - (trade.amountSolPaid || 0), losses: prev.losses + 1 }));
+            } else {
+                // Temporary failure (slippage/gas), allow retry
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
             }
         }
-    }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
+    }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
 
     // WebSocket for Price Updates on Active Trades
     useEffect(() => {
