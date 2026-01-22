@@ -433,9 +433,9 @@ export default function Home() {
       const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
       const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
 
-      // 1. MOMENTUM HURDLE: If token is >30s old and has < 0.1 SOL growth, it's inactive.
+      // 1. MOMENTUM HURDLE: If token is >30s old and has < 0.5 SOL growth, it's inactive.
       // This saves HUNDREDS of RPC calls by skipping "Dead Air" tokens.
-      if (age > 30 && liquidityGrowth < 0.1 && config.mode !== 'high' && config.mode !== 'first') {
+      if (age > 30 && liquidityGrowth < 0.5 && config.mode !== 'high' && config.mode !== 'first') {
         return;
       }
 

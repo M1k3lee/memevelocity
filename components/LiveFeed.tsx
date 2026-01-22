@@ -313,33 +313,21 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const handleNewTokenDirectly = async (mint: string, signature: string) => {
         if (paused) return;
         try {
-            // Use setTokens callback to check against latest state to avoid doubles
-            setTokens(prev => {
-                if (prev.some(t => t.mint === mint)) return prev;
-
-                // If it's a new mint, we proceed with fetching details
-                // Note: We're doing this inside a state setter which isn't ideal for side effects,
-                // but we need to ensure unique mints. Better way:
-                return prev;
-            });
-
-            // Re-fetch in parallel
-            const [meta, pumpData] = await Promise.all([
-                getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" })),
-                getPumpData(mint).catch(() => null)
-            ]);
+            // Re-fetch details with explicit safety
+            const metaRes: any = await getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" }));
+            const pumpDataRes: any = await getPumpData(mint).catch(() => null);
 
             const newToken: TokenData = {
                 mint,
                 traderPublicKey: "Unknown",
                 txType: "create",
-                initialBuy: (pumpData?.vSolInBondingCurve || 30) - 30,
+                initialBuy: ((pumpDataRes?.vSolInBondingCurve || 30) - 30),
                 bondingCurveKey: "",
-                vTokensInBondingCurve: pumpData?.vTokensInBondingCurve || 1073000000000000,
-                vSolInBondingCurve: pumpData?.vSolInBondingCurve || 30,
-                marketCapSol: pumpData?.vSolInBondingCurve || 30,
-                name: meta.name || "Real Token",
-                symbol: meta.symbol || "REAL",
+                vTokensInBondingCurve: pumpDataRes?.vTokensInBondingCurve || 1073000000000000,
+                vSolInBondingCurve: pumpDataRes?.vSolInBondingCurve || 30,
+                marketCapSol: pumpDataRes?.vSolInBondingCurve || 30,
+                name: (metaRes?.name || "Real Token"),
+                symbol: (metaRes?.symbol || "REAL"),
                 uri: "",
                 timestamp: Date.now()
             };

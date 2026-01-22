@@ -1,26 +1,23 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
-// Default public node
-const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
+// Default to a known stable endpoint instead of the public node which 403s frequently
+const DEFAULT_RPC = "https://solana-api.projectserum.com";
 
 // Validate Helius API key format
 const isValidHeliusKey = (key: string): boolean => {
     if (!key || key.trim() === '') return false;
     const trimmed = key.trim();
-    // Reject obvious placeholders
     const invalidPatterns = ['admin', 'test', 'demo', 'key', 'placeholder'];
     const lowerKey = trimmed.toLowerCase();
     if (invalidPatterns.some(pattern => lowerKey.includes(pattern) && trimmed.length < 30)) {
         return false;
     }
-    // UUID format: 8-4-4-4-12 (36 chars total) or long hex string (32+ chars)
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     return uuidPattern.test(trimmed) || trimmed.length >= 32;
 };
 
 export const createConnection = (heliusKey?: string) => {
-    // Only use Helius if key is valid, otherwise fall back to public RPC
     const useHelius = heliusKey && isValidHeliusKey(heliusKey);
     const url = useHelius ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : DEFAULT_RPC;
     if (useHelius) {
@@ -54,7 +51,7 @@ export const getBalance = async (publicKeyString: string, conn: Connection = con
         return balance / LAMPORTS_PER_SOL;
     } catch (error) {
         console.warn("RPC Error fetching balance:", error);
-        return null; // Return null instead of 0 to distinguish error from empty wallet
+        return null;
     }
 };
 
@@ -74,29 +71,10 @@ export const recoverWallet = (privateKeyString: string) => {
 
 export const getTokenBalance = async (walletPubKey: string, mintAddress: string, conn: Connection = connection) => {
     try {
-        const filters = [
-            {
-                dataSize: 165, // ZIP-165 layout
-            },
-            {
-                memcmp: {
-                    offset: 32, // Owner offset
-                    bytes: walletPubKey,
-                },
-            },
-            {
-                memcmp: {
-                    offset: 0, // Mint offset
-                    bytes: mintAddress,
-                },
-            }
-        ];
         const userPub = new PublicKey(walletPubKey);
         const accounts = await conn.getParsedTokenAccountsByOwner(userPub, { mint: new PublicKey(mintAddress) });
 
         if (accounts.value.length === 0) return 0;
-
-        // Sum up (should be only one usually)
         let total = 0;
         for (const acc of accounts.value) {
             total += acc.account.data.parsed.info.tokenAmount.uiAmount;
@@ -111,21 +89,13 @@ export const getTokenBalance = async (walletPubKey: string, mintAddress: string,
 export const getHolderCount = async (mintAddress: string, conn: Connection = connection): Promise<number | null> => {
     try {
         const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-
-        // Create a timeout promise
         const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
-
         const fetchHolders = (async () => {
             const accounts = await conn.getProgramAccounts(TOKEN_PROGRAM_ID, {
-                filters: [
-                    { dataSize: 165 }, // Token Account layout size
-                    { memcmp: { offset: 0, bytes: mintAddress } } // Mint address at offset 0
-                ]
+                filters: [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mintAddress } }]
             });
             return accounts.length;
         })();
-
-        // Race between fetch and timeout
         const result = await Promise.race([fetchHolders, timeout]);
         return result;
     } catch (error) {
@@ -133,8 +103,6 @@ export const getHolderCount = async (mintAddress: string, conn: Connection = con
         return null;
     }
 };
-
-
 
 // Rate limit and error tracking
 const rateLimitCoolDowns = new Map<string, number>();
@@ -155,20 +123,13 @@ const handleRpcError = (method: string, error: any) => {
 };
 
 const isCircuitBroken = () => {
-    // If we've had 10 errors in the last 60 seconds, wait
-    if (globalRpcErrorCount > 10 && (Date.now() - lastGlobalErrorTime) < 60000) {
-        return true;
-    }
-    // Periodic reset
-    if ((Date.now() - lastGlobalErrorTime) > 120000) {
-        globalRpcErrorCount = 0;
-    }
+    if (globalRpcErrorCount > 15 && (Date.now() - lastGlobalErrorTime) < 60000) return true;
+    if ((Date.now() - lastGlobalErrorTime) > 120000) globalRpcErrorCount = 0;
     return false;
 };
 
 export const getPumpData = async (mintAddress: string, conn: Connection = connection) => {
     if (isCircuitBroken()) return null;
-
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
     if (Date.now() < coolDownUntil) return null;
 
@@ -194,10 +155,8 @@ export const getPumpData = async (mintAddress: string, conn: Connection = connec
         rateLimitCoolDowns.delete(mintAddress);
         return { vTokensInBondingCurve, vSolInBondingCurve, tokenTotalSupply, bondingCurveProgress };
     } catch (e: any) {
-        const { isRateLimit, isAccessDenied } = handleRpcError('getPumpData', e);
-        if (isRateLimit) {
-            rateLimitCoolDowns.set(mintAddress, Date.now() + 10000); // 10s backoff for this token
-        }
+        const { isRateLimit } = handleRpcError('getPumpData', e);
+        if (isRateLimit) rateLimitCoolDowns.set(mintAddress, Date.now() + 15000);
         return null;
     }
 };
@@ -205,24 +164,12 @@ export const getPumpData = async (mintAddress: string, conn: Connection = connec
 export const getPumpPrice = async (mintAddress: string, conn: Connection = connection) => {
     const data = await getPumpData(mintAddress, conn);
     if (!data || data.vTokensInBondingCurve === 0) return 0;
-
-    // Safety check: If liquidity is too low, price might be unreliable
-    if (data.vSolInBondingCurve < 0.1) {
-        return 0; // Token likely rugged or invalid
-    }
-
-    // Account for 6 decimal places of pump.fun tokens
+    if (data.vSolInBondingCurve < 0.1) return 0;
     const price = (data.vSolInBondingCurve / data.vTokensInBondingCurve) * 1000000;
-
-    // Safety check: If price is unreasonably small, it might be a calculation error
-    if (price < 0.000000001) {
-        return 0; // Price too small, likely error or rug
-    }
-
+    if (price < 0.000000001) return 0;
     return price;
 };
 
-// Exported cache to allow LiveFeed to pre-populate it
 export const metadataCache = new Map<string, { name: string, symbol: string }>();
 
 export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) => {
@@ -230,7 +177,6 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
     if (!heliusKey) return { name: "Unknown", symbol: "???" };
 
     if (isCircuitBroken()) return { name: "RPC Blocked", symbol: "BLOCK" };
-
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
     if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "..." };
 
@@ -239,22 +185,18 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: "get-asset",
-                method: "getAsset",
-                params: { id: mintAddress }
+                jsonrpc: "2.0", id: "get-asset", method: "getAsset", params: { id: mintAddress }
             })
         });
 
         if (response.status === 429) {
             handleRpcError('getTokenMetadata (429)', null);
-            rateLimitCoolDowns.set(mintAddress, Date.now() + 15000);
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 30000);
             return { name: "Rate Limited", symbol: "429" };
         }
-
         if (response.status === 403) {
             handleRpcError('getTokenMetadata (403)', null);
-            rateLimitCoolDowns.set(mintAddress, Date.now() + 30000);
+            rateLimitCoolDowns.set(mintAddress, Date.now() + 60000);
             return { name: "Forbidden", symbol: "403" };
         }
 
@@ -291,35 +233,23 @@ export const getHolderStats = async (mintAddress: string, conn: Connection = con
 
         const supplyResponse = await conn.getTokenSupply(mint);
         const totalSupply = supplyResponse.value.uiAmount || 0;
-
-        // Get bonding curve address to exclude it
         const bondingCurve = getBondingCurveAddress(mintAddress).toBase58();
 
-        // Calculate top 10 concentration (excluding bonding curve)
         let top10Sum = 0;
-        let whaleCount = 0; // Holders with > 1%
-
-        // Filter out bonding curve from top accounts
+        let whaleCount = 0;
         const userAccounts = largestAccounts.value.filter(acc => acc.address.toString() !== bondingCurve);
         const top10 = userAccounts.slice(0, 10);
 
         for (const acc of top10) {
             const amount = acc.uiAmount || 0;
             top10Sum += amount;
-            if (totalSupply > 0 && (amount / totalSupply) > 0.01) {
-                whaleCount++;
-            }
+            if (totalSupply > 0 && (amount / totalSupply) > 0.01) whaleCount++;
         }
 
         const top10Concentration = totalSupply > 0 ? (top10Sum / totalSupply) * 100 : 0;
         const largestHolderPercentage = (top10.length > 0 && totalSupply > 0) ? (top10[0].uiAmount || 0) / totalSupply * 100 : 0;
 
-        return {
-            top10Concentration,
-            whaleCount,
-            topHolders: top10,
-            largestHolderPercentage
-        };
+        return { top10Concentration, whaleCount, topHolders: top10, largestHolderPercentage };
     } catch (e) {
         console.error("Error fetching holder stats:", e);
         return null;
