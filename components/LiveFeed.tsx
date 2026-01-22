@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, memo } from 'react';
 import { Activity, ExternalLink, TrendingUp, RefreshCw, WifiOff, ShieldAlert, ShieldCheck, Zap, AlertTriangle, Pause, Play } from 'lucide-react';
-import { getTokenMetadata, getPumpData, metadataCache } from '../utils/solanaManager';
+import { getTokenMetadata, getPumpData, metadataCache, createConnection } from '../utils/solanaManager';
 import { quickRugCheck, detectRug } from '../utils/rugDetector';
 
 export interface TokenData {
@@ -139,6 +139,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
     const onTokenDetectedRef = useRef(onTokenDetected);
     useEffect(() => { onTokenDetectedRef.current = onTokenDetected; }, [onTokenDetected]);
+
+    // Create Helius connection for RPC calls
+    const heliusConnection = useRef(createConnection(heliusKey));
+    useEffect(() => {
+        if (heliusKey) {
+            heliusConnection.current = createConnection(heliusKey);
+        }
+    }, [heliusKey]);
 
     // Rate limiter queue
     const requestQueue = useRef<(() => Promise<any>)[]>([]);
@@ -313,9 +321,9 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const handleNewTokenDirectly = async (mint: string, signature: string) => {
         if (paused) return;
         try {
-            // Re-fetch details with explicit safety
+            // Re-fetch details with explicit safety - use Helius connection
             const metaRes: any = await getTokenMetadata(mint, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" }));
-            const pumpDataRes: any = await getPumpData(mint).catch(() => null);
+            const pumpDataRes: any = await getPumpData(mint, heliusConnection.current).catch(() => null);
 
             const newToken: TokenData = {
                 mint,
