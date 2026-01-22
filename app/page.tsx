@@ -211,7 +211,7 @@ export default function Home() {
     // We stop if balance is less than 0.02 SOL + next trade amount to ensure we always have reserve for fees
     const MIN_RESERVE = 0.02;
     if (!config.isDemo && realBalance < (config.amount + MIN_RESERVE)) {
-      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot to save fee reserve.`);
+      addLog(`⚠️ CRITICAL BALANCE: Have ${realBalance.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(2)} SOL. Auto-stopping bot.`);
       setConfig((prev: any) => ({ ...prev, isRunning: false }));
       return;
     }
@@ -397,13 +397,15 @@ export default function Home() {
       }
 
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
-        if (liquidityGrowth < 0.1) {
+        if (liquidityGrowth < 0.1 && momentum < 1.5) {
           if (!isRetrying && !pendingRetries.current.has(token.mint)) {
             pendingRetries.current.add(token.mint);
             addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Retrying analysis in 10s...`);
             setTimeout(() => onTokenDetected(token, true), 10000);
           }
           return;
+        } else if (momentum >= 1.5) {
+          addLog(`🚀 High Momentum detected for ${token.symbol} (${momentum.toFixed(1)} SOL/min)! Bypassing wait...`);
         }
       }
 

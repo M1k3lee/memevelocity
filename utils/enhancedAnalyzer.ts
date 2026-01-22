@@ -120,13 +120,24 @@ export async function analyzeEnhanced(
             }
         }
 
+        // SWEET SPOT BRIDGE: If token has high momentum (>1.5 SOL/min), loosen curves
+        const currentLiquidity = pumpData.vSolInBondingCurve;
+        const liquidityDelta = currentLiquidity - 30;
+        const currentMomentum = (age > 0) ? (liquidityDelta / age) * 60 : 0;
+
+        let effectiveMinCurve = minBondingCurve;
+        if (currentMomentum > 1.5 && bondingCurveProgress < minBondingCurve) {
+            effectiveMinCurve = 0; // Waiver for high momentum
+            strengths.push(`🚀 Momentum Waiver: Strong growth (${currentMomentum.toFixed(1)} SOL/min) allows early entry`);
+        }
+
         // 1. Bonding curve timing
-        if (bondingCurveProgress < minBondingCurve) {
+        if (bondingCurveProgress < effectiveMinCurve) {
             if (strictness === 'lenient' && bondingCurveProgress > 0) {
-                warnings.push(`Early entry: ${bondingCurveProgress.toFixed(1)}% curve (<${minBondingCurve}%)`);
+                warnings.push(`Early entry: ${bondingCurveProgress.toFixed(1)}% curve (<${effectiveMinCurve}%)`);
                 score -= 5;
             } else {
-                reasons.push(`Too early: ${bondingCurveProgress.toFixed(1)}% curve (min ${minBondingCurve}%)`);
+                reasons.push(`Too early: ${bondingCurveProgress.toFixed(1)}% curve (min ${effectiveMinCurve}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, marketCap);
             }
         }

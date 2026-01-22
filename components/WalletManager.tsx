@@ -97,10 +97,17 @@ export default function WalletManager({
         try {
             const bal = await getBalance(pubKey, connection);
             setBalance(bal);
+            if (onBalanceChange) onBalanceChange(bal); // CRITICAL: Update parent state for trading logic
         } catch (e) {
             console.error("Refresh balance failed:", e);
         }
     };
+
+    useEffect(() => {
+        if (balance > 0 && onBalanceChange) {
+            onBalanceChange(balance);
+        }
+    }, [balance, onBalanceChange]);
 
     const handleCreate = () => {
         const newWallet = generateWallet();
