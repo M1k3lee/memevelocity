@@ -117,16 +117,25 @@ export function detectRug(
     }
 
     // === Age + Liquidity Check (Very new tokens with low liquidity = rug) ===
-    if (!isRug && age < 120) { // Less than 2 minutes old
-        if (liquidityGrowth < 0.5) {
-            // Very new token with minimal liquidity growth = likely rug
+    // FIX: Allow tokens a few seconds to 'breathe' before demanding liquidity growth
+    if (!isRug && age < 120) {
+        // 5s Grace period: Don't call it a rug just for being 0.1s old with 0 growth
+        if (age > 5 && liquidityGrowth < 0.1) {
             if (riskMode === 'high') {
-                warnings.push(`⚠️ Very new token (${age.toFixed(0)}s) with low liquidity growth (${liquidityGrowth.toFixed(2)} SOL)`);
+                warnings.push(`⚠️ Very new token (${age.toFixed(0)}s) with no liquidity growth`);
                 confidence = Math.max(confidence, 40);
             } else {
                 isRug = true;
                 confidence = 85;
-                reason = `🚨 TOO NEW + LOW LIQUIDITY: Token is ${age.toFixed(0)}s old with only ${liquidityGrowth.toFixed(2)} SOL liquidity growth - likely rug`;
+                reason = `🚨 TOO NEW + NO GROWTH: Token is ${age.toFixed(0)}s old with 0 growth - likely dead on arrival`;
+            }
+        }
+        // Between 30s and 2m, we expect at least SOME growth
+        else if (age > 30 && liquidityGrowth < 0.5) {
+            if (riskMode !== 'high') {
+                isRug = true;
+                confidence = 85;
+                reason = `🚨 STAGNANT: Token is ${age.toFixed(0)}s old with only ${liquidityGrowth.toFixed(2)} SOL growth - likely rug or low interest`;
             }
         }
     }

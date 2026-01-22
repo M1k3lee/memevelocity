@@ -134,10 +134,7 @@ export default function Home() {
     setDemoMode(newConfig.isDemo);
   };
 
-  const onTokenDetected = useCallback(async (token: TokenData) => {
-    console.log("[onTokenDetected] Token received:", token.mint, "isRunning:", config.isRunning, "isDemo:", config.isDemo);
-
-    // Only act if bot is running
+  const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) {
       return;
     }
@@ -169,16 +166,17 @@ export default function Home() {
       return;
     }
 
-    // Mark as processed immediately to prevent rapid-fire duplicates
-    processedMints.current.add(token.mint);
-
     // === ADVANCED RUG DETECTION (Early Filter) ===
     // This catches obvious scams BEFORE expensive analysis
     const { detectRug } = await import('../utils/rugDetector');
     const rugDetection = detectRug(token, config.mode);
 
     if (rugDetection.isRug) {
-      addLog(`🚨 RUG DETECTED: ${token.symbol} - ${rugDetection.reason} (Confidence: ${rugDetection.confidence}%)`);
+      // Don't log rugs during retries to keep console clean
+      if (!isRetrying) {
+        addLog(`🚨 RUG DETECTED: ${token.symbol} - ${rugDetection.reason} (Confidence: ${rugDetection.confidence}%)`);
+      }
+      processedMints.current.add(token.mint); // Finalized as rug
       return;
     }
 
@@ -404,8 +402,11 @@ export default function Home() {
 
       // 3. ORGANIC CONFIRMATION: For new tokens (<30s), wait for some activity (unless high risk mode)
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
-        if (liquidityGrowth < 0.5) {
-          addLog(`⏳ Waiting for confirmation: ${token.symbol} too new (${age.toFixed(1)}s) with low activity (+${liquidityGrowth.toFixed(2)} SOL). Skipping...`);
+        if (liquidityGrowth < 0.1) {
+          if (!isRetrying) {
+            addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Retrying analysis in 10s...`);
+            setTimeout(() => onTokenDetected(token, true), 10000);
+          }
           return;
         }
       }
@@ -482,7 +483,16 @@ export default function Home() {
       }
 
       if (!analysis.passed) {
-        addLog(`🚫 Failed Analysis: ${token.symbol} - ${analysis.reasons.join(', ')}`);
+        // If rejected for being 'too early', definitely retry if first time
+        if (analysis.reasons.some(r => r.includes('Too early')) && !isRetrying) {
+          addLog(`⏳ ${token.symbol} early (${analysis.bondingCurveProgress.toFixed(1)}%). Retrying in 15s...`);
+          setTimeout(() => onTokenDetected(token, true), 15000);
+          return;
+        }
+
+        if (!isRetrying) {
+          addLog(`🚫 Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
+        }
         return;
       }
 
@@ -538,6 +548,7 @@ export default function Home() {
       // Use user-defined slippage if available, otherwise fall back to adaptive
       const slippage = config.advanced?.slippage || ((config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15);
 
+      processedMints.current.add(token.mint); // Finalized: Attempting Buy
       await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice);
     } catch (error: any) {
       addLog(`❌ Analysis Error for ${token.symbol}: ${error.message}`);
