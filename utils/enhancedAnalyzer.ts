@@ -57,7 +57,7 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 1.0 : 0);
+    const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 0.5 : 0);
     const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
     const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'medium' ? 5 : 10);
     const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : 10);
@@ -338,6 +338,12 @@ export async function analyzeEnhanced(
             } else if (age < 120) {
                 score += 10;
                 strengths.push(`🆕 New: ${Math.floor(age / 60)}min old`);
+            }
+        } else if (riskMode === 'medium') {
+            // Smaller bonus for Medium mode to encourage earlier entry
+            if (age < 60) {
+                score += 10;
+                strengths.push(`🆕 New token opportunity (${age.toFixed(0)}s old)`);
             }
         }
 

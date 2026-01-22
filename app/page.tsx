@@ -423,10 +423,10 @@ export default function Home() {
 
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
         if (liquidityGrowth < 0.1 && momentum < 1.5) {
-          if (!isRetrying && !pendingRetries.current.has(token.mint)) {
+          if (!pendingRetries.current.has(token.mint)) {
             pendingRetries.current.add(token.mint);
-            addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Retrying analysis in 10s...`);
-            setTimeout(() => onTokenDetected(token, true), 10000);
+            addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
+            setTimeout(() => onTokenDetected(token, true), 15000);
           }
           return;
         } else if (momentum >= 1.5) {
@@ -506,10 +506,11 @@ export default function Home() {
       }
 
       if (!analysis.passed) {
-        // If rejected for being 'too early', definitely retry if first time
-        if (analysis.reasons.some(r => r.includes('Too early')) && !isRetrying) {
-          addLog(`⏳ ${token.symbol} early (${analysis.bondingCurveProgress.toFixed(1)}%). Retrying in 15s...`);
-          setTimeout(() => onTokenDetected(token, true), 15000);
+        // PERSISTENT MONITORING: If rejected for being 'too early', retry until it's at least 60s old
+        if (analysis.reasons.some(r => r.includes('Too early')) && age < 60) {
+          const waitTime = isRetrying ? 20000 : 15000;
+          addLog(`⏳ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
+          setTimeout(() => onTokenDetected(token, true), waitTime);
           return;
         }
 
