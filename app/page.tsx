@@ -35,8 +35,8 @@ export default function Home() {
     dynamicSizing: true
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
-  const [realBalance, setRealBalance] = useState(0);
-  const balanceRef = useRef(0);
+  const [realBalance, setRealBalance] = useState(-1); // -1 = Loading/Waiting for RPC
+  const balanceRef = useRef(-1);
   const flickerCount = useRef(0);
 
   useEffect(() => {
@@ -128,6 +128,10 @@ export default function Home() {
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
   const pendingRetries = useRef<Set<string>>(new Set());
 
+  useEffect(() => {
+    balanceRef.current = realBalance;
+  }, [realBalance]);
+
   const handleWalletChange = useCallback((newWallet: any) => {
     setWallet(newWallet);
   }, []);
@@ -215,16 +219,16 @@ export default function Home() {
     const currentBal = balanceRef.current;
 
     if (!config.isDemo) {
-      if (!wallet) return; // Silent return if disconnected momentarily
+      if (!wallet) return; // Silent return if disconnected 
+
+      // IMPORTANT: If balance is still -1, it means the RPC fetch hasn't returned yet.
+      // We skip the check to avoid "False Zero" auto-stops.
+      if (currentBal === -1) return;
 
       if (currentBal === 0) {
         // Flicker protection: If balance is exactly 0, it might be a refresh glitch
-        // Increment flicker count and return. If it stays 0 for 3 checks, then stop.
         flickerCount.current++;
-        if (flickerCount.current < 3) {
-          console.log(`[onTokenDetected] Potential balance flicker (0.00), check ${flickerCount.current}/3`);
-          return;
-        }
+        if (flickerCount.current < 3) return;
       } else {
         flickerCount.current = 0; // Reset on good reading
       }

@@ -103,7 +103,7 @@ export default function WalletManager({
     };
 
     useEffect(() => {
-        if (balance > 0 && onBalanceChange) {
+        if (balance >= 0 && onBalanceChange) {
             onBalanceChange(balance);
         }
     }, [balance, onBalanceChange]);
