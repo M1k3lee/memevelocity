@@ -60,10 +60,19 @@ export async function analyzeEnhanced(
     const minBondingCurve = config?.minBondingCurve ?? (riskMode === 'safe' ? 5 : riskMode === 'medium' ? 2 : 0);
     const maxBondingCurve = config?.maxBondingCurve ?? (riskMode === 'safe' ? 50 : 80);
     const minLiquidity = config?.minLiquidity ?? (riskMode === 'high' ? 1 : riskMode === 'medium' ? 5 : 10);
-    const minHolders = config?.minHolderCount ?? (riskMode === 'high' ? 10 : 50);
     const maxDev = config?.maxDev ?? (riskMode === 'high' ? 20 : 10);
     const maxTop10 = config?.maxTop10 ?? (riskMode === 'high' ? 80 : 60);
     const minVelocity = config?.minVelocity ?? 0;
+    const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
+
+    // ADAPTIVE SAFETY: Scale holder requirement by age
+    // New tokens (<2 mins) only need 15-20 holders to be "safe"
+    const minHolders = config?.minHolderCount ?? (
+        riskMode === 'high' ? 10 :
+            age < 60 ? 15 :
+                age < 120 ? 25 :
+                    50
+    );
 
     try {
         const pumpData = await getPumpData(token.mint, connection);
@@ -129,6 +138,7 @@ export async function analyzeEnhanced(
         if (currentMomentum > 1.5 && bondingCurveProgress < minBondingCurve) {
             effectiveMinCurve = 0; // Waiver for high momentum
             strengths.push(`🚀 Momentum Waiver: Strong growth (${currentMomentum.toFixed(1)} SOL/min) allows early entry`);
+            score += 10; // High momentum bonus
         }
 
         // 1. Bonding curve timing

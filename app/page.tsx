@@ -867,6 +867,7 @@ export default function Home() {
             demoBalance={demoBalance}
             isDemo={config.isDemo}
             stats={stats}
+            heliusKey={config.heliusKey}
           />
         )}
 

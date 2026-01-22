@@ -12,13 +12,16 @@ interface DashboardStatsProps {
         wins: number;
         losses: number;
     };
+    heliusKey?: string;
 }
 
-export default function DashboardStats({ realBalance, demoBalance, isDemo, stats }: DashboardStatsProps) {
+export default function DashboardStats({ realBalance, demoBalance, isDemo, stats, heliusKey }: DashboardStatsProps) {
     const currentBalance = isDemo ? demoBalance : realBalance;
     const winRate = (stats.wins + stats.losses) > 0
         ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1)
         : 0;
+
+    const hasHelius = heliusKey && heliusKey.length > 20;
 
     return (
         <div className="grid grid-cols-4 gap-4 mb-6 animate-fade-in">
@@ -69,15 +72,20 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
             </div>
 
             {/* Daily Target (Mock for UI) */}
-            <div className="glass-panel p-4 flex flex-col justify-between relative overflow-hidden">
-                <div className="absolute -right-4 -top-4 bg-yellow-500/10 w-24 h-24 rounded-full blur-2xl"></div>
+            {/* Network Intelligence Card */}
+            <div className={`glass-panel p-4 flex flex-col justify-between relative overflow-hidden border ${hasHelius ? 'border-green-500/20' : 'border-yellow-500/20'}`}>
+                <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl ${hasHelius ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}></div>
                 <div className="flex items-center gap-2 text-gray-400 mb-1">
                     <TrendingDown size={16} className="rotate-180" />
-                    <span className="text-xs uppercase tracking-wider font-semibold">Daily Volume</span>
+                    <span className="text-xs uppercase tracking-wider font-semibold">Intelligence Status</span>
                 </div>
                 <div>
-                    <span className="text-3xl font-bold text-white tracking-tight">--</span>
-                    <span className="text-sm text-gray-500 ml-1">SOL</span>
+                    <span className={`text-xl font-bold tracking-tight ${hasHelius ? 'text-green-500' : 'text-yellow-500'}`}>
+                        {hasHelius ? "ADVANCED (HELIUS)" : "BASIC (PUBLIC)"}
+                    </span>
+                    <p className="text-[10px] text-gray-500 mt-1">
+                        {hasHelius ? "Deep holder & rug analysis active" : "Reduced accuracy - Holders estimated"}
+                    </p>
                 </div>
             </div>
         </div>
