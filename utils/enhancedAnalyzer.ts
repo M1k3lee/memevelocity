@@ -57,42 +57,43 @@ export async function analyzeEnhanced(
     let score = 0; // Start at 0, build up
 
     // Default values if config is missing (backward compatibility)
-    // BALANCED MEDIUM MODE: Sweet spot between quality and quantity
+    // GOD MODE: The "Last Stand" Strategy
+    // Precision parameters to find only the highest probability setups
     const minBondingCurve = config?.minBondingCurve ?? (
         riskMode === 'safe' ? 5 :
-            riskMode === 'medium' ? 1 :  // Relaxed from 2 to 1 - catch more early opportunities
-                riskMode === 'velocity' ? 0.2 :
+            riskMode === 'medium' ? 1 :
+                riskMode === 'high' ? 0.8 : // GOD MODE: Precision early entry (was 0.2)
                     0
     );
     const maxBondingCurve = config?.maxBondingCurve ?? (
         riskMode === 'safe' ? 50 :
-            riskMode === 'medium' ? 65 :  // Relaxed from 60 to 65 - allow slightly later entries
-                80
+            riskMode === 'medium' ? 65 :
+                riskMode === 'high' ? 10 : // GOD MODE: Don't chase pumps (was 80)
+                    80
     );
     const minLiquidity = config?.minLiquidity ?? (
-        riskMode === 'high' ? 1 :
+        riskMode === 'high' ? 8 : // GOD MODE: Needs REAL money behind it (was 1)
             riskMode === 'velocity' ? 2 :
-                riskMode === 'medium' ? 4 :  // Relaxed from 5 to 4 - catch more tokens
+                riskMode === 'medium' ? 4 :
                     10
     );
     const maxDev = config?.maxDev ?? (
-        riskMode === 'high' ? 20 :
-            riskMode === 'medium' ? 15 :  // Relaxed from 12 to 15 - balanced approach
+        riskMode === 'high' ? 10 : // GOD MODE: Strict anti-rug (was 20)
+            riskMode === 'medium' ? 15 :
                 10
     );
     const maxTop10 = config?.maxTop10 ?? (
-        riskMode === 'high' ? 80 :
+        riskMode === 'high' ? 45 : // GOD MODE: No whales allowed (was 80)
             riskMode === 'velocity' ? 75 :
-                riskMode === 'medium' ? 55 :  // Relaxed from 50 to 55 - allow some concentration
+                riskMode === 'medium' ? 55 :
                     60
     );
     const minVelocity = config?.minVelocity ?? 0;
     const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
 
     // ADAPTIVE SAFETY: Scale holder requirement by age
-    // New tokens (<2 mins) only need 15-20 holders to be "safe"
     const minHolders = config?.minHolderCount ?? (
-        riskMode === 'high' ? 10 :
+        riskMode === 'high' ? 20 : // GOD MODE: Needs a crowd (was 10)
             riskMode === 'velocity' ? 10 :
                 age < 60 ? 15 :
                     age < 120 ? 25 :
@@ -124,7 +125,8 @@ export async function analyzeEnhanced(
 
         const isHighRiskMode = riskMode === 'high';
         const isSafeMode = riskMode === 'safe';
-        const strictness = config?.rugCheckStrictness ?? (isHighRiskMode ? 'lenient' : isSafeMode ? 'strict' : 'standard');
+        // GOD MODE (high) is now STRICT, not lenient. We want precision, not gambling.
+        const strictness = config?.rugCheckStrictness ?? (isHighRiskMode ? 'strict' : isSafeMode ? 'strict' : 'standard');
 
         // 2. Check contract security (CRITICAL - always check, but strictness varies)
         const contractSecurity = await checkContractSecurity(token.mint, connection);

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Settings, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Play, Square, Settings, AlertTriangle, AlertCircle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface AdvancedConfig {
@@ -151,16 +151,16 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setTakeProfit(50);
             setStopLoss(10);
             setAdvancedConfig({
-                minLiquidity: 8,
+                minLiquidity: 8, // GOD MODE: Strict
                 maxLiquidity: 1000,
                 minVolume: 10,
                 minHolderCount: 50,
-                maxTop10: 60,
-                maxDev: 10,
-                minBondingCurve: 10,
-                maxBondingCurve: 70,
-                minVelocity: 1,
-                rugCheckStrictness: "standard",
+                maxTop10: 45, // GOD MODE: Strict
+                maxDev: 10, // GOD MODE: Strict
+                minBondingCurve: 0.8, // GOD MODE: Early but safe
+                maxBondingCurve: 10, // GOD MODE: Early only
+                minVelocity: 0.8,
+                rugCheckStrictness: "strict", // GOD MODE: Zero tolerance
                 requireSocials: false,
                 avoidSnipers: true,
                 slippage: 30
@@ -249,10 +249,10 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     </button>
                     <button
                         onClick={() => setPreset("high")}
-                        className={`p-3 rounded border transition-all ${mode === "high" ? "border-[var(--danger)] bg-[rgba(255,0,85,0.1)] text-[var(--danger)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                        className={`p-3 rounded border transition-all ${mode === "high" ? "border-[#9900ff] bg-[rgba(153,0,255,0.2)] text-[#df99ff] shadow-[0_0_15px_rgba(153,0,255,0.3)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold whitespace-nowrap">High Risk</div>
-                        <div className="text-[10px] opacity-70">Score: ≥30 | Aggressive</div>
+                        <div className="font-bold whitespace-nowrap flex items-center gap-1"><Zap size={12} fill="currentColor" /> GOD MODE</div>
+                        <div className="text-[10px] opacity-70">Sniper Precision</div>
                     </button>
                     <button
                         onClick={() => setPreset("scalp")}
