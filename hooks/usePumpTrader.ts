@@ -354,6 +354,44 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             }
                         }
 
+                        // --- NEW: STRATEGIC EXIT LOGIC (TP/SL/TIME) ---
+                        // Ensure strategy exists (backwards compatibility)
+                        const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
+                        const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
+
+                        // 1. STOP LOSS
+                        if (pnl <= -strategy.stopLoss) {
+                            updates.set(trade.mint, { status: "selling" });
+                            sellToken(trade.mint, 100);
+                            addLog(`🛑 STOP LOSS: ${trade.symbol} at ${pnl.toFixed(2)}% (Limit: -${strategy.stopLoss}%)`);
+                            return;
+                        }
+
+                        // 2. TAKE PROFIT
+                        if (pnl >= strategy.takeProfit) {
+                            updates.set(trade.mint, { status: "selling" });
+                            sellToken(trade.mint, 100);
+                            addLog(`🎉 TAKE PROFIT: ${trade.symbol} hit +${pnl.toFixed(2)}% (Target: +${strategy.takeProfit}%)`);
+                            return;
+                        }
+
+                        // 3. TIME LIMIT / STAGNATION (For GOD MODE / SNIPER)
+                        // If holding > maxHoldTime (e.g. 10m) and profit is negligible (<5%), EXIT.
+                        // Don't hold dead bags.
+                        if (strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {
+                            // If we are in deep profit, maybe hold? But if stagnant, sell.
+                            // If we are losing, definitely sell.
+                            if (pnl < 10) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100);
+                                addLog(`⏰ TIME LIMIT: ${trade.symbol} held for ${timeOpen.toFixed(0)}s. Stagnant at ${pnl.toFixed(2)}%. Exiting.`);
+                                return;
+                            }
+                        }
+
+                        // 4. EARLY MOMENTUM CHECK (GOD MODE SPECIAL)
+                        // If < 2 mins old, checks strictly for momentum loss? (Can add later)
+
                         updates.set(trade.mint, {
                             buyPrice,
                             currentPrice: priceToUse,
@@ -428,6 +466,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
         addLog(`Initiating ${isDemo ? '[DEMO] ' : ''}BUY for ${symbol} (${amountSol} SOL)...`);
 
+        // Default Exit Strategy for God Mode / Sniper (if not provided)
+        const activeExitStrategy: ActiveTrade['exitStrategy'] = exitStrategy || {
+            takeProfit: 50,
+            stopLoss: 15,
+            maxHoldTime: 600, // 10 minutes
+            trailingStop: false
+        };
+
         if (isDemo) {
             if (demoBalance < amountSol) {
                 addLog("[DEMO] Insufficient funds for trade.");
@@ -456,7 +502,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const newTrade: ActiveTrade = {
                 mint, symbol, buyPrice, amountTokens, amountSolPaid: amountSol,
                 currentPrice: buyPrice, pnlPercent: 0, status: "open",
-                txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy, originalAmount: amountSol
+                txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
@@ -491,7 +537,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const newTrade: ActiveTrade = {
                 mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: amountSol,
                 currentPrice: initialPrice || 0, pnlPercent: 0, status: "open", txId: signature,
-                buyTime: Date.now(), exitStrategy, originalAmount: amountSol
+                buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol
             };
 
             setActiveTrades(prev => [newTrade, ...prev]);
