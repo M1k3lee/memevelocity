@@ -170,15 +170,15 @@ export const getPumpPrice = async (mintAddress: string, conn: Connection = conne
     return price;
 };
 
-export const metadataCache = new Map<string, { name: string, symbol: string }>();
+export const metadataCache = new Map<string, { name: string, symbol: string, uri: string }>();
 
 export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) => {
     if (metadataCache.has(mintAddress)) return metadataCache.get(mintAddress)!;
-    if (!heliusKey) return { name: "Unknown", symbol: "???" };
+    if (!heliusKey) return { name: "Unknown", symbol: "???", uri: "" };
 
-    if (isCircuitBroken()) return { name: "RPC Blocked", symbol: "BLOCK" };
+    if (isCircuitBroken()) return { name: "RPC Blocked", symbol: "BLOCK", uri: "" };
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
-    if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "..." };
+    if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "...", uri: "" };
 
     try {
         const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${heliusKey}`, {
@@ -192,19 +192,20 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
         if (response.status === 429) {
             handleRpcError('getTokenMetadata (429)', null);
             rateLimitCoolDowns.set(mintAddress, Date.now() + 30000);
-            return { name: "Rate Limited", symbol: "429" };
+            return { name: "Rate Limited", symbol: "429", uri: "" };
         }
         if (response.status === 403) {
             handleRpcError('getTokenMetadata (403)', null);
             rateLimitCoolDowns.set(mintAddress, Date.now() + 60000);
-            return { name: "Forbidden", symbol: "403" };
+            return { name: "Forbidden", symbol: "403", uri: "" };
         }
 
         const data = await response.json();
         if (data.result && data.result.content && data.result.content.metadata) {
             const meta = {
                 name: data.result.content.metadata.name || "Real Token",
-                symbol: data.result.content.metadata.symbol || "REAL"
+                symbol: data.result.content.metadata.symbol || "REAL",
+                uri: data.result.content.json_uri || ""
             };
             metadataCache.set(mintAddress, meta);
             return meta;
@@ -212,7 +213,7 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) 
     } catch (e) {
         console.error("Error fetching metadata:", e);
     }
-    return { name: "Real Token", symbol: "REAL" };
+    return { name: "Real Token", symbol: "REAL", uri: "" };
 };
 
 export const getBondingCurveAddress = (mintAddress: string) => {

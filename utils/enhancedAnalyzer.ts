@@ -396,16 +396,48 @@ export async function analyzeEnhanced(
             score -= 3;
         }
 
-        // 8. METADATA QUALITY (5 points)
+        // 8. METADATA & SOCIALS QUALITY (15 points)
         const metadata = await getTokenMetadata(token.mint, heliusKey);
-        if (metadata.name && metadata.name !== "Real Token" && metadata.name !== "Unknown") {
+
+        // Check for Socials (The "Runner" Signal)
+        // If config requires social verification, we fetch the JSON
+        let hasSocials = false;
+        if (metadata.uri) {
+            // Lazy check: Only check socials if the score is already decent (>30) to save bandwidth
+            if (score > 30) {
+                hasSocials = await checkSocials(metadata.uri);
+            }
+        }
+
+        if (hasSocials) {
+            score += 15;
+            strengths.push(`🌟 HAS SOCIALS: Twitter/Telegram link detected`);
+        } else if (metadata.name && metadata.name !== "Real Token" && metadata.name !== "Unknown") {
             score += 5;
             strengths.push(`Has metadata: ${metadata.name}`);
+        } else {
+            // Penalize unknown/lazy metadata
+            score -= 5;
         }
 
         // === BONUSES ===
 
-        // Perfect sweet spot + good distribution
+        // === RUNNER BONUSES (The "Ultra Profitable" Logic) ===
+
+        // 1. "Golden Ratio" Check: High Volume relative to Liquidity + Low Concentration
+        // If volume is > 4x Liquidity Growth AND Top 10 < 30%, it means massive public interest vs whales
+        if (volumeMetrics.volume24h > (liquidityGrowth * 4) && holderMetrics.top10Concentration < 30) {
+            score += 20;
+            strengths.push(`💎 DIAMOND HANDS: High Volume + Low Whale Concentration (Public Buy-in)`);
+        }
+
+        // 2. Perfect Sweet Spot + Socials
+        if (bondingCurveProgress >= 8 && bondingCurveProgress <= 20 && hasSocials) {
+            score += 15;
+            strengths.push('🚀 RUNNER SETUP: Sweet Spot + Socials Validation');
+        }
+
+        // Perfect sweet spot + good distribution (Old Bonus)
         if (bondingCurveProgress >= 5 && bondingCurveProgress <= 15 &&
             holderMetrics.holderCount >= 200 && holderMetrics.deployerHoldings < 10) {
             score += 10;
@@ -738,4 +770,28 @@ function createRejectResult(
             }
         }
     };
+}
+
+/**
+ * Check for social links in metadata
+ */
+async function checkSocials(uri: string): Promise<boolean> {
+    if (!uri || uri.length === 0) return false;
+    try {
+        // Timeout to prevent hanging on slow IPFS
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+
+        const response = await fetch(uri, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) return false;
+
+        const json = await response.json();
+        // Check standard fields for social links
+        const str = JSON.stringify(json).toLowerCase();
+        return str.includes("twitter.com") || str.includes("t.me") || str.includes("telegram") || str.includes("x.com");
+    } catch (e) {
+        return false;
+    }
 }

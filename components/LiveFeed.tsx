@@ -279,7 +279,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     if (data.mint) {
                         // PRE-POPULATE CACHE: If we got mint data from PumpPortal WS, save it!
                         if (data.name && data.symbol) {
-                            metadataCache.set(data.mint, { name: data.name, symbol: data.symbol });
+                            metadataCache.set(data.mint, { name: data.name, symbol: data.symbol, uri: data.uri || "" });
                         }
 
                         // Normalize vSol to SOL (PumpPortal sends lamports)
