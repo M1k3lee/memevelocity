@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { createConnection } from '../utils/solanaManager';
+import { createConnection, getPumpData } from '../utils/solanaManager';
 import { usePumpTrader } from '../hooks/usePumpTrader';
 import { TokenData } from '../components/LiveFeed';
 import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings } from 'lucide-react';
@@ -378,6 +378,30 @@ export default function Home() {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ NEW + MOMENTUM: Early momentum play (rug checks passed)`);
 
+          // TREND VERIFICATION (Anti-Falling Knife)
+          addLog(`🔎 Verifying trend for ${token.symbol}...`);
+          await new Promise(r => setTimeout(r, 1500));
+          const freshData = await getPumpData(token.mint, connection);
+          if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
+
+          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
+          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+          const change = ((freshPrice - oldPrice) / oldPrice) * 100;
+
+          if (change < -0.5) {
+            addLog(`📉 FALLING KNIFE: ${token.symbol} dropped ${change.toFixed(2)}% in 1.5s. Rejected.`);
+            return;
+          }
+          if (freshData.vSolInBondingCurve < (token.vSolInBondingCurve || 30) * 0.9) {
+            addLog(`📉 LIQUIDITY DRAIN: ${token.symbol} liquidity dropped. Rejected.`);
+            return;
+          }
+          addLog(`✅ Trend Valid: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`);
+
+          // Update for accurate entry price
+          token.vSolInBondingCurve = freshData.vSolInBondingCurve;
+          token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
+
           setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
@@ -393,6 +417,25 @@ export default function Home() {
         if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ STRONG MOMENTUM: High buy activity detected (rug checks passed)`);
+
+          // TREND VERIFICATION (Anti-Falling Knife)
+          addLog(`🔎 Verifying trend for ${token.symbol}...`);
+          await new Promise(r => setTimeout(r, 1500));
+          const freshData = await getPumpData(token.mint, connection);
+          if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
+
+          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
+          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+          const change = ((freshPrice - oldPrice) / oldPrice) * 100;
+
+          if (change < -0.5) {
+            addLog(`📉 FALLING KNIFE: ${token.symbol} dropped ${change.toFixed(2)}% in 1.5s. Rejected.`);
+            return;
+          }
+          addLog(`✅ Trend Valid: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`);
+
+          token.vSolInBondingCurve = freshData.vSolInBondingCurve;
+          token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
           setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
@@ -425,6 +468,25 @@ export default function Home() {
         if (!isObviousRug && age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1) {
           addLog(`🏎️ VELOCITY FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum`);
           addLog(`   🎯 EARLY IGNITION: Token is launching with conviction. Entering trade.`);
+
+          // TREND VERIFICATION
+          addLog(`🔎 Verifying Velocity Trend for ${token.symbol}...`);
+          await new Promise(r => setTimeout(r, 1500));
+          const freshData = await getPumpData(token.mint, connection);
+          if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
+
+          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
+          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+          const change = ((freshPrice - oldPrice) / oldPrice) * 100;
+
+          if (change < -0.5) {
+            addLog(`📉 FALLING KNIFE: ${token.symbol} dropped ${change.toFixed(2)}%. Velocity Reject.`);
+            return;
+          }
+          addLog(`✅ Velocity Valid: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`);
+
+          token.vSolInBondingCurve = freshData.vSolInBondingCurve;
+          token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
           setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
