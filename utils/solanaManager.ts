@@ -172,7 +172,7 @@ export const getPumpPrice = async (mintAddress: string, conn: Connection = conne
 
 export const metadataCache = new Map<string, { name: string, symbol: string, uri: string }>();
 
-export const getTokenMetadata = async (mintAddress: string, heliusKey?: string) => {
+export const getTokenMetadata = async (mintAddress: string, heliusKey?: string): Promise<{ name: string, symbol: string, uri: string }> => {
     if (metadataCache.has(mintAddress)) return metadataCache.get(mintAddress)!;
     if (!heliusKey) return { name: "Unknown", symbol: "???", uri: "" };
 
