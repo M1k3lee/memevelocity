@@ -23,7 +23,7 @@
 - ⚡ **Real-time Detection**: Monitors Pump.fun for new token launches via WebSocket
 - 🛡️ **Advanced Rug Detection**: Multi-layer filtering to avoid scams and duplicate copycat tokens
 - 📊 **Paper Trading Mode**: Test strategies risk-free before going live
-- 🎯 **Multiple Trading Strategies**: Safe, Medium, High-Risk, and custom modes
+- 🎯 **Multiple Trading Strategies**: Runner, Sniper, Degen, and Custom modes
 - 🔄 **Automated Exit Strategies**: Take-profit, stop-loss, trailing stops, and momentum-based exits
 - 📈 **Live Portfolio Tracking**: Real-time PnL, trade history, and performance statistics
 
@@ -139,7 +139,7 @@ For best performance and reliability, set up a free Helius API key:
 
 Access bot settings via the **Bot Config** tab:
 
-- **Trading Strategy**: Select Safe/Medium/High-Risk/First/Scalp
+- **Trading Strategy**: Select Runner/Sniper/Degen/Custom
 - **Trade Amount**: SOL amount per trade (default: 0.01 SOL)
 - **Take Profit**: Target profit % (default: 20%)
 - **Stop Loss**: Maximum loss % (default: 10%)

@@ -24,7 +24,7 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
     const hasHelius = heliusKey && heliusKey.length > 20;
 
     return (
-        <div className="grid grid-cols-4 gap-4 mb-6 animate-fade-in">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 animate-fade-in">
             {/* Balance Card */}
             <div className="glass-panel p-4 flex flex-col justify-between relative overflow-hidden group">
                 <div className="absolute -right-4 -top-4 bg-[var(--primary)]/10 w-24 h-24 rounded-full blur-2xl group-hover:bg-[var(--primary)]/20 transition-all"></div>
