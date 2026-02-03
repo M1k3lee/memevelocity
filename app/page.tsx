@@ -26,7 +26,7 @@ export default function Home() {
     const savedKey = typeof window !== 'undefined' ? localStorage.getItem('helius_api_key') : '';
     return {
       isRunning: false,
-      mode: 'safe',
+      mode: 'runner',
       amount: 0.01,
       takeProfit: 30,
       stopLoss: 10,
@@ -570,16 +570,22 @@ export default function Home() {
       } else {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
-        // Mapping: high -> high, velocity -> velocity, medium/custom -> medium, safe -> safe
-        const riskModeMap: Record<string, 'safe' | 'medium' | 'high' | 'velocity'> = {
-          'safe': 'safe',
-          'medium': 'medium',
-          'velocity': 'velocity',
-          'high': 'high',
+        // Mapping: Maps new modes (runner, sniper, degen) to analyzer logic
+        const riskModeMap: Record<string, 'runner' | 'sniper' | 'degen' | 'safe' | 'medium' | 'high' | 'velocity'> = {
+          'runner': 'runner',
+          'safe': 'runner',
+          'medium': 'runner',
+          'sniper': 'sniper',
+          'first': 'sniper',
+          'degen': 'degen',
+          'high': 'degen',
+          'velocity': 'degen',
+          'scalp': 'degen',
           'custom': 'medium'
         };
         const riskMode = riskModeMap[config.mode] || 'medium';
-        analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode, config.advanced);
+        // @ts-ignore
+        analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, config.advanced);
       }
 
       // Mode-based filtering with analysis scores
@@ -588,10 +594,10 @@ export default function Home() {
       // IMPORTANT: Velocity mode score requirement is handled inside analyzeEnhanced (passed = 40)
       // but we still define the display minScore here
       let minScore = 30;
-      if (config.mode === 'safe') minScore = 65;
-      else if (config.mode === 'medium' || config.mode === 'custom') minScore = 45;  // Lowered from 50 to 45
-      else if (config.mode === 'velocity') minScore = 40;
-      else if (config.mode === 'high') minScore = 30;
+      if (config.mode === 'runner' || config.mode === 'safe') minScore = 80;
+      else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
+      else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
+      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
 
       if (config.isDemo) {
         // Paper trading: Lower thresholds to allow more trades for testing
@@ -692,11 +698,20 @@ export default function Home() {
 
       setLastTradeTime(Date.now());
       // Use user-defined slippage if available, otherwise fall back to adaptive
-      const slippage = config.advanced?.slippage || ((config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15);
+      const slippage = config.advanced?.slippage || ((config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first' || config.mode === 'sniper') ? 25 : 15);
 
       // Finalize: Token successfully passed all filters
       processedMints.current.add(token.mint);
-      await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice);
+
+      const exitStrategy = {
+        takeProfit: config.takeProfit,
+        stopLoss: config.stopLoss,
+        maxHoldTime: config.mode === 'sniper' ? 300 : (config.mode === 'degen' ? 120 : 3600), // Sniper/Degen = short hold, Runner = long
+        trailingStop: config.mode === 'runner', // Enable trailing stop for runners
+        momentumExit: config.mode === 'degen', // Momentum exit for degens
+      };
+
+      await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice, exitStrategy);
     } catch (error: any) {
       addLog(`❌ Analysis Error for ${token.symbol}: ${error.message}`);
       console.error("Token analysis error:", error);
@@ -720,8 +735,17 @@ export default function Home() {
           initialPrice = undefined;
         }
         setLastTradeTime(Date.now());
-        const dynamicSlippage = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first') ? 25 : 15;
-        await buyToken(token.mint, token.symbol, config.amount, dynamicSlippage, initialPrice);
+        const dynamicSlippage = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'first' || config.mode === 'sniper') ? 25 : 15;
+
+        const exitStrategy = {
+          takeProfit: config.takeProfit,
+          stopLoss: config.stopLoss,
+          maxHoldTime: config.mode === 'sniper' ? 300 : (config.mode === 'degen' ? 120 : 3600),
+          trailingStop: config.mode === 'runner',
+          momentumExit: config.mode === 'degen',
+        };
+
+        await buyToken(token.mint, token.symbol, config.amount, dynamicSlippage, initialPrice, exitStrategy);
       }
     }
   }, [config.isRunning, config.isDemo, config.mode, config.amount, config.heliusKey, wallet, activeTrades, tradeHistory, buyToken, realBalance, connection, addLog]);

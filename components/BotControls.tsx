@@ -24,7 +24,7 @@ interface BotConfig {
     amount: number;
     takeProfit: number;
     stopLoss: number;
-    mode: "safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom";
+    mode: "runner" | "sniper" | "degen" | "custom" | "safe" | "medium" | "high" | "velocity";
     isRunning: boolean;
     isDemo: boolean;
     isSimulating: boolean;
@@ -42,7 +42,7 @@ interface BotControlsProps {
 
 export default function BotControls({ onConfigChange, walletConnected, realBalance = 0 }: BotControlsProps) {
     const [isRunning, setIsRunning] = useState(false);
-    const [mode, setMode] = useState<"safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom">("safe");
+    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "custom">("runner");
     const [amount, setAmount] = useState(0.01);
     const [takeProfit, setTakeProfit] = useState(20);
     const [stopLoss, setStopLoss] = useState(10);
@@ -55,14 +55,14 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         minLiquidity: 10,
         maxLiquidity: 1000,
         minVolume: 5,
-        minHolderCount: 100,
-        maxTop10: 50,
+        minHolderCount: 20,
+        maxTop10: 40,
         maxDev: 5,
         minBondingCurve: 5,
-        maxBondingCurve: 40,
+        maxBondingCurve: 20,
         minVelocity: 0.5,
         rugCheckStrictness: "strict",
-        requireSocials: false,
+        requireSocials: true,
         avoidSnipers: true,
         slippage: 20
     });
@@ -87,88 +87,33 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         });
     }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
-    const setPreset = (preset: "safe" | "medium" | "high" | "scalp" | "first" | "velocity" | "custom") => {
+    const setPreset = (preset: "runner" | "sniper" | "degen" | "custom") => {
         setMode(preset);
-        if (preset === "safe") {
+        if (preset === "runner") {
+            // THE ULTRA PROFITABLE CONFIG (Tier 0-4 Strict)
             setAmount(0.01);
-            setTakeProfit(20);
+            setTakeProfit(30);
             setStopLoss(10);
             setAdvancedConfig({
                 minLiquidity: 10,
                 maxLiquidity: 1000,
                 minVolume: 5,
-                minHolderCount: 100,
-                maxTop10: 50,
+                minHolderCount: 20, // Tier 2 requirement
+                maxTop10: 40,
                 maxDev: 5,
-                minBondingCurve: 5,
-                maxBondingCurve: 40,
+                minBondingCurve: 5, // Tier 4 (5-15% sweet spot)
+                maxBondingCurve: 20,
                 minVelocity: 0.5,
                 rugCheckStrictness: "strict",
-                requireSocials: false,
+                requireSocials: true, // Tier 3 requirement
                 avoidSnipers: true,
-                slippage: 15
-            });
-        } else if (preset === "medium") {
-            setAmount(0.02);
-            setTakeProfit(50);
-            setStopLoss(15);
-            setAdvancedConfig({
-                minLiquidity: 5,
-                maxLiquidity: 2000,
-                minVolume: 2,
-                minHolderCount: 50,
-                maxTop10: 60,
-                maxDev: 10,
-                minBondingCurve: 2,
-                maxBondingCurve: 60,
-                minVelocity: 0.2,
-                rugCheckStrictness: "standard",
-                requireSocials: false,
-                avoidSnipers: false,
                 slippage: 20
             });
-        } else if (preset === "high") {
-            setAmount(0.03);
-            setTakeProfit(100);
-            setStopLoss(30);
-            setAdvancedConfig({
-                minLiquidity: 1,
-                maxLiquidity: 5000,
-                minVolume: 1,
-                minHolderCount: 10,
-                maxTop10: 80,
-                maxDev: 20,
-                minBondingCurve: 0,
-                maxBondingCurve: 80,
-                minVelocity: 0,
-                rugCheckStrictness: "lenient",
-                requireSocials: false,
-                avoidSnipers: false,
-                slippage: 25
-            });
-        } else if (preset === "scalp") {
-            setAmount(0.01);
+        } else if (preset === "sniper") {
+            // FIRST BUYER / SPEED (Tier 0 Only)
+            setAmount(0.005);
             setTakeProfit(50);
-            setStopLoss(10);
-            setAdvancedConfig({
-                minLiquidity: 8, // GOD MODE: Strict
-                maxLiquidity: 1000,
-                minVolume: 10,
-                minHolderCount: 50,
-                maxTop10: 45, // GOD MODE: Strict
-                maxDev: 10, // GOD MODE: Strict
-                minBondingCurve: 0.8, // GOD MODE: Early but safe
-                maxBondingCurve: 10, // GOD MODE: Early only
-                minVelocity: 0.8,
-                rugCheckStrictness: "strict", // GOD MODE: Zero tolerance
-                requireSocials: false,
-                avoidSnipers: true,
-                slippage: 30
-            });
-        } else if (preset === "first") {
-            setAmount(0.01);
-            setTakeProfit(30);
-            setStopLoss(8);
+            setStopLoss(15);
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 500,
@@ -182,26 +127,27 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 rugCheckStrictness: "lenient",
                 requireSocials: false,
                 avoidSnipers: false,
-                slippage: 40
+                slippage: 30
             });
-        } else if (preset === "velocity") {
-            setAmount(0.015);
+        } else if (preset === "degen") {
+            // MOMENTUM / HIGH RISK
+            setAmount(0.01);
             setTakeProfit(100);
-            setStopLoss(20);
+            setStopLoss(25);
             setAdvancedConfig({
-                minLiquidity: 2,
-                maxLiquidity: 5000,
-                minVolume: 1,
+                minLiquidity: 5,
+                maxLiquidity: 2000,
+                minVolume: 2,
                 minHolderCount: 10,
-                maxTop10: 75,
-                maxDev: 20,
-                minBondingCurve: 0.2,
-                maxBondingCurve: 80,
-                minVelocity: 0.3,
+                maxTop10: 60,
+                maxDev: 15,
+                minBondingCurve: 1,
+                maxBondingCurve: 60,
+                minVelocity: 1.0, // Needs velocity
                 rugCheckStrictness: "standard",
                 requireSocials: false,
                 avoidSnipers: false,
-                slippage: 30
+                slippage: 25
             });
         }
     };
@@ -227,50 +173,29 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 <label className="text-gray-400 text-sm mb-2 block">Trading Strategy</label>
                 <div className="grid grid-cols-2 gap-2">
                     <button
-                        onClick={() => setPreset("safe")}
-                        className={`p-3 rounded border transition-all ${mode === "safe" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                        onClick={() => setPreset("runner")}
+                        className={`p-3 rounded border transition-all ${mode === "runner" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold whitespace-nowrap">Safe-ish</div>
-                        <div className="text-[10px] opacity-70">Score: ≥65 | Strict Entry</div>
+                        <div className="font-bold whitespace-nowrap">🏃 RUNNER</div>
+                        <div className="text-[10px] opacity-70">Tier 0-4 | High Profitability</div>
                     </button>
                     <button
-                        onClick={() => setPreset("medium")}
-                        className={`p-3 rounded border transition-all ${mode === "medium" ? "border-[var(--warning)] bg-[rgba(255,204,0,0.1)] text-[var(--warning)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                        onClick={() => setPreset("sniper")}
+                        className={`p-3 rounded border transition-all ${mode === "sniper" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold whitespace-nowrap">Medium</div>
-                        <div className="text-[10px] opacity-70">Score: ≥50 | Balanced</div>
+                        <div className="font-bold whitespace-nowrap">🎯 SNIPER</div>
+                        <div className="text-[10px] opacity-70">Tier 0 Only | Speed Focus</div>
                     </button>
                     <button
-                        onClick={() => setPreset("velocity")}
-                        className={`p-3 rounded border transition-all ${mode === "velocity" ? "border-[#ffcc00] bg-[rgba(255,204,0,0.1)] text-[#ffcc00]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                        onClick={() => setPreset("degen")}
+                        className={`p-3 rounded border transition-all ${mode === "degen" ? "border-[#ffcc00] bg-[rgba(255,204,0,0.1)] text-[#ffcc00]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
-                        <div className="font-bold whitespace-nowrap">🎯 VELOCITY</div>
-                        <div className="text-[10px] opacity-70">Educated Gamble</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("high")}
-                        className={`p-3 rounded border transition-all ${mode === "high" ? "border-[#9900ff] bg-[rgba(153,0,255,0.2)] text-[#df99ff] shadow-[0_0_15px_rgba(153,0,255,0.3)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap flex items-center gap-1"><Zap size={12} fill="currentColor" /> GOD MODE</div>
-                        <div className="text-[10px] opacity-70">Sniper Precision</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("scalp")}
-                        className={`p-3 rounded border transition-all ${mode === "scalp" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">⚡ SCALP</div>
-                        <div className="text-[10px] opacity-70">Momentum | Quick Exit</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("first")}
-                        className={`p-3 rounded border transition-all ${mode === "first" ? "border-[#ff00ff] bg-[rgba(255,0,255,0.1)] text-[#ff00ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">🚀 FIRST</div>
-                        <div className="text-[10px] opacity-70">6s exit | Sniper Mode</div>
+                        <div className="font-bold whitespace-nowrap">🎰 DEGEN</div>
+                        <div className="text-[10px] opacity-70">Momentum | High Risk</div>
                     </button>
                     <button
                         onClick={() => setPreset("custom")}
-                        className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400 col-span-2"}`}
+                        className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
                     >
                         <div className="font-bold">Custom</div>
                         <div className="text-[10px] opacity-70">Manual control</div>
@@ -419,13 +344,22 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                                 ))}
                             </div>
                         </div>
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-center mb-2">
                             <label className="text-gray-400 text-xs">Avoid Snipers</label>
                             <button
                                 onClick={() => setAdvancedConfig(prev => ({ ...prev, avoidSnipers: !prev.avoidSnipers }))}
                                 className={`w-10 h-5 rounded-full relative transition-colors ${advancedConfig.avoidSnipers ? 'bg-green-600' : 'bg-[#333]'}`}
                             >
                                 <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${advancedConfig.avoidSnipers ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <label className="text-gray-400 text-xs">Require Socials</label>
+                            <button
+                                onClick={() => setAdvancedConfig(prev => ({ ...prev, requireSocials: !prev.requireSocials }))}
+                                className={`w-10 h-5 rounded-full relative transition-colors ${advancedConfig.requireSocials ? 'bg-green-600' : 'bg-[#333]'}`}
+                            >
+                                <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${advancedConfig.requireSocials ? 'translate-x-5' : ''}`} />
                             </button>
                         </div>
                     </div>

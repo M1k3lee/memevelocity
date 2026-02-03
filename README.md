@@ -33,43 +33,37 @@
 
 ### 🎮 Trading Modes
 
-- **Safe Mode** (Score ≥65): Conservative approach with strict filtering
-  - High liquidity requirements
-  - Strong contract security checks
-  - Early profit-taking (20% default)
-  
-- **Medium Mode** (Score ≥50): Balanced risk/reward
-  - Moderate filtering
-  - Flexible exit strategies
-  
-- **High-Risk Mode** (Score ≥40): Aggressive early entry
-  - Fast-track for very new tokens (<60s)
-  - Higher momentum requirements
-  - Still protected by rug detection
+We've simplified our strategy into **three powerful modes**:
 
-- **First Buyer Mode**: Targets tokens with strong initial buyer activity
-- **Scalp Mode**: Quick in-and-out trades for small profits
+- **🏃 RUNNER (The Profit King)**
+  - **Best for:** Consistent, high-quality trades.
+  - **Strategy:** Uses a **4-Tier Analysis Framework** to find legitimate projects.
+  - **Goal:** Catching the "real" projects that are ready to graduate bonding curves.
 
-### 🛡️ Rug Detection System
+- **🎯 SNIPER (Speed & Precision)**
+  - **Best for:** Being the first one in.
+  - **Strategy:** Filters for "Technical Safety" (Tier 0) only and buys instantly.
+  - **Goal:** Get in during the first 60 seconds, take a quick 50% profit, and get out.
 
-The bot includes a sophisticated multi-layer rug detection system:
+- **🎰 DEGEN (Maximum Chaos)**
+  - **Best for:** High risk, high reward.
+  - **Strategy:** Ignores most safety checks in favor of raw **Momentum** and **Volume**.
+  - **Goal:** Riding the hype wave. Warning: High risk of rug pulls.
 
-1. **Quick Checks**: Fast pattern matching for obvious scams
-   - Suspicious name patterns
-   - Duplicate name detection (catches copycat scams)
-   - Basic metadata validation
+### 🧠 The 4-Tier Analysis Framework
 
-2. **Advanced Analysis**: Deep token inspection
-   - Contract security analysis
-   - Holder distribution checks
-   - Liquidity pattern analysis
-   - Bonding curve progress monitoring
-   - Historical trade pattern detection
+Under the hood, **MemeVelocity** uses a sophisticated "Runner Detection" engine:
 
-3. **Real-time Monitoring**: Continuous protection
-   - Immediate exit on rapid price drops (>99.99%)
-   - Stop-loss triggers
-   - Liquidity drain detection
+1.  **Tier 0: Technical Safety** 🛡️
+    - Validates metadata, authorities (freeze/mint), and honeypot risks.
+2.  **Tier 1: Launch Timing** ⏱️
+    - Checks for the "Golden Window" (Fri-Sun, 11-14 UTC).
+3.  **Tier 2: Holder Distribution** 👥
+    - Analyzes top 10 holders and developer ownership (<5%).
+4.  **Tier 3 & 4: Socials & Momentum** 🚀
+    - Verifies social signals and "Golden Velocity" (5-15% curve progress).
+
+**Runner Mode** requires a pass on *all* tiers. **Sniper** only cares about Tier 0. **Degen** focuses on Momentum.
 
 ### 📊 Portfolio Management
 
@@ -211,39 +205,26 @@ Each trade can have custom exit strategies:
 
 ---
 
-## 🎯 Trading Strategies Explained
+## 🎯 Detailed Strategy Breakdown
 
-### Safe Mode
-**Best for**: Conservative traders, larger positions
-- **Score Threshold**: 65+ (55+ in paper mode)
-- **Focus**: High-quality tokens with strong fundamentals
-- **Exit**: Early profit-taking, tight stop-loss
-- **Risk**: Lower, but still significant in memecoin market
+### 🏃 Runner Mode (Recommended)
+This is the "set it and forget it" mode for most users. It trades less often but filters steadily for quality.
+- **Entry:** Strict 4-Tier pass.
+- **Exit:** Takes profit at 30%, but keeps a **Trailing Stop** active to catch moonshots.
+- **Stop Loss:** Tight 10% to protect capital.
 
-### Medium Mode
-**Best for**: Balanced approach
-- **Score Threshold**: 50+ (40+ in paper mode)
-- **Focus**: Good tokens with moderate risk
-- **Exit**: Flexible strategies
-- **Risk**: Moderate
+### 🎯 Sniper Mode
+For those who believe "early bird gets the worm." Monitors for new contract creations and filters out obvious scams.
+- **Entry:** Instant, as long as the contract is safe (Tier 0).
+- **Exit:** Fast 50% take profit. Hit and run.
+- **Stop Loss:** 15%.
 
-### High-Risk Mode
-**Best for**: Experienced traders, small positions
-- **Score Threshold**: 40+ (30+ in paper mode)
-- **Focus**: Very early entry (<60s old tokens)
-- **Fast Track**: Tokens with strong momentum (>1.5 SOL/min)
-- **Exit**: Aggressive, but still protected by rug detection
-- **Risk**: High - only use small amounts!
-
-### First Buyer Mode
-**Best for**: Catching tokens with strong initial interest
-- **Focus**: Tokens with significant first buyer activity
-- **Entry**: Early, based on initial momentum
-
-### Scalp Mode
-**Best for**: Quick profits, high frequency
-- **Focus**: Small, quick gains
-- **Exit**: Fast, tight stops
+### 🎰 Degen Mode
+For when the market is irrational and you want to ride the hype.
+- **Entry:** Momentum-based. If liquidity is pouring in, Degen buys.
+- **Exit:** 100% Take Profit (doubles your money).
+- **Stop Loss:** 25% (gives the token room to breathe).
+- **Special Feature:** "Momentum Exit" - automatically sells if pressure drops.
 
 ---
 
