@@ -594,7 +594,7 @@ export default function Home() {
       // IMPORTANT: Velocity mode score requirement is handled inside analyzeEnhanced (passed = 40)
       // but we still define the display minScore here
       let minScore = 30;
-      if (config.mode === 'runner' || config.mode === 'safe') minScore = 80;
+      if (config.mode === 'runner' || config.mode === 'safe') minScore = 70;
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;

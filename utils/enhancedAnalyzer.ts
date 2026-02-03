@@ -292,7 +292,8 @@ function calculateTier1(timestamp: number) {
     } else {
         // Mon-Thu
         if (day === 2) { // Tuesday
-            score -= 100; // "Absolute Graveyard" per research
+            score -= 20; // "Graveyard" per research - penalty reduced from -100 to allow finding gems
+            strengths.push("Tuesday Caution: Higher Risk Day");
         } else {
             score -= 5;
         }
