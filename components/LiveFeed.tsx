@@ -252,7 +252,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
                         if (mint && isCreate) {
                             addToQueue(async () => {
-                                const meta = await getTokenMetadata(mint!, heliusKey).catch(() => ({ name: "Unknown", symbol: "???" }));
+                                const meta = await getTokenMetadata(mint!, heliusKey).catch(() => ({ name: "Unknown", symbol: "???", uri: "" }));
                                 const pump = await getPumpData(mint!, heliusConnection.current).catch(() => null);
                                 if (!pump) return;
                                 const newToken: TokenData = {
