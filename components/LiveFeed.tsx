@@ -123,10 +123,12 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const subscribedMintsRef = useRef<Set<string>>(new Set());
     const MAX_TRACKED_MINTS = 200;
 
-    // Auto-scroll logic for log
-    const logEndRef = useRef<HTMLDivElement>(null);
+    // Keep terminal updates inside the panel instead of scrolling the page viewport.
+    const logContainerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
-        if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        if (logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
     }, [analysisLog]);
 
     useEffect(() => { onTokenDetectedRef.current = onTokenDetected; }, [onTokenDetected]);
@@ -311,7 +313,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                         </button>
                     </div>
                 </div>
-                <div className="h-44 overflow-y-auto p-3 font-mono text-[10px] bg-[#0c0c0c] custom-scrollbar">
+                <div ref={logContainerRef} className="h-44 overflow-y-auto p-3 font-mono text-[10px] bg-[#0c0c0c] custom-scrollbar">
                     {analysisLog.length === 0 ? (
                         <div className="text-gray-700 italic">Waiting for market activity...</div>
                     ) : (
@@ -322,7 +324,6 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                             </div>
                         ))
                     )}
-                    <div ref={logEndRef} />
                 </div>
             </div>
 
