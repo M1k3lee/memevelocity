@@ -113,6 +113,10 @@ npm run build
 
 # Start production server
 npm start
+
+# Build and run the unattended trading worker
+npm run bot:wallet
+npm run bot:start
 ```
 
 ---
@@ -145,6 +149,16 @@ Access bot settings via the **Bot Config** tab:
 - **Stop Loss**: Maximum loss % (default: 10%)
 - **Max Concurrent Trades**: Maximum open positions (default: 5)
 - **Paper Trading**: Enable to test without real funds
+
+### Live Runner
+
+For unattended trading, use the Node runner instead of relying on a browser tab. It uses the same feed and analyzer core, but keeps wallet funding and open-trade state outside `localStorage`.
+
+- Put your dedicated wallet private key in `TRADER_PRIVATE_KEY`
+- Set `HELIUS_API_KEY` for live mode
+- Run `npm run bot:wallet` to print the funding address
+- Start with `BOT_DRY_RUN=true`
+- Use `npm run bot:start` when ready
 
 ### Exit Strategy Customization
 
@@ -262,7 +276,7 @@ For when the market is irrational and you want to ride the hype.
 - **Private Keys**: Stored locally in browser, never sent to servers
 - **API Keys**: Helius keys are stored locally, optional to use
 - **Transactions**: All transactions are signed locally
-- **No Backend**: This is a client-side application
+- **Runner Option**: Unattended trading now uses the separate Node runner; the browser app remains the dashboard
 
 ---
 
@@ -327,6 +341,7 @@ memevelocity/
 ## 📚 Additional Documentation
 
 - [Helius Setup Guide](./HELIUS_SETUP.md) - Detailed Helius configuration
+- [Live Runner Guide](./LIVE_RUNNER.md) - Funding and running the unattended worker
 - [Network Troubleshooting](./NETWORK_TROUBLESHOOTING.md) - Connection issues
 - [Paper Trading Guide](./PAPER_TRADING_STATUS.md) - Paper trading details
 - [Speed Trading Guide](./SPEED_TRADING_GUIDE.md) - High-frequency strategies

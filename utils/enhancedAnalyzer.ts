@@ -1,6 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getTokenBalance } from './solanaManager';
-import { TokenData } from '../components/LiveFeed';
+import type { TokenData } from '../types/token';
 import { getMarketSnapshot } from './marketData';
 
 export interface AdvancedConfig {

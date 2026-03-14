@@ -1,8 +1,8 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
-// Default to a known stable endpoint instead of the public node which 403s frequently
-const DEFAULT_RPC = "https://rpc.ankr.com/solana";
+// Official Solana public endpoint for fallback/dev use. Production should use a private RPC.
+const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
 
 // Validate Helius API key format
 const isValidHeliusKey = (key: string): boolean => {

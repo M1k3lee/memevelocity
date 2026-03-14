@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { createConnection, getPumpData } from '../utils/solanaManager';
 import { usePumpTrader } from '../hooks/usePumpTrader';
-import { TokenData } from '../components/LiveFeed';
+import type { TokenData } from '../types/token';
 import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings } from 'lucide-react';
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';

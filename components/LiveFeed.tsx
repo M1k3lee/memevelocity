@@ -4,21 +4,8 @@ import React, { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { Activity, ExternalLink, RefreshCw, Zap, AlertTriangle, Pause, Play, Trash2, Diamond, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { detectRug } from '../utils/rugDetector';
 import { recordMarketEvent } from '../utils/marketData';
-
-export interface TokenData {
-    mint: string;
-    traderPublicKey: string;
-    txType: "create" | "buy" | "sell";
-    initialBuy: number;
-    bondingCurveKey: string;
-    vTokensInBondingCurve: number;
-    vSolInBondingCurve: number;
-    marketCapSol: number;
-    name: string;
-    symbol: string;
-    uri: string;
-    timestamp: number;
-}
+import type { TokenData } from '../types/token';
+import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 
 // 🗂️ ITEM COMPONENTS - Redesigned for Vertical Space
 const JunkItem = memo(({ token, reason }: { token: TokenData, reason: string }) => (
@@ -182,35 +169,13 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 try {
                     const data = JSON.parse(event.data);
                     if (data.mint) {
-                        processMarketEvent(normalizeTokenEvent(data));
+                        processMarketEvent(normalizeTokenEvent(data, Date.now()));
                     }
                 } catch (e) { }
             };
             ws.onclose = () => setStatus("disconnected");
             ws.onerror = () => setStatus("disconnected");
         } catch (err) { setStatus("disconnected"); }
-    };
-
-    const normalizeTokenEvent = (data: any): TokenData => {
-        const normalizeSol = (value?: number) => {
-            if (!value || Number.isNaN(value)) return 0;
-            return value > 1_000_000 ? value / 1e9 : value;
-        };
-
-        return {
-            mint: data.mint,
-            traderPublicKey: data.traderPublicKey || "",
-            txType: data.txType || "buy",
-            initialBuy: normalizeSol(data.initialBuy),
-            bondingCurveKey: data.bondingCurveKey || "",
-            vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
-            vSolInBondingCurve: normalizeSol(data.vSolInBondingCurve),
-            marketCapSol: normalizeSol(data.marketCapSol) || normalizeSol(data.vSolInBondingCurve),
-            name: data.name || "",
-            symbol: data.symbol || "???",
-            uri: data.uri || "",
-            timestamp: Date.now()
-        };
     };
 
     const subscribeToTokenTrades = (mint: string) => {
@@ -233,14 +198,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
     const mergeToken = (token: TokenData): TokenData => {
         const existing = tokenCacheRef.current.get(token.mint);
-        const merged: TokenData = {
-            ...existing,
-            ...token,
-            name: token.name || existing?.name || "Unknown",
-            symbol: token.symbol || existing?.symbol || "???",
-            uri: token.uri || existing?.uri || "",
-            timestamp: existing?.timestamp || token.timestamp
-        };
+        const merged = mergeTokenData(existing, token);
         tokenCacheRef.current.set(token.mint, merged);
         return merged;
     };

@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "export": "next build"
+    "export": "next build",
+    "bot:build": "tsc -p tsconfig.bot.json",
+    "bot:start": "npm run bot:build && node dist/bot/bot/runner.js",
+    "bot:wallet": "npm run bot:build && node dist/bot/bot/wallet.js"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.14",
@@ -14,6 +17,7 @@
     "@types/react-window": "^1.8.8",
     "autoprefixer": "^10.4.23",
     "bs58": "^6.0.0",
+    "dotenv": "^17.2.3",
     "lucide-react": "^0.562.0",
     "next": "16.1.1",
     "postcss": "^8.5.6",
@@ -22,12 +26,14 @@
     "react-dom": "19.2.3",
     "react-window": "^2.2.3",
     "sonner": "^2.0.7",
-    "tailwindcss": "~3.4.0"
+    "tailwindcss": "~3.4.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "typescript": "^5"
   }
 }

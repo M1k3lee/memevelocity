@@ -1,4 +1,4 @@
-import { TokenData } from '../components/LiveFeed';
+import type { TokenData } from '../types/token';
 
 export interface MarketSnapshot {
     mint: string;

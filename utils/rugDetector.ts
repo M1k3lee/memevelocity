@@ -1,4 +1,4 @@
-import { TokenData } from '../components/LiveFeed';
+import type { TokenData } from '../types/token';
 
 /**
  * Advanced Rug Detection System
@@ -222,4 +222,3 @@ export function getRugStats(): { totalNamesTracked: number; recentNames: string[
         recentNames: recentNames.slice(0, 20) // Last 20
     };
 }
-

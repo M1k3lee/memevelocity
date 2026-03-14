@@ -1,6 +1,6 @@
 import { Connection } from '@solana/web3.js';
 import { getPumpData } from './solanaManager';
-import { TokenData } from '../components/LiveFeed';
+import type { TokenData } from '../types/token';
 
 export interface SpeedTradeSignal {
     shouldBuy: boolean;
