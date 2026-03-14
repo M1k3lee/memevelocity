@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { Activity, ExternalLink, RefreshCw, Zap, AlertTriangle, Pause, Play, Trash2, Diamond, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
-import { getTokenMetadata, getPumpData, metadataCache, createConnection } from '../utils/solanaManager';
 import { detectRug } from '../utils/rugDetector';
+import { recordMarketEvent } from '../utils/marketData';
 
 export interface TokenData {
     mint: string;
@@ -131,6 +131,10 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const simulationInterval = useRef<NodeJS.Timeout | null>(null);
     const processedSignatures = useRef<Set<string>>(new Set());
     const onTokenDetectedRef = useRef(onTokenDetected);
+    const tokenCacheRef = useRef<Map<string, TokenData>>(new Map());
+    const trackedMintsRef = useRef<string[]>([]);
+    const subscribedMintsRef = useRef<Set<string>>(new Set());
+    const MAX_TRACKED_MINTS = 200;
 
     // Auto-scroll logic for log
     const logEndRef = useRef<HTMLDivElement>(null);
@@ -163,7 +167,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
         setStatus("connecting");
         try {
-            const url = (heliusKey && heliusKey.includes('-')) ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'wss://pumpportal.fun/api/data';
+            // PumpPortal is the launch-discovery feed; Helius remains RPC-only elsewhere.
+            const url = 'wss://pumpportal.fun/api/data';
             const ws = new WebSocket(url);
             wsRef.current = ws;
 
@@ -177,9 +182,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 try {
                     const data = JSON.parse(event.data);
                     if (data.mint) {
-                        const vSol = data.vSolInBondingCurve ? data.vSolInBondingCurve / 1e9 : 0;
-                        const token: TokenData = { ...data, vSolInBondingCurve: vSol, timestamp: Date.now(), marketCapSol: vSol };
-                        processNewToken(token);
+                        processMarketEvent(normalizeTokenEvent(data));
                     }
                 } catch (e) { }
             };
@@ -188,22 +191,89 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         } catch (err) { setStatus("disconnected"); }
     };
 
-    const processNewToken = (token: TokenData) => {
-        const rugCheck = detectRug(token, 'medium');
-        let type: 'gem' | 'junk' | 'stream' = 'stream';
-        let detail = `New Token Found: ${token.symbol}`;
+    const normalizeTokenEvent = (data: any): TokenData => {
+        const normalizeSol = (value?: number) => {
+            if (!value || Number.isNaN(value)) return 0;
+            return value > 1_000_000 ? value / 1e9 : value;
+        };
 
-        if (rugCheck.isRug) {
-            type = 'junk';
-            detail = `🚩 INCINERATED: ${token.symbol} - ${rugCheck.reason}`;
-        } else if ((token.vSolInBondingCurve || 0) > 35) {
-            type = 'gem';
-            detail = `💎 GEM DETECTED: ${token.symbol} - High Liquidity (${token.vSolInBondingCurve.toFixed(1)} SOL)`;
+        return {
+            mint: data.mint,
+            traderPublicKey: data.traderPublicKey || "",
+            txType: data.txType || "buy",
+            initialBuy: normalizeSol(data.initialBuy),
+            bondingCurveKey: data.bondingCurveKey || "",
+            vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
+            vSolInBondingCurve: normalizeSol(data.vSolInBondingCurve),
+            marketCapSol: normalizeSol(data.marketCapSol) || normalizeSol(data.vSolInBondingCurve),
+            name: data.name || "",
+            symbol: data.symbol || "???",
+            uri: data.uri || "",
+            timestamp: Date.now()
+        };
+    };
+
+    const subscribeToTokenTrades = (mint: string) => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || subscribedMintsRef.current.has(mint)) {
+            return;
         }
 
-        setAnalysisLog(prev => [...prev, { id: Math.random().toString(), msg: detail, type }].slice(-50));
-        setTokens(prev => [token, ...prev.filter(t => t.mint !== token.mint)].slice(0, 150));
-        onTokenDetectedRef.current(token);
+        subscribedMintsRef.current.add(mint);
+        trackedMintsRef.current.push(mint);
+        wsRef.current.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] }));
+
+        if (trackedMintsRef.current.length > MAX_TRACKED_MINTS) {
+            const staleMint = trackedMintsRef.current.shift();
+            if (staleMint && wsRef.current.readyState === WebSocket.OPEN) {
+                subscribedMintsRef.current.delete(staleMint);
+                wsRef.current.send(JSON.stringify({ method: "unsubscribeTokenTrade", keys: [staleMint] }));
+            }
+        }
+    };
+
+    const mergeToken = (token: TokenData): TokenData => {
+        const existing = tokenCacheRef.current.get(token.mint);
+        const merged: TokenData = {
+            ...existing,
+            ...token,
+            name: token.name || existing?.name || "Unknown",
+            symbol: token.symbol || existing?.symbol || "???",
+            uri: token.uri || existing?.uri || "",
+            timestamp: existing?.timestamp || token.timestamp
+        };
+        tokenCacheRef.current.set(token.mint, merged);
+        return merged;
+    };
+
+    const processMarketEvent = (token: TokenData) => {
+        const mergedToken = mergeToken(token);
+        recordMarketEvent(mergedToken);
+
+        if (mergedToken.txType === "create") {
+            subscribeToTokenTrades(mergedToken.mint);
+        }
+
+        const rugCheck = detectRug(token, 'medium');
+        let type: 'gem' | 'junk' | 'stream' = 'stream';
+        let detail = `${mergedToken.txType.toUpperCase()}: ${mergedToken.symbol}`;
+
+        if (mergedToken.txType === "create" && rugCheck.isRug) {
+            type = 'junk';
+            detail = `🚩 INCINERATED: ${mergedToken.symbol} - ${rugCheck.reason}`;
+        } else if (mergedToken.txType === "create" && (mergedToken.vSolInBondingCurve || 0) > 35) {
+            type = 'gem';
+            detail = `💎 GEM DETECTED: ${mergedToken.symbol} - High Liquidity (${mergedToken.vSolInBondingCurve.toFixed(1)} SOL)`;
+        }
+
+        if (mergedToken.txType === "create") {
+            setAnalysisLog(prev => [...prev, { id: Math.random().toString(), msg: detail, type }].slice(-50));
+        }
+
+        setTokens(prev => [mergedToken, ...prev.filter(t => t.mint !== mergedToken.mint)].slice(0, 150));
+
+        if (mergedToken.txType === "create" || (Date.now() - mergedToken.timestamp) < 120000) {
+            onTokenDetectedRef.current(mergedToken);
+        }
     };
 
     useEffect(() => {
@@ -220,10 +290,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     name: isRug ? "Rug Pull Coin" : isGem ? "Diamond G" : "Standard Token",
                     symbol: (isRug ? "RUG" : isGem ? "GEM" : "TOK") + Math.floor(Math.random() * 99), uri: "", timestamp: Date.now()
                 };
-                processNewToken(token);
+                processMarketEvent(token);
             }, 3000);
         } else connectWs();
-        return () => { if (simulationInterval.current) clearInterval(simulationInterval.current); };
+        return () => {
+            if (simulationInterval.current) clearInterval(simulationInterval.current);
+            trackedMintsRef.current = [];
+            subscribedMintsRef.current.clear();
+        };
     }, [isSimulating, paused]);
 
     return (

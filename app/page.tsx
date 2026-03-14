@@ -126,8 +126,9 @@ export default function Home() {
     setProfitProtectionPercentage,
     clearVault
   } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
-  const [sessionMints, setSessionMints] = useState<Set<string>>(new Set());
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
+  const analyzingMints = useRef<Set<string>>(new Set());
+  const analysisCooldowns = useRef<Map<string, number>>(new Map());
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
   const pendingRetries = useRef<Set<string>>(new Set());
@@ -154,100 +155,105 @@ export default function Home() {
     }
 
     // 1. DEDUPLICATION (Return if already handled)
-    if (sessionMints.has(token.mint) || processedMints.current.has(token.mint)) {
-      // Allow re-analysis if we are explicitly retrying
-      if (!isRetrying) return;
-    }
-
-    // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
-    const timeSinceLastTrade = Date.now() - lastTradeTime;
-    if (timeSinceLastTrade < minTimeBetweenTrades) return;
-
-    const openTradesCount = activeTrades.filter(t => t.status === "open").length;
-    if (openTradesCount >= (config.maxConcurrentTrades || 1)) return;
-
-    if (!wallet && !config.isDemo) return;
-
-    // Check currently active trades to prevent duplicate positions
-    if (activeTrades.some(t => t.mint === token.mint && t.status !== 'closed')) {
+    if (processedMints.current.has(token.mint) && !isRetrying) {
       return;
     }
 
-    // === ADVANCED RUG DETECTION (Early Filter) ===
-    // This catches obvious scams BEFORE expensive analysis
-    const { detectRug } = await import('../utils/rugDetector');
-    const rugDetection = detectRug(token, config.mode);
+    if (analyzingMints.current.has(token.mint)) {
+      return;
+    }
 
-    if (rugDetection.isRug) {
-      // Don't log rugs during retries to keep console clean
-      if (!isRetrying) {
-        addLog(`🚨 RUG DETECTED: ${token.symbol} - ${rugDetection.reason} (Confidence: ${rugDetection.confidence}%)`);
+    const lastAnalysisAt = analysisCooldowns.current.get(token.mint) || 0;
+    if (!isRetrying && (Date.now() - lastAnalysisAt) < 1000) {
+      return;
+    }
+
+    analyzingMints.current.add(token.mint);
+    analysisCooldowns.current.set(token.mint, Date.now());
+
+    try {
+      // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
+      const timeSinceLastTrade = Date.now() - lastTradeTime;
+      if (timeSinceLastTrade < minTimeBetweenTrades) return;
+
+      const openTradesCount = activeTrades.filter(t => t.status === "open").length;
+      if (openTradesCount >= (config.maxConcurrentTrades || 1)) return;
+
+      if (!wallet && !config.isDemo) return;
+
+      // Check currently active trades to prevent duplicate positions
+      if (activeTrades.some(t => t.mint === token.mint && t.status !== 'closed')) {
+        return;
       }
-      processedMints.current.add(token.mint); // Finalized as rug
-      return;
-    }
+
+      // === ADVANCED RUG DETECTION (Early Filter) ===
+      // This catches obvious scams BEFORE expensive analysis
+      const { detectRug } = await import('../utils/rugDetector');
+      const rugDetection = detectRug(token, config.mode);
+
+      if (rugDetection.isRug) {
+        // Don't log rugs during retries to keep console clean
+        if (!isRetrying) {
+          addLog(`🚨 RUG DETECTED: ${token.symbol} - ${rugDetection.reason} (Confidence: ${rugDetection.confidence}%)`);
+        }
+        processedMints.current.add(token.mint); // Finalized as rug
+        return;
+      }
 
     // Log warnings but don't reject (for high-risk mode)
-    if (rugDetection.warnings.length > 0) {
-      rugDetection.warnings.forEach(warning => {
-        addLog(`⚠️ ${token.symbol}: ${warning}`);
-      });
-    }
+      if (rugDetection.warnings.length > 0) {
+        rugDetection.warnings.forEach(warning => {
+          addLog(`⚠️ ${token.symbol}: ${warning}`);
+        });
+      }
 
     // Safety check: Don't buy tokens with suspiciously low liquidity or already crashed
     // Use token data from WebSocket if available (avoids RPC call)
-    const liquidity = token.vSolInBondingCurve || 30;
-    const liquidityGrowth = liquidity - 30; // Initial liquidity is 30 SOL
+      const liquidity = token.vSolInBondingCurve || 30;
+      const liquidityGrowth = liquidity - 30; // Initial liquidity is 30 SOL
 
-    // Reject tokens that have already crashed (negative liquidity growth > 5 SOL)
-    if (liquidityGrowth < -5) {
-      addLog(`🚨 Rejected ${token.symbol}: Liquidity draining (${liquidityGrowth.toFixed(2)} SOL) - likely rug`);
-      return;
-    }
+      // Reject tokens that have already crashed (negative liquidity growth > 5 SOL)
+      if (liquidityGrowth < -5) {
+        addLog(`🚨 Rejected ${token.symbol}: Liquidity draining (${liquidityGrowth.toFixed(2)} SOL) - likely rug`);
+        return;
+      }
 
     // Reject tokens with very low liquidity (honeypot risk)
-    if (liquidity < 1) {
-      addLog(`🚨 Rejected ${token.symbol}: Liquidity too low (${liquidity.toFixed(2)} SOL) - honeypot risk`);
-      return;
-    }
+      if (liquidity < 1) {
+        addLog(`🚨 Rejected ${token.symbol}: Liquidity too low (${liquidity.toFixed(2)} SOL) - honeypot risk`);
+        return;
+      }
 
     // For demo mode with RPC issues, use token data from WebSocket directly
     // This allows trading even when RPC is rate-limited
-    if (config.isDemo && token.vSolInBondingCurve && token.vTokensInBondingCurve) {
-      // We have data from WebSocket, can proceed with analysis using this data
-      // The enhanced analyzer will try to fetch more data but can work with what we have
-    }
+      if (config.isDemo && token.vSolInBondingCurve && token.vTokensInBondingCurve) {
+        // We have data from WebSocket, can proceed with analysis using this data
+        // The enhanced analyzer will try to fetch more data but can work with what we have
+      }
 
     // Auto-stop if balance is critical (ONLY for real trading with real wallet)
     // Demo mode has its own balance management in usePumpTrader
-    const MIN_RESERVE = 0.01; // Reduced from 0.02 to allow more trades
-    const currentBal = balanceRef.current;
-    // Reuse timeSinceLastTrade from line 163
+      const MIN_RESERVE = 0.01; // Reduced from 0.02 to allow more trades
+      const currentBal = balanceRef.current;
+      // Reuse timeSinceLastTrade from line 163
 
-    if (!config.isDemo && wallet) {
-      // IMPORTANT: If balance is still -1, it means the RPC fetch hasn't returned yet.
-      // We skip the check to avoid "False Zero" auto-stops.
-      if (currentBal === -1) return;
+      if (!config.isDemo && wallet) {
+        if (currentBal === 0) {
+          // Flicker protection: If balance is exactly 0, it might be a refresh glitch
+          flickerCount.current++;
+        } else if (currentBal > 0) {
+          flickerCount.current = 0; // Reset on good reading
+        }
 
-      // Don't check balance immediately after a trade (give 10s grace period for balance to update)
-      const timeSinceLastTrade = Date.now() - lastTradeTime;
-      if (timeSinceLastTrade < 10000) return;
+        const canTrustBalanceReading = currentBal !== -1 && (timeSinceLastTrade >= 10000) && (currentBal > 0 || flickerCount.current >= 3);
 
-      if (currentBal === 0) {
-        // Flicker protection: If balance is exactly 0, it might be a refresh glitch
-        flickerCount.current++;
-        if (flickerCount.current < 3) return;
-      } else {
-        flickerCount.current = 0; // Reset on good reading
+        // Only auto-stop if balance is truly insufficient for next trade + fees
+        if (canTrustBalanceReading && currentBal < (config.amount + MIN_RESERVE)) {
+          addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(4)} SOL. Auto-stopping bot.`);
+          setConfig((prev: any) => ({ ...prev, isRunning: false }));
+          return;
+        }
       }
-
-      // Only auto-stop if balance is truly insufficient for next trade + fees
-      if (currentBal < (config.amount + MIN_RESERVE)) {
-        addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(4)} SOL. Auto-stopping bot.`);
-        setConfig((prev: any) => ({ ...prev, isRunning: false }));
-        return;
-      }
-    }
 
     // Demo mode: Stop if balance gets too low (prevent burning through all demo SOL)
     if (config.isDemo) {
@@ -278,8 +284,6 @@ export default function Home() {
         addLog(`   Confidence: ${firstSignal.confidence}% | Entry Time: ${new Date(firstSignal.entryTime).toLocaleTimeString()}`);
         const tp2Text = firstSignal.exitStrategy.takeProfit2 ? `, 30% @ ${firstSignal.exitStrategy.takeProfit2}%` : '';
         addLog(`   Exit Strategy: ${firstSignal.exitStrategy.timeBasedExit}s hold | Staged: 50% @ ${firstSignal.exitStrategy.takeProfit}%${tp2Text} | SL ${firstSignal.exitStrategy.stopLoss}%`);
-
-        setSessionMints(prev => new Set(prev).add(token.mint));
 
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -338,8 +342,6 @@ export default function Home() {
         addLog(`⚡ SPEED BUY: ${token.symbol} - ${speedSignal.reason}`);
         addLog(`   Confidence: ${speedSignal.confidence}% | Momentum: ${speedSignal.momentum.toFixed(2)} SOL/min`);
         addLog(`   Exit Strategy: TP ${speedSignal.exitStrategy.takeProfit}% | SL ${speedSignal.exitStrategy.stopLoss}% | Max Hold: ${speedSignal.exitStrategy.maxHoldTime}s`);
-
-        setSessionMints(prev => new Set(prev).add(token.mint));
 
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -402,7 +404,6 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
@@ -437,7 +438,6 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
@@ -488,7 +488,6 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          setSessionMints(prev => new Set(prev).add(token.mint));
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
             ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
             : undefined;
@@ -560,10 +559,13 @@ export default function Home() {
             holderCount: 100,
             deployerHoldings: 10,
             top10Concentration: 40,
-            volume24h: 5,
-            buySellRatio: 0.7,
+            observedVolume: 5,
+            buyPressure: 0.7,
             bondingCurveVelocity: 0.5,
             liquidityDepth: token.vSolInBondingCurve || 30,
+            tradeCount: 0,
+            uniqueTraderCount: 0,
+            priceChangePercent: 0,
             contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
           }
         };
@@ -651,9 +653,12 @@ export default function Home() {
       // Log enhanced analysis results
       addLog(`✅ APPROVED: ${token.symbol} - Score: ${analysis.score}/100 (${analysis.riskLevel} risk)`);
       addLog(`   📊 Bonding Curve: ${analysis.bondingCurveProgress.toFixed(1)}% | Market Cap: ${analysis.marketCap.toFixed(1)} SOL`);
-      addLog(`   👥 Holders: ${analysis.metrics.holderCount} | Deployer: ${analysis.metrics.deployerHoldings.toFixed(1)}% | Top 10: ${analysis.metrics.top10Concentration.toFixed(1)}%`);
-      addLog(`   💰 Volume: ${analysis.metrics.volume24h.toFixed(1)} SOL | Buy Ratio: ${(analysis.metrics.buySellRatio * 100).toFixed(0)}%`);
-      addLog(`   ⚡ Velocity: ${analysis.metrics.bondingCurveVelocity.toFixed(2)}%/min | Liquidity: ${analysis.metrics.liquidityDepth.toFixed(1)} SOL`);
+      const deployerHoldingsText = analysis.metrics.deployerHoldings >= 0
+        ? `${analysis.metrics.deployerHoldings.toFixed(1)}%`
+        : 'N/A';
+      addLog(`   👥 Holders: ${analysis.metrics.holderCount} | Deployer: ${deployerHoldingsText} | Top 10: ${analysis.metrics.top10Concentration.toFixed(1)}%`);
+      addLog(`   💰 Observed Vol: ${analysis.metrics.observedVolume.toFixed(1)} SOL | Buy Pressure: ${(analysis.metrics.buyPressure * 100).toFixed(0)}% | Trades: ${analysis.metrics.tradeCount}`);
+      addLog(`   ⚡ Velocity: ${analysis.metrics.bondingCurveVelocity.toFixed(2)}%/min | Liquidity: ${analysis.metrics.liquidityDepth.toFixed(1)} SOL | Price Δ: ${analysis.metrics.priceChangePercent.toFixed(1)}%`);
 
       if (analysis.strengths.length > 0) {
         analysis.strengths.forEach(s => addLog(`   ✓ ${s}`));
@@ -690,8 +695,6 @@ export default function Home() {
       positionSize = Math.max(positionSize, config.amount * 0.3); // Never less than 0.3x base
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
-      setSessionMints(prev => new Set(prev).add(token.mint));
-
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
         ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
         : undefined;
@@ -724,7 +727,6 @@ export default function Home() {
       // Custom mode: User has full control, proceed if they've configured it
       // Other modes: Proceed if not in safe mode
       if (config.mode === 'custom' || config.mode !== 'safe') {
-        setSessionMints(prev => new Set(prev).add(token.mint));
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
@@ -747,6 +749,11 @@ export default function Home() {
 
         await buyToken(token.mint, token.symbol, config.amount, dynamicSlippage, initialPrice, exitStrategy);
       }
+    }
+    } catch (outerError: any) {
+      addLog(`❌ Processing Error for ${token.symbol}: ${outerError.message}`);
+    } finally {
+      analyzingMints.current.delete(token.mint);
     }
   }, [config.isRunning, config.isDemo, config.mode, config.amount, config.heliusKey, wallet, activeTrades, tradeHistory, buyToken, realBalance, connection, addLog]);
 

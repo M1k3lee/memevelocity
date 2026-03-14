@@ -174,11 +174,11 @@ export const metadataCache = new Map<string, { name: string, symbol: string, uri
 
 export const getTokenMetadata = async (mintAddress: string, heliusKey?: string): Promise<{ name: string, symbol: string, uri: string }> => {
     if (metadataCache.has(mintAddress)) return metadataCache.get(mintAddress)!;
-    if (!heliusKey) return { name: "Unknown", symbol: "???", uri: "" };
+    if (!heliusKey) return { name: "", symbol: "", uri: "" };
 
-    if (isCircuitBroken()) return { name: "RPC Blocked", symbol: "BLOCK", uri: "" };
+    if (isCircuitBroken()) return { name: "", symbol: "", uri: "" };
     const coolDownUntil = rateLimitCoolDowns.get(mintAddress) || 0;
-    if (Date.now() < coolDownUntil) return { name: "Cooling Down", symbol: "...", uri: "" };
+    if (Date.now() < coolDownUntil) return { name: "", symbol: "", uri: "" };
 
     try {
         const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${heliusKey}`, {
@@ -192,19 +192,19 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string):
         if (response.status === 429) {
             handleRpcError('getTokenMetadata (429)', null);
             rateLimitCoolDowns.set(mintAddress, Date.now() + 30000);
-            return { name: "Rate Limited", symbol: "429", uri: "" };
+            return { name: "", symbol: "", uri: "" };
         }
         if (response.status === 403) {
             handleRpcError('getTokenMetadata (403)', null);
             rateLimitCoolDowns.set(mintAddress, Date.now() + 60000);
-            return { name: "Forbidden", symbol: "403", uri: "" };
+            return { name: "", symbol: "", uri: "" };
         }
 
         const data = await response.json();
         if (data.result && data.result.content && data.result.content.metadata) {
             const meta = {
-                name: data.result.content.metadata.name || "Real Token",
-                symbol: data.result.content.metadata.symbol || "REAL",
+                name: data.result.content.metadata.name || "",
+                symbol: data.result.content.metadata.symbol || "",
                 uri: data.result.content.json_uri || ""
             };
             metadataCache.set(mintAddress, meta);
@@ -213,7 +213,7 @@ export const getTokenMetadata = async (mintAddress: string, heliusKey?: string):
     } catch (e) {
         console.error("Error fetching metadata:", e);
     }
-    return { name: "Real Token", symbol: "REAL", uri: "" };
+    return { name: "", symbol: "", uri: "" };
 };
 
 export const getBondingCurveAddress = (mintAddress: string) => {
@@ -236,9 +236,24 @@ export const getHolderStats = async (mintAddress: string, conn: Connection = con
         const totalSupply = supplyResponse.value.uiAmount || 0;
         const bondingCurve = getBondingCurveAddress(mintAddress).toBase58();
 
+        const ownerEntries = await Promise.all(largestAccounts.value.map(async (acc) => {
+            try {
+                const accountInfo = await conn.getParsedAccountInfo(acc.address);
+                if (!accountInfo.value || typeof accountInfo.value.data === 'string') {
+                    return [acc.address.toBase58(), null] as const;
+                }
+
+                const parsed = accountInfo.value.data as any;
+                return [acc.address.toBase58(), parsed.parsed?.info?.owner || null] as const;
+            } catch {
+                return [acc.address.toBase58(), null] as const;
+            }
+        }));
+        const ownerMap = new Map(ownerEntries);
+
         let top10Sum = 0;
         let whaleCount = 0;
-        const userAccounts = largestAccounts.value.filter(acc => acc.address.toString() !== bondingCurve);
+        const userAccounts = largestAccounts.value.filter(acc => ownerMap.get(acc.address.toBase58()) !== bondingCurve);
         const top10 = userAccounts.slice(0, 10);
 
         for (const acc of top10) {
@@ -249,8 +264,9 @@ export const getHolderStats = async (mintAddress: string, conn: Connection = con
 
         const top10Concentration = totalSupply > 0 ? (top10Sum / totalSupply) * 100 : 0;
         const largestHolderPercentage = (top10.length > 0 && totalSupply > 0) ? (top10[0].uiAmount || 0) / totalSupply * 100 : 0;
+        const largestHolderOwner = top10.length > 0 ? (ownerMap.get(top10[0].address.toBase58()) || null) : null;
 
-        return { top10Concentration, whaleCount, topHolders: top10, largestHolderPercentage };
+        return { top10Concentration, whaleCount, topHolders: top10, largestHolderPercentage, largestHolderOwner, totalSupply };
     } catch (e) {
         console.error("Error fetching holder stats:", e);
         return null;

@@ -139,13 +139,15 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
         try {
             if (isDemo) {
+                const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
+                const soldTokenAmount = (trade.amountTokens || 0) * sellFraction;
                 const sellPrice = trade.currentPrice || 0;
-                const costBasis = (trade.buyPrice || 0) * (trade.amountTokens || 0) * (amountPercent / 100);
+                const costBasis = (trade.buyPrice || 0) * soldTokenAmount;
 
                 const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 120000);
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
-                const rawRevenue = (trade.amountTokens || 0) * effectiveSellPrice * (amountPercent / 100);
+                const rawRevenue = soldTokenAmount * effectiveSellPrice;
                 const revenue = rawRevenue * 0.97; // 3% friction
                 const profit = revenue - costBasis;
 
@@ -172,6 +174,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         return [closedTrade, ...prev].slice(0, 100);
                     });
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
+                } else {
+                    const remainingFraction = Math.max(0, 1 - sellFraction);
+                    setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                        ...t,
+                        status: "open",
+                        amountTokens: (t.amountTokens || 0) * remainingFraction,
+                        amountSolPaid: (t.amountSolPaid || 0) * remainingFraction,
+                        currentPrice: effectiveSellPrice,
+                        pnlPercent: t.buyPrice > 0 ? ((effectiveSellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
+                    } : t));
                 }
 
                 addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Profit: ${profit.toFixed(4)} SOL`);
@@ -367,15 +379,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             return;
                         }
 
-                        // 2. TAKE PROFIT
-                        if (pnl >= strategy.takeProfit) {
-                            updates.set(trade.mint, { status: "selling" });
-                            sellToken(trade.mint, 100);
-                            addLog(`🎉 TAKE PROFIT: ${trade.symbol} hit +${pnl.toFixed(2)}% (Target: +${strategy.takeProfit}%)`);
-                            return;
-                        }
-
-                        // 3. TIME LIMIT / STAGNATION (For GOD MODE / SNIPER)
+                        // 2. TIME LIMIT / STAGNATION (For GOD MODE / SNIPER)
                         // If holding > maxHoldTime (e.g. 10m) and profit is negligible (<5%), EXIT.
                         // Don't hold dead bags.
                         if (strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {

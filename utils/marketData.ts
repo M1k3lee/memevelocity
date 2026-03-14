@@ -1,0 +1,137 @@
+import { TokenData } from '../components/LiveFeed';
+
+export interface MarketSnapshot {
+    mint: string;
+    symbol: string;
+    name: string;
+    createdAt: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+    currentLiquiditySol: number;
+    currentPrice: number;
+    observedVolumeSol: number;
+    buyVolumeSol: number;
+    sellVolumeSol: number;
+    netFlowSol: number;
+    buyPressure: number;
+    tradeCount: number;
+    buyCount: number;
+    sellCount: number;
+    uniqueTraderCount: number;
+    velocitySolPerMin: number;
+    priceChangePercent: number;
+    lastTradeType: TokenData['txType'];
+}
+
+interface InternalMarketSnapshot extends MarketSnapshot {
+    traderKeys: Set<string>;
+    firstObservedPrice: number;
+}
+
+const snapshots = new Map<string, InternalMarketSnapshot>();
+const MAX_TRACKED_MINTS = 400;
+const SNAPSHOT_TTL_MS = 30 * 60 * 1000;
+
+function cloneSnapshot(snapshot: InternalMarketSnapshot): MarketSnapshot {
+    const { traderKeys, firstObservedPrice, ...publicSnapshot } = snapshot;
+    return publicSnapshot;
+}
+
+function normalizeSolValue(value?: number): number {
+    if (!value || Number.isNaN(value)) return 0;
+    return value > 1_000_000 ? value / 1_000_000_000 : value;
+}
+
+function calculatePrice(liquiditySol: number, virtualTokens: number): number {
+    if (!liquiditySol || !virtualTokens) return 0;
+    return (liquiditySol / virtualTokens) * 1_000_000;
+}
+
+function pruneSnapshots(now: number) {
+    for (const [mint, snapshot] of snapshots.entries()) {
+        if ((now - snapshot.lastSeenAt) > SNAPSHOT_TTL_MS) {
+            snapshots.delete(mint);
+        }
+    }
+
+    if (snapshots.size <= MAX_TRACKED_MINTS) return;
+
+    const ordered = [...snapshots.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt);
+    for (const [mint] of ordered.slice(0, snapshots.size - MAX_TRACKED_MINTS)) {
+        snapshots.delete(mint);
+    }
+}
+
+export function recordMarketEvent(token: TokenData): MarketSnapshot {
+    const now = token.timestamp || Date.now();
+    pruneSnapshots(now);
+
+    const liquiditySol = normalizeSolValue(token.vSolInBondingCurve);
+    const currentPrice = calculatePrice(liquiditySol, token.vTokensInBondingCurve);
+    const existing = snapshots.get(token.mint);
+    const previousLiquidity = existing?.currentLiquiditySol ?? null;
+
+    let tradeVolume = 0;
+    if (token.txType === 'create') {
+        tradeVolume = Math.max(0, normalizeSolValue(token.initialBuy) || Math.max(0, liquiditySol - 30));
+    } else if (previousLiquidity !== null) {
+        tradeVolume = Math.max(0, Math.abs(liquiditySol - previousLiquidity));
+    } else {
+        tradeVolume = Math.max(0, Math.abs(liquiditySol - 30));
+    }
+
+    const traderKeys = existing?.traderKeys || new Set<string>();
+    if (token.traderPublicKey && token.traderPublicKey !== 'SIM') {
+        traderKeys.add(token.traderPublicKey);
+    }
+
+    const snapshot: InternalMarketSnapshot = {
+        mint: token.mint,
+        symbol: token.symbol || existing?.symbol || '???',
+        name: token.name || existing?.name || 'Unknown',
+        createdAt: existing?.createdAt || token.timestamp || now,
+        firstSeenAt: existing?.firstSeenAt || now,
+        lastSeenAt: now,
+        currentLiquiditySol: liquiditySol,
+        currentPrice,
+        observedVolumeSol: (existing?.observedVolumeSol || 0) + tradeVolume,
+        buyVolumeSol: (existing?.buyVolumeSol || 0) + (token.txType === 'buy' ? tradeVolume : 0),
+        sellVolumeSol: (existing?.sellVolumeSol || 0) + (token.txType === 'sell' ? tradeVolume : 0),
+        netFlowSol: (existing?.netFlowSol || 0) + (token.txType === 'sell' ? -tradeVolume : tradeVolume),
+        buyPressure: 0,
+        tradeCount: (existing?.tradeCount || 0) + (token.txType === 'create' ? 0 : 1),
+        buyCount: (existing?.buyCount || 0) + (token.txType === 'buy' ? 1 : 0),
+        sellCount: (existing?.sellCount || 0) + (token.txType === 'sell' ? 1 : 0),
+        uniqueTraderCount: traderKeys.size,
+        velocitySolPerMin: 0,
+        priceChangePercent: 0,
+        lastTradeType: token.txType,
+        traderKeys,
+        firstObservedPrice: existing?.firstObservedPrice || currentPrice
+    };
+
+    snapshot.buyPressure = snapshot.observedVolumeSol > 0 ? snapshot.buyVolumeSol / snapshot.observedVolumeSol : 0;
+
+    const observedMinutes = Math.max((snapshot.lastSeenAt - snapshot.firstSeenAt) / 60_000, 0.05);
+    snapshot.velocitySolPerMin = snapshot.observedVolumeSol / observedMinutes;
+
+    if (snapshot.firstObservedPrice > 0 && snapshot.currentPrice > 0) {
+        snapshot.priceChangePercent = ((snapshot.currentPrice - snapshot.firstObservedPrice) / snapshot.firstObservedPrice) * 100;
+    }
+
+    snapshots.set(token.mint, snapshot);
+    return cloneSnapshot(snapshot);
+}
+
+export function getMarketSnapshot(mint: string): MarketSnapshot | null {
+    const snapshot = snapshots.get(mint);
+    return snapshot ? cloneSnapshot(snapshot) : null;
+}
+
+export function clearMarketSnapshot(mint: string): void {
+    snapshots.delete(mint);
+}
+
+export function clearAllMarketSnapshots(): void {
+    snapshots.clear();
+}

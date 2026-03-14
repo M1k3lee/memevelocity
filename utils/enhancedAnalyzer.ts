@@ -1,19 +1,24 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount } from './solanaManager';
+import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getTokenBalance } from './solanaManager';
 import { TokenData } from '../components/LiveFeed';
+import { getMarketSnapshot } from './marketData';
 
 export interface AdvancedConfig {
     minBondingCurve?: number;
     maxBondingCurve?: number;
     minLiquidity?: number;
+    maxLiquidity?: number;
     minHolderCount?: number;
     maxDeployerHoldings?: number;
     minVolume24h?: number;
+    minVolume?: number;
     maxDev?: number;
     maxTop10?: number;
     minVelocity?: number;
     rugCheckStrictness?: 'strict' | 'standard' | 'lenient';
     slippage?: number;
+    requireSocials?: boolean;
+    avoidSnipers?: boolean;
 }
 
 export interface TierScores {
@@ -39,14 +44,17 @@ export interface EnhancedAnalysis {
         holderCount: number;
         deployerHoldings: number; // Percentage
         top10Concentration: number; // Percentage
-        volume24h: number; // SOL
-        buySellRatio: number; // 0-1 (1 = all buys)
+        observedVolume: number; // SOL observed since discovery
+        buyPressure: number; // 0-1 (1 = all observed flow is buys)
         bondingCurveVelocity: number; // % per minute
         liquidityDepth: number; // SOL
+        tradeCount: number;
+        uniqueTraderCount: number;
+        priceChangePercent: number;
         contractSecurity: {
             freezeAuthority: boolean; // true = revoked/null (good)
             mintAuthority: boolean; // true = revoked/null (good)
-            updateAuthority: boolean; // true = revoked/null (good)
+            updateAuthority: boolean; // true = verified immutable, false = active or unverified
         };
     };
 }
@@ -79,6 +87,9 @@ export async function analyzeEnhanced(
 
         const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
         const liquidity = pumpData.vSolInBondingCurve;
+        const marketSnapshot = getMarketSnapshot(token.mint);
+        const observedVolume = marketSnapshot?.observedVolumeSol || 0;
+        const buyPressure = marketSnapshot?.buyPressure || 0;
 
         // Bonding Curve Progress
         const tokenBalance = pumpData.vTokensInBondingCurve;
@@ -102,6 +113,7 @@ export async function analyzeEnhanced(
                 warnings.push(`TIER 0 FAIL: ${tier0.reasons.join(', ')}`);
             }
         }
+        warnings.push(...tier0.warnings);
         strengths.push(...tier0.strengths);
 
         // === TIER 1: LAUNCH TIMING ===
@@ -114,7 +126,7 @@ export async function analyzeEnhanced(
         }
 
         // === TIER 2: HOLDER DISTRIBUTION ===
-        const holderMetrics = await analyzeHolderDistribution(token.mint, connection, heliusKey, bondingCurveProgress);
+        const holderMetrics = await analyzeHolderDistribution(token, connection, heliusKey, bondingCurveProgress);
         const tier2 = calculateTier2(holderMetrics, age);
 
         if (isRunnerMode && tier2.score < 60) {
@@ -131,7 +143,7 @@ export async function analyzeEnhanced(
 
         // === TIER 3: ENGAGEMENT VELOCITY ===
         // We do a basic check here, can't fully replicate Twitter API v2 without key
-        const hasSocials = await checkSocials(metadata.uri);
+        const hasSocials = await checkSocials(metadata.uri || token.uri);
         const tier3 = calculateTier3(hasSocials, metadata, age);
 
         if (isRunnerMode && tier3.score < 35 && config?.rugCheckStrictness === 'strict') {
@@ -152,6 +164,27 @@ export async function analyzeEnhanced(
             }
         }
         strengths.push(...tier4.strengths);
+
+        const filterFailure = applyConfigFilters({
+            config,
+            liquidity,
+            bondingCurveProgress,
+            holderCount: holderMetrics.holderCount,
+            top10Concentration: holderMetrics.top10Concentration,
+            deployerHoldings: holderMetrics.deployerHoldings,
+            observedVolume,
+            curveVelocity,
+            hasSocials,
+            age
+        });
+        if (filterFailure) {
+            reasons.push(filterFailure);
+            return createRejectResult(filterFailure, reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+        }
+
+        if (!marketSnapshot && age > 15) {
+            warnings.push('Observed trade-flow history not yet available');
+        }
 
         // === FINAL DECISION ===
         const totalScore = tier0.score + tier1.score + tier2.score + tier3.score + tier4.score;
@@ -200,10 +233,13 @@ export async function analyzeEnhanced(
                 holderCount: holderMetrics.holderCount,
                 deployerHoldings: holderMetrics.deployerHoldings,
                 top10Concentration: holderMetrics.top10Concentration,
-                volume24h: 0, // Need historical data
-                buySellRatio: 0.7, // Estimated
+                observedVolume,
+                buyPressure,
                 bondingCurveVelocity: curveVelocity,
                 liquidityDepth: liquidity,
+                tradeCount: marketSnapshot?.tradeCount || 0,
+                uniqueTraderCount: marketSnapshot?.uniqueTraderCount || 0,
+                priceChangePercent: marketSnapshot?.priceChangePercent || 0,
                 contractSecurity
             }
         };
@@ -220,12 +256,19 @@ export async function analyzeEnhanced(
 function calculateTier0(token: TokenData, metadata: any, security: any, liquidity: number) {
     let score = 0;
     const reasons: string[] = [];
+    const warnings: string[] = [];
     const strengths: string[] = [];
+    const effectiveName = hasUsableMetadataValue(metadata?.name) ? metadata.name : token.name;
+    const effectiveSymbol = hasUsableMetadataValue(metadata?.symbol) ? metadata.symbol : token.symbol;
+    const usedFeedFallback = !hasUsableMetadataValue(metadata?.name) || !hasUsableMetadataValue(metadata?.symbol);
 
     // 1. Metadata URL Present?
     // Some metadata objects return empty uri, so we check name/symbol validity too
-    if (metadata.name !== 'Unknown' && metadata.name !== 'Real Token') {
+    if (hasUsableMetadataValue(effectiveName) && hasUsableMetadataValue(effectiveSymbol)) {
         score += 20;
+        if (usedFeedFallback) {
+            warnings.push("Metadata API unavailable - using launch feed identity");
+        }
     } else {
         reasons.push("No Metadata / Invalid");
         score -= 1000;
@@ -253,11 +296,11 @@ function calculateTier0(token: TokenData, metadata: any, security: any, liquidit
     }
 
     // 5. Symbol/Name Length
-    if (metadata.symbol && metadata.symbol.length >= 3 && metadata.symbol.length <= 6) {
+    if (effectiveSymbol && effectiveSymbol.length >= 3 && effectiveSymbol.length <= 6) {
         score += 10;
         strengths.push("Optimal Symbol Length");
     }
-    if (metadata.name && metadata.name.length >= 4 && metadata.name.length <= 20) {
+    if (effectiveName && effectiveName.length >= 4 && effectiveName.length <= 20) {
         score += 10;
     }
 
@@ -267,7 +310,7 @@ function calculateTier0(token: TokenData, metadata: any, security: any, liquidit
         score -= 1000;
     }
 
-    return { score, reasons, strengths };
+    return { score, reasons, warnings, strengths };
 }
 
 function calculateTier1(timestamp: number) {
@@ -313,9 +356,11 @@ function calculateTier2(metrics: { holderCount: number, deployerHoldings: number
     else score -= 30;
 
     // 2. Creator Involvement (Deployer Holdings)
-    if (metrics.deployerHoldings < 5) score += 25; // Clean
-    else if (metrics.deployerHoldings < 20) score += 0;
-    else score -= 50; // Creator hoarding
+    if (metrics.deployerHoldings >= 0) {
+        if (metrics.deployerHoldings < 5) score += 25; // Clean
+        else if (metrics.deployerHoldings < 20) score += 0;
+        else score -= 50; // Creator hoarding
+    }
 
     // 3. Concentration
     if (metrics.top10Concentration < 10) score += 20;
@@ -402,11 +447,16 @@ function createRejectResult(
         marketCap,
         tiers: { tier0: 0, tier1: 0, tier2: 0, tier3: 0, tier4: 0, totalScore: 0 },
         metrics: {
-            holderCount: 0, deployerHoldings: 100, top10Concentration: 100,
-            volume24h: 0, buySellRatio: 0, bondingCurveVelocity: 0, liquidityDepth: 0,
+            holderCount: 0, deployerHoldings: -1, top10Concentration: 100,
+            observedVolume: 0, buyPressure: 0, bondingCurveVelocity: 0, liquidityDepth: 0, tradeCount: 0, uniqueTraderCount: 0, priceChangePercent: 0,
             contractSecurity: contractSecurity || { freezeAuthority: false, mintAuthority: false, updateAuthority: false }
         }
     };
+}
+
+function hasUsableMetadataValue(value?: string): boolean {
+    if (!value) return false;
+    return !['Unknown', 'Real Token', 'RPC Blocked', 'Cooling Down', 'Rate Limited', 'Forbidden', '???', 'REAL', 'BLOCK', '...', '429', '403'].includes(value);
 }
 
 async function checkContractSecurity(mintAddress: string, connection: Connection): Promise<{ freezeAuthority: boolean; mintAuthority: boolean; updateAuthority: boolean }> {
@@ -420,7 +470,7 @@ async function checkContractSecurity(mintAddress: string, connection: Connection
         return {
             freezeAuthority: parsed.parsed?.info?.freezeAuthority === null,
             mintAuthority: parsed.parsed?.info?.mintAuthority === null,
-            updateAuthority: true // approximate
+            updateAuthority: false
         };
     } catch { return { freezeAuthority: false, mintAuthority: false, updateAuthority: false }; }
 }
@@ -438,10 +488,10 @@ async function checkSocials(uri: string): Promise<boolean> {
     } catch { return false; }
 }
 
-async function analyzeHolderDistribution(mint: string, conn: Connection, key?: string, curveProgress: number = 0) {
+async function analyzeHolderDistribution(token: TokenData, conn: Connection, key?: string, curveProgress: number = 0) {
     try {
-        const realStats = await getHolderStats(mint, conn);
-        const realCount = await getHolderCount(mint, conn);
+        const realStats = await getHolderStats(token.mint, conn);
+        const realCount = await getHolderCount(token.mint, conn);
 
         let holderCount = realCount || Math.floor(curveProgress * 20); // Fallback
 
@@ -450,12 +500,82 @@ async function analyzeHolderDistribution(mint: string, conn: Connection, key?: s
             if (realStats.top10Concentration < 10) holderCount = Math.max(holderCount, 200);
         }
 
+        let deployerHoldings = -1;
+        if (realStats?.totalSupply && token.traderPublicKey && token.traderPublicKey !== 'SIM') {
+            const creatorBalance = await getTokenBalance(token.traderPublicKey, token.mint, conn);
+            deployerHoldings = Math.max(0, Math.min(100, (creatorBalance / realStats.totalSupply) * 100));
+        }
+
         return {
             holderCount,
-            deployerHoldings: realStats ? realStats.largestHolderPercentage : 50, // Pessimistic fallback
+            deployerHoldings,
             top10Concentration: realStats ? realStats.top10Concentration : 90
         };
     } catch {
-        return { holderCount: 5, deployerHoldings: 50, top10Concentration: 90 };
+        return { holderCount: 5, deployerHoldings: -1, top10Concentration: 90 };
     }
+}
+
+function applyConfigFilters({
+    config,
+    liquidity,
+    bondingCurveProgress,
+    holderCount,
+    top10Concentration,
+    deployerHoldings,
+    observedVolume,
+    curveVelocity,
+    hasSocials,
+    age
+}: {
+    config?: AdvancedConfig;
+    liquidity: number;
+    bondingCurveProgress: number;
+    holderCount: number;
+    top10Concentration: number;
+    deployerHoldings: number;
+    observedVolume: number;
+    curveVelocity: number;
+    hasSocials: boolean;
+    age: number;
+}): string | null {
+    if (!config) return null;
+
+    if (config.minLiquidity !== undefined && liquidity < config.minLiquidity) {
+        return `Below configured liquidity floor (${liquidity.toFixed(1)} < ${config.minLiquidity} SOL)`;
+    }
+    if (config.maxLiquidity !== undefined && liquidity > config.maxLiquidity) {
+        return `Above configured liquidity ceiling (${liquidity.toFixed(1)} > ${config.maxLiquidity} SOL)`;
+    }
+    if (config.minHolderCount !== undefined && holderCount < config.minHolderCount) {
+        return `Below configured holder minimum (${holderCount} < ${config.minHolderCount})`;
+    }
+    if (config.maxTop10 !== undefined && top10Concentration > config.maxTop10) {
+        return `Top 10 concentration too high (${top10Concentration.toFixed(1)}% > ${config.maxTop10}%)`;
+    }
+
+    const maxDevHoldings = config.maxDeployerHoldings ?? config.maxDev;
+    if (maxDevHoldings !== undefined && deployerHoldings >= 0 && deployerHoldings > maxDevHoldings) {
+        return `Creator holdings too high (${deployerHoldings.toFixed(1)}% > ${maxDevHoldings}%)`;
+    }
+
+    if (config.minBondingCurve !== undefined && bondingCurveProgress < config.minBondingCurve) {
+        return `Too early on curve (${bondingCurveProgress.toFixed(1)}% < ${config.minBondingCurve}%)`;
+    }
+    if (config.maxBondingCurve !== undefined && bondingCurveProgress > config.maxBondingCurve) {
+        return `Too late on curve (${bondingCurveProgress.toFixed(1)}% > ${config.maxBondingCurve}%)`;
+    }
+
+    const minObservedVolume = config.minVolume24h ?? config.minVolume;
+    if (minObservedVolume !== undefined && age > 15 && observedVolume < minObservedVolume) {
+        return `Observed volume too low (${observedVolume.toFixed(1)} < ${minObservedVolume} SOL)`;
+    }
+    if (config.minVelocity !== undefined && curveVelocity < config.minVelocity) {
+        return `Curve velocity too low (${curveVelocity.toFixed(2)} < ${config.minVelocity})`;
+    }
+    if (config.requireSocials && !hasSocials) {
+        return 'Required socials missing';
+    }
+
+    return null;
 }

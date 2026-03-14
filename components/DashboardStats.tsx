@@ -84,7 +84,7 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
                         {hasHelius ? "ADVANCED (HELIUS)" : "BASIC (PUBLIC)"}
                     </span>
                     <p className="text-[10px] text-gray-500 mt-1">
-                        {hasHelius ? "Deep holder & rug analysis active" : "Reduced accuracy - Holders estimated"}
+                        {hasHelius ? "Metadata and RPC enrichment active" : "Launch feed + public RPC mode"}
                     </p>
                 </div>
             </div>
