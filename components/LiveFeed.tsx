@@ -116,7 +116,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
     const wsRef = useRef<WebSocket | null>(null);
     const simulationInterval = useRef<NodeJS.Timeout | null>(null);
-    const processedSignatures = useRef<Set<string>>(new Set());
+    const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
     const onTokenDetectedRef = useRef(onTokenDetected);
     const tokenCacheRef = useRef<Map<string, TokenData>>(new Map());
     const trackedMintsRef = useRef<string[]>([]);
@@ -148,11 +148,21 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     }, [tokens]);
 
     // WebSocket logic
+    const scheduleReconnect = (reason: string) => {
+        if (reconnectTimeout.current || paused || isSimulating) return;
+        setLastError(reason);
+        reconnectTimeout.current = setTimeout(() => {
+            reconnectTimeout.current = null;
+            connectWs();
+        }, 3000);
+    };
+
     const connectWs = () => {
         if (isSimulating) { setStatus("simulating"); return; }
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
         setStatus("connecting");
+        setLastError("");
         try {
             // PumpPortal is the launch-discovery feed; Helius remains RPC-only elsewhere.
             const url = 'wss://pumpportal.fun/api/data';
@@ -161,6 +171,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
             ws.onopen = () => {
                 setStatus("connected");
+                setLastError("");
                 ws.send(JSON.stringify({ method: "subscribeNewToken" }));
             };
 
@@ -171,11 +182,23 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     if (data.mint) {
                         processMarketEvent(normalizeTokenEvent(data, Date.now()));
                     }
-                } catch (e) { }
+                } catch (e: any) {
+                    setLastError(`Feed parse error: ${e?.message || 'unknown error'}`);
+                }
             };
-            ws.onclose = () => setStatus("disconnected");
-            ws.onerror = () => setStatus("disconnected");
-        } catch (err) { setStatus("disconnected"); }
+            ws.onclose = () => {
+                wsRef.current = null;
+                setStatus("disconnected");
+                scheduleReconnect("Feed disconnected. Retrying...");
+            };
+            ws.onerror = () => {
+                setStatus("disconnected");
+                scheduleReconnect("Feed connection error. Retrying...");
+            };
+        } catch (err: any) {
+            setStatus("disconnected");
+            scheduleReconnect(err?.message || "Feed connection failed");
+        }
     };
 
     const subscribeToTokenTrades = (mint: string) => {
@@ -253,6 +276,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         } else connectWs();
         return () => {
             if (simulationInterval.current) clearInterval(simulationInterval.current);
+            if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
             trackedMintsRef.current = [];
             subscribedMintsRef.current.clear();
         };
@@ -273,6 +301,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                             <span className={`w-1.5 h-1.5 rounded-full ${status === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
                             <span className="text-[9px] text-gray-500 font-mono">{status.toUpperCase()}</span>
                         </div>
+                        {lastError && (
+                            <span className="max-w-[180px] truncate text-[9px] text-yellow-500 font-mono" title={lastError}>
+                                {lastError}
+                            </span>
+                        )}
                         <button onClick={() => setPaused(!paused)} className="hover:text-white text-gray-500 transition-colors">
                             {paused ? <Play size={12} /> : <Pause size={12} />}
                         </button>
