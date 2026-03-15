@@ -132,6 +132,8 @@ export default function Home() {
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
   const pendingRetries = useRef<Set<string>>(new Set());
+  const normalAnalysisCooldownMs = 25000;
+  const retryAnalysisCooldownMs = 8000;
 
   useEffect(() => {
     balanceRef.current = realBalance;
@@ -149,6 +151,16 @@ export default function Home() {
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) return;
 
+    const scheduleRetry = (waitTime: number, message: string) => {
+      if (pendingRetries.current.has(token.mint)) {
+        return;
+      }
+
+      pendingRetries.current.add(token.mint);
+      addLog(message);
+      window.setTimeout(() => onTokenDetected(token, true), waitTime);
+    };
+
     if (isRetrying) {
       pendingRetries.current.delete(token.mint);
       addLog(`🔄 Re-analyzing ${token.symbol} (Wait period over)...`);
@@ -164,7 +176,8 @@ export default function Home() {
     }
 
     const lastAnalysisAt = analysisCooldowns.current.get(token.mint) || 0;
-    if (!isRetrying && (Date.now() - lastAnalysisAt) < 1000) {
+    const analysisCooldownMs = isRetrying ? retryAnalysisCooldownMs : normalAnalysisCooldownMs;
+    if ((Date.now() - lastAnalysisAt) < analysisCooldownMs) {
       return;
     }
 
@@ -525,6 +538,19 @@ export default function Home() {
         return;
       }
 
+      const shouldQueueYoungTokenRetry =
+        age < 30 &&
+        config.mode !== 'high' &&
+        config.mode !== 'first' &&
+        config.mode !== 'scalp' &&
+        liquidityGrowth < 0.1 &&
+        momentum < 1.5;
+
+      if (shouldQueueYoungTokenRetry) {
+        scheduleRetry(15000, `â³ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
+        return;
+      }
+
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
         if (liquidityGrowth < 0.1 && momentum < 1.5) {
           if (!pendingRetries.current.has(token.mint)) {
@@ -630,6 +656,17 @@ export default function Home() {
         if (analysis.warnings.length > 0) {
           analysis.warnings.forEach(w => addLog(`   ⚠️ ${w}`));
         }
+        return;
+      }
+
+      const shouldRetryEarlyAnalysis =
+        !analysis.passed &&
+        analysis.reasons.some(r => r.includes('Too early')) &&
+        age < 60;
+
+      if (shouldRetryEarlyAnalysis) {
+        const waitTime = isRetrying ? 20000 : 15000;
+        scheduleRetry(waitTime, `â³ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
         return;
       }
 

@@ -7,6 +7,19 @@ import { recordMarketEvent } from '../utils/marketData';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 
+function hasUsableIdentity(token: TokenData): boolean {
+    const symbol = token.symbol?.trim();
+    const name = token.name?.trim();
+
+    return Boolean(
+        symbol &&
+        name &&
+        symbol !== '???' &&
+        name !== '???' &&
+        name !== 'Unknown'
+    );
+}
+
 // 🗂️ ITEM COMPONENTS - Redesigned for Vertical Space
 const JunkItem = memo(({ token, reason }: { token: TokenData, reason: string }) => (
     <div className="flex items-center justify-between p-3 mb-2 bg-red-500/5 border border-red-500/10 rounded group hover:bg-red-500/10 transition-all">
@@ -119,6 +132,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
     const onTokenDetectedRef = useRef(onTokenDetected);
     const tokenCacheRef = useRef<Map<string, TokenData>>(new Map());
+    const analysisDispatchRef = useRef<Map<string, { lastDispatchedAt: number; lastLiquidity: number }>>(new Map());
     const trackedMintsRef = useRef<string[]>([]);
     const subscribedMintsRef = useRef<Set<string>>(new Set());
     const MAX_TRACKED_MINTS = 200;
@@ -142,7 +156,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         tokens.slice(0, 100).forEach(token => {
             const rugCheck = detectRug(token, 'medium');
             if (rugCheck.isRug) _junkyard.push({ token, reason: rugCheck.reason || 'Rug Detected' });
-            else if ((token.vSolInBondingCurve || 0) > 35 && rugCheck.warnings.length === 0) _gems.push(token);
+            else if (hasUsableIdentity(token) && (token.vSolInBondingCurve || 0) > 35 && rugCheck.warnings.length === 0) _gems.push(token);
             else _stream.push({ token, rugCheck });
         });
 
@@ -228,6 +242,41 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         return merged;
     };
 
+    const shouldDispatchAnalysis = (token: TokenData) => {
+        const now = Date.now();
+        const currentLiquidity = token.vSolInBondingCurve || 0;
+        const previous = analysisDispatchRef.current.get(token.mint);
+
+        if (token.txType === "create" || !previous) {
+            analysisDispatchRef.current.set(token.mint, {
+                lastDispatchedAt: now,
+                lastLiquidity: currentLiquidity
+            });
+            return true;
+        }
+
+        if ((now - token.timestamp) >= 120000) {
+            return false;
+        }
+
+        const liquidityDelta = Math.abs(currentLiquidity - previous.lastLiquidity);
+        const relativeLiquidityDelta = previous.lastLiquidity > 0
+            ? liquidityDelta / previous.lastLiquidity
+            : liquidityDelta;
+        const hasMeaningfulMove = liquidityDelta >= 1 || relativeLiquidityDelta >= 0.08;
+        const cooledDown = (now - previous.lastDispatchedAt) >= 20000;
+
+        if (!hasMeaningfulMove || !cooledDown) {
+            return false;
+        }
+
+        analysisDispatchRef.current.set(token.mint, {
+            lastDispatchedAt: now,
+            lastLiquidity: currentLiquidity
+        });
+        return true;
+    };
+
     const processMarketEvent = (token: TokenData) => {
         const mergedToken = mergeToken(token);
         recordMarketEvent(mergedToken);
@@ -236,14 +285,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             subscribeToTokenTrades(mergedToken.mint);
         }
 
-        const rugCheck = detectRug(token, 'medium');
+        const rugCheck = detectRug(mergedToken, 'medium');
         let type: 'gem' | 'junk' | 'stream' = 'stream';
         let detail = `${mergedToken.txType.toUpperCase()}: ${mergedToken.symbol}`;
 
         if (mergedToken.txType === "create" && rugCheck.isRug) {
             type = 'junk';
             detail = `🚩 INCINERATED: ${mergedToken.symbol} - ${rugCheck.reason}`;
-        } else if (mergedToken.txType === "create" && (mergedToken.vSolInBondingCurve || 0) > 35) {
+        } else if (mergedToken.txType === "create" && hasUsableIdentity(mergedToken) && (mergedToken.vSolInBondingCurve || 0) > 35) {
             type = 'gem';
             detail = `💎 GEM DETECTED: ${mergedToken.symbol} - High Liquidity (${mergedToken.vSolInBondingCurve.toFixed(1)} SOL)`;
         }
@@ -254,7 +303,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
         setTokens(prev => [mergedToken, ...prev.filter(t => t.mint !== mergedToken.mint)].slice(0, 150));
 
-        if (mergedToken.txType === "create" || (Date.now() - mergedToken.timestamp) < 120000) {
+        if (shouldDispatchAnalysis(mergedToken)) {
             onTokenDetectedRef.current(mergedToken);
         }
     };
@@ -283,6 +332,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 wsRef.current.close();
                 wsRef.current = null;
             }
+            analysisDispatchRef.current.clear();
             trackedMintsRef.current = [];
             subscribedMintsRef.current.clear();
         };

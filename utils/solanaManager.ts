@@ -31,6 +31,45 @@ export const createConnection = (heliusKey?: string) => {
 // Initial connection
 let connection = createConnection();
 
+type CacheEntry<T> = {
+    value: T;
+    expiresAt: number;
+};
+
+const tokenBalanceCache = new Map<string, CacheEntry<number>>();
+const holderCountCache = new Map<string, CacheEntry<number | null>>();
+const holderStatsCache = new Map<string, CacheEntry<any>>();
+const pendingTokenBalances = new Map<string, Promise<number>>();
+const pendingHolderCounts = new Map<string, Promise<number | null>>();
+const pendingHolderStats = new Map<string, Promise<any>>();
+
+const getCachedValue = <T>(cache: Map<string, CacheEntry<T>>, key: string): { hit: boolean; value?: T } => {
+    const entry = cache.get(key);
+    if (!entry) return { hit: false };
+    if (Date.now() > entry.expiresAt) {
+        cache.delete(key);
+        return { hit: false };
+    }
+    return { hit: true, value: entry.value };
+};
+
+const setCachedValue = <T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, ttlMs: number) => {
+    cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+};
+
+const withPendingRequest = async <T>(
+    pending: Map<string, Promise<T>>,
+    key: string,
+    request: () => Promise<T>
+): Promise<T> => {
+    const existing = pending.get(key);
+    if (existing) return existing;
+
+    const next = request().finally(() => pending.delete(key));
+    pending.set(key, next);
+    return next;
+};
+
 export const setGlobalConnection = (newConn: Connection) => {
     connection = newConn;
 };
@@ -70,38 +109,65 @@ export const recoverWallet = (privateKeyString: string) => {
 };
 
 export const getTokenBalance = async (walletPubKey: string, mintAddress: string, conn: Connection = connection) => {
-    try {
-        const userPub = new PublicKey(walletPubKey);
-        const accounts = await conn.getParsedTokenAccountsByOwner(userPub, { mint: new PublicKey(mintAddress) });
+    const cacheKey = `${walletPubKey}:${mintAddress}`;
+    const cached = getCachedValue(tokenBalanceCache, cacheKey);
+    if (cached.hit) return cached.value ?? 0;
 
-        if (accounts.value.length === 0) return 0;
-        let total = 0;
-        for (const acc of accounts.value) {
-            total += acc.account.data.parsed.info.tokenAmount.uiAmount;
+    if (isCircuitBroken()) return cached.value ?? 0;
+
+    return withPendingRequest(pendingTokenBalances, cacheKey, async () => {
+        try {
+            const userPub = new PublicKey(walletPubKey);
+            const accounts = await conn.getParsedTokenAccountsByOwner(userPub, { mint: new PublicKey(mintAddress) });
+
+            if (accounts.value.length === 0) {
+                setCachedValue(tokenBalanceCache, cacheKey, 0, 15000);
+                return 0;
+            }
+
+            let total = 0;
+            for (const acc of accounts.value) {
+                total += acc.account.data.parsed.info.tokenAmount.uiAmount;
+            }
+
+            setCachedValue(tokenBalanceCache, cacheKey, total, 15000);
+            return total;
+        } catch (error) {
+            handleRpcError('getTokenBalance', error);
+            console.error("Error fetching token balance:", error);
+            const fallback = cached.value ?? 0;
+            setCachedValue(tokenBalanceCache, cacheKey, fallback, 5000);
+            return fallback;
         }
-        return total;
-    } catch (error) {
-        console.error("Error fetching token balance:", error);
-        return 0;
-    }
+    });
 };
 
 export const getHolderCount = async (mintAddress: string, conn: Connection = connection): Promise<number | null> => {
-    try {
-        const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-        const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
-        const fetchHolders = (async () => {
-            const accounts = await conn.getProgramAccounts(TOKEN_PROGRAM_ID, {
-                filters: [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mintAddress } }]
-            });
-            return accounts.length;
-        })();
-        const result = await Promise.race([fetchHolders, timeout]);
-        return result;
-    } catch (error) {
-        console.warn("Error fetching holder count:", error);
-        return null;
-    }
+    const cached = getCachedValue(holderCountCache, mintAddress);
+    if (cached.hit) return cached.value ?? null;
+
+    if (isCircuitBroken()) return cached.value ?? null;
+
+    return withPendingRequest(pendingHolderCounts, mintAddress, async () => {
+        try {
+            const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+            const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+            const fetchHolders = (async () => {
+                const accounts = await conn.getProgramAccounts(TOKEN_PROGRAM_ID, {
+                    filters: [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mintAddress } }]
+                });
+                return accounts.length;
+            })();
+            const result = await Promise.race([fetchHolders, timeout]);
+            setCachedValue(holderCountCache, mintAddress, result, result === null ? 10000 : 45000);
+            return result;
+        } catch (error) {
+            handleRpcError('getHolderCount', error);
+            console.warn("Error fetching holder count:", error);
+            setCachedValue(holderCountCache, mintAddress, null, 10000);
+            return null;
+        }
+    });
 };
 
 // Rate limit and error tracking
@@ -227,50 +293,69 @@ export const getBondingCurveAddress = (mintAddress: string) => {
 };
 
 export const getHolderStats = async (mintAddress: string, conn: Connection = connection) => {
-    try {
-        const mint = new PublicKey(mintAddress);
-        const largestAccounts = await conn.getTokenLargestAccounts(mint);
-        if (!largestAccounts || !largestAccounts.value) return null;
+    const cached = getCachedValue(holderStatsCache, mintAddress);
+    if (cached.hit) return cached.value ?? null;
 
-        const supplyResponse = await conn.getTokenSupply(mint);
-        const totalSupply = supplyResponse.value.uiAmount || 0;
-        const bondingCurve = getBondingCurveAddress(mintAddress).toBase58();
+    if (isCircuitBroken()) return cached.value ?? null;
 
-        const ownerEntries = await Promise.all(largestAccounts.value.map(async (acc) => {
-            try {
-                const accountInfo = await conn.getParsedAccountInfo(acc.address);
-                if (!accountInfo.value || typeof accountInfo.value.data === 'string') {
+    return withPendingRequest(pendingHolderStats, mintAddress, async () => {
+        try {
+            const mint = new PublicKey(mintAddress);
+            const largestAccounts = await conn.getTokenLargestAccounts(mint);
+            if (!largestAccounts || !largestAccounts.value) {
+                setCachedValue(holderStatsCache, mintAddress, null, 10000);
+                return null;
+            }
+
+            const supplyResponse = await conn.getTokenSupply(mint);
+            const totalSupply = supplyResponse.value.uiAmount || 0;
+            const bondingCurve = getBondingCurveAddress(mintAddress).toBase58();
+            const relevantAccounts = largestAccounts.value.slice(0, 15);
+
+            const ownerEntries = await Promise.all(relevantAccounts.map(async (acc) => {
+                try {
+                    const accountInfo = await conn.getParsedAccountInfo(acc.address);
+                    if (!accountInfo.value || typeof accountInfo.value.data === 'string') {
+                        return [acc.address.toBase58(), null] as const;
+                    }
+
+                    const parsed = accountInfo.value.data as any;
+                    return [acc.address.toBase58(), parsed.parsed?.info?.owner || null] as const;
+                } catch {
                     return [acc.address.toBase58(), null] as const;
                 }
+            }));
+            const ownerMap = new Map(ownerEntries);
 
-                const parsed = accountInfo.value.data as any;
-                return [acc.address.toBase58(), parsed.parsed?.info?.owner || null] as const;
-            } catch {
-                return [acc.address.toBase58(), null] as const;
+            let top10Sum = 0;
+            let whaleCount = 0;
+            const userAccounts = relevantAccounts.filter(acc => ownerMap.get(acc.address.toBase58()) !== bondingCurve);
+            const top10 = userAccounts.slice(0, 10);
+
+            for (const acc of top10) {
+                const amount = acc.uiAmount || 0;
+                top10Sum += amount;
+                if (totalSupply > 0 && (amount / totalSupply) > 0.01) whaleCount++;
             }
-        }));
-        const ownerMap = new Map(ownerEntries);
 
-        let top10Sum = 0;
-        let whaleCount = 0;
-        const userAccounts = largestAccounts.value.filter(acc => ownerMap.get(acc.address.toBase58()) !== bondingCurve);
-        const top10 = userAccounts.slice(0, 10);
+            const result = {
+                top10Concentration: totalSupply > 0 ? (top10Sum / totalSupply) * 100 : 0,
+                whaleCount,
+                topHolders: top10,
+                largestHolderPercentage: (top10.length > 0 && totalSupply > 0) ? (top10[0].uiAmount || 0) / totalSupply * 100 : 0,
+                largestHolderOwner: top10.length > 0 ? (ownerMap.get(top10[0].address.toBase58()) || null) : null,
+                totalSupply
+            };
 
-        for (const acc of top10) {
-            const amount = acc.uiAmount || 0;
-            top10Sum += amount;
-            if (totalSupply > 0 && (amount / totalSupply) > 0.01) whaleCount++;
+            setCachedValue(holderStatsCache, mintAddress, result, 45000);
+            return result;
+        } catch (e) {
+            handleRpcError('getHolderStats', e);
+            console.error("Error fetching holder stats:", e);
+            setCachedValue(holderStatsCache, mintAddress, null, 10000);
+            return null;
         }
-
-        const top10Concentration = totalSupply > 0 ? (top10Sum / totalSupply) * 100 : 0;
-        const largestHolderPercentage = (top10.length > 0 && totalSupply > 0) ? (top10[0].uiAmount || 0) / totalSupply * 100 : 0;
-        const largestHolderOwner = top10.length > 0 ? (ownerMap.get(top10[0].address.toBase58()) || null) : null;
-
-        return { top10Concentration, whaleCount, topHolders: top10, largestHolderPercentage, largestHolderOwner, totalSupply };
-    } catch (e) {
-        console.error("Error fetching holder stats:", e);
-        return null;
-    }
+    });
 };
 
 export const getConnection = () => connection;

@@ -3,6 +3,15 @@ import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getToken
 import type { TokenData } from '../types/token';
 import { getMarketSnapshot } from './marketData';
 
+type ContractSecurity = {
+    freezeAuthority: boolean;
+    mintAuthority: boolean;
+    updateAuthority: boolean;
+};
+
+const contractSecurityCache = new Map<string, ContractSecurity>();
+const socialCheckCache = new Map<string, { value: boolean; expiresAt: number }>();
+
 export interface AdvancedConfig {
     minBondingCurve?: number;
     maxBondingCurve?: number;
@@ -459,7 +468,10 @@ function hasUsableMetadataValue(value?: string): boolean {
     return !['Unknown', 'Real Token', 'RPC Blocked', 'Cooling Down', 'Rate Limited', 'Forbidden', '???', 'REAL', 'BLOCK', '...', '429', '403'].includes(value);
 }
 
-async function checkContractSecurity(mintAddress: string, connection: Connection): Promise<{ freezeAuthority: boolean; mintAuthority: boolean; updateAuthority: boolean }> {
+async function checkContractSecurity(mintAddress: string, connection: Connection): Promise<ContractSecurity> {
+    const cached = contractSecurityCache.get(mintAddress);
+    if (cached) return cached;
+
     try {
         const mint = new PublicKey(mintAddress);
         const mintInfo = await connection.getParsedAccountInfo(mint);
@@ -467,31 +479,58 @@ async function checkContractSecurity(mintAddress: string, connection: Connection
             return { freezeAuthority: false, mintAuthority: false, updateAuthority: false };
         }
         const parsed = mintInfo.value.data as any;
-        return {
+        const result = {
             freezeAuthority: parsed.parsed?.info?.freezeAuthority === null,
             mintAuthority: parsed.parsed?.info?.mintAuthority === null,
             updateAuthority: false
         };
+        contractSecurityCache.set(mintAddress, result);
+        return result;
     } catch { return { freezeAuthority: false, mintAuthority: false, updateAuthority: false }; }
 }
 
 async function checkSocials(uri: string): Promise<boolean> {
     if (!uri) return false;
+    const cached = socialCheckCache.get(uri);
+    if (cached && Date.now() < cached.expiresAt) {
+        return cached.value;
+    }
+
     try {
+        const parsedUri = new URL(uri);
+        if (parsedUri.protocol !== 'https:') {
+            socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+            return false;
+        }
+
+        // Browser clients on Pages cannot reliably fetch arbitrary metadata origins.
+        if (typeof window !== 'undefined' && parsedUri.origin !== window.location.origin) {
+            socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+            return false;
+        }
+
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 1500);
         const res = await fetch(uri, { signal: controller.signal });
-        if (!res.ok) return false;
+        if (!res.ok) {
+            socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+            return false;
+        }
         const json = await res.json();
         const str = JSON.stringify(json).toLowerCase();
-        return str.includes("twitter.com") || str.includes("t.me") || str.includes("discord");
-    } catch { return false; }
+        const hasSocials = str.includes("twitter.com") || str.includes("t.me") || str.includes("discord");
+        socialCheckCache.set(uri, { value: hasSocials, expiresAt: Date.now() + 300000 });
+        return hasSocials;
+    } catch {
+        socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+        return false;
+    }
 }
 
 async function analyzeHolderDistribution(token: TokenData, conn: Connection, key?: string, curveProgress: number = 0) {
     try {
         const realStats = await getHolderStats(token.mint, conn);
-        const realCount = await getHolderCount(token.mint, conn);
+        const realCount = curveProgress >= 5 ? await getHolderCount(token.mint, conn) : null;
 
         let holderCount = realCount || Math.floor(curveProgress * 20); // Fallback
 
