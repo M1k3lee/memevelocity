@@ -10,7 +10,15 @@ type ContractSecurity = {
 };
 
 const contractSecurityCache = new Map<string, ContractSecurity>();
-const socialCheckCache = new Map<string, { value: boolean; expiresAt: number }>();
+const socialCheckCache = new Map<string, { value: boolean | null; expiresAt: number }>();
+
+type PumpSnapshot = {
+    vTokensInBondingCurve: number;
+    vSolInBondingCurve: number;
+    tokenTotalSupply: number;
+    bondingCurveProgress: number;
+    source: 'rpc' | 'feed';
+};
 
 export interface AdvancedConfig {
     minBondingCurve?: number;
@@ -89,9 +97,15 @@ export async function analyzeEnhanced(
     const isDegenMode = riskMode === 'degen' || riskMode === 'velocity'; // Loose checks, momentum focus
 
     try {
-        const pumpData = await getPumpData(token.mint, connection);
+        const rpcPumpData = await getPumpData(token.mint, connection);
+        const pumpData = rpcPumpData
+            ? { ...rpcPumpData, source: 'rpc' as const }
+            : getFeedPumpData(token);
         if (!pumpData) {
             return createRejectResult('Token not found on bonding curve', reasons, warnings, strengths);
+        }
+        if (pumpData.source === 'feed') {
+            warnings.push('RPC market snapshot unavailable - using launch feed data');
         }
 
         const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
@@ -101,10 +115,7 @@ export async function analyzeEnhanced(
         const buyPressure = marketSnapshot?.buyPressure || 0;
 
         // Bonding Curve Progress
-        const tokenBalance = pumpData.vTokensInBondingCurve;
-        const bondingCurveProgress = Math.max(0, Math.min(100,
-            100 - (((tokenBalance - 206900000) * 100) / 793100000)
-        ));
+        const bondingCurveProgress = pumpData.bondingCurveProgress;
 
         // Get Metadata & Security
         const metadata = await getTokenMetadata(token.mint, heliusKey);
@@ -153,6 +164,9 @@ export async function analyzeEnhanced(
         // === TIER 3: ENGAGEMENT VELOCITY ===
         // We do a basic check here, can't fully replicate Twitter API v2 without key
         const hasSocials = await checkSocials(metadata.uri || token.uri);
+        if (config?.requireSocials && hasSocials === null) {
+            warnings.push('Social verification unavailable in browser build');
+        }
         const tier3 = calculateTier3(hasSocials, metadata, age);
 
         if (isRunnerMode && tier3.score < 35 && config?.rugCheckStrictness === 'strict') {
@@ -381,13 +395,13 @@ function calculateTier2(metrics: { holderCount: number, deployerHoldings: number
     return { score, strengths };
 }
 
-function calculateTier3(hasSocials: boolean, metadata: any, age: number) {
+function calculateTier3(hasSocials: boolean | null, metadata: any, age: number) {
     let score = 0;
     const strengths: string[] = [];
 
     // Can't fully implement Twitter API checks without key
     // Relying on metadata Socials presence
-    if (hasSocials) {
+    if (hasSocials === true) {
         score += 25;
         strengths.push("Verified Socials Detected");
     } else if (metadata.description && metadata.description.length > 50) {
@@ -489,26 +503,33 @@ async function checkContractSecurity(mintAddress: string, connection: Connection
     } catch { return { freezeAuthority: false, mintAuthority: false, updateAuthority: false }; }
 }
 
-async function checkSocials(uri: string): Promise<boolean> {
+async function checkSocials(uri: string): Promise<boolean | null> {
     if (!uri) return false;
     const cached = socialCheckCache.get(uri);
     if (cached && Date.now() < cached.expiresAt) {
         return cached.value;
     }
 
+    let parsedUri: URL;
     try {
-        const parsedUri = new URL(uri);
-        if (parsedUri.protocol !== 'https:') {
-            socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
-            return false;
-        }
+        parsedUri = new URL(uri);
+    } catch {
+        socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+        return false;
+    }
 
-        // Browser clients on Pages cannot reliably fetch arbitrary metadata origins.
-        if (typeof window !== 'undefined' && parsedUri.origin !== window.location.origin) {
-            socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
-            return false;
-        }
+    if (parsedUri.protocol !== 'https:') {
+        socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
+        return false;
+    }
 
+    // Browser clients on Pages cannot reliably fetch arbitrary metadata origins.
+    if (typeof window !== 'undefined' && parsedUri.origin !== window.location.origin) {
+        socialCheckCache.set(uri, { value: null, expiresAt: Date.now() + 300000 });
+        return null;
+    }
+
+    try {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 1500);
         const res = await fetch(uri, { signal: controller.signal });
@@ -522,9 +543,27 @@ async function checkSocials(uri: string): Promise<boolean> {
         socialCheckCache.set(uri, { value: hasSocials, expiresAt: Date.now() + 300000 });
         return hasSocials;
     } catch {
-        socialCheckCache.set(uri, { value: false, expiresAt: Date.now() + 300000 });
-        return false;
+        socialCheckCache.set(uri, { value: null, expiresAt: Date.now() + 300000 });
+        return null;
     }
+}
+
+function getFeedPumpData(token: TokenData): PumpSnapshot | null {
+    if (!token.vSolInBondingCurve || !token.vTokensInBondingCurve) {
+        return null;
+    }
+
+    const bondingCurveProgress = Math.max(0, Math.min(100,
+        100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)
+    ));
+
+    return {
+        vTokensInBondingCurve: token.vTokensInBondingCurve,
+        vSolInBondingCurve: token.vSolInBondingCurve,
+        tokenTotalSupply: 0,
+        bondingCurveProgress,
+        source: 'feed'
+    };
 }
 
 async function analyzeHolderDistribution(token: TokenData, conn: Connection, key?: string, curveProgress: number = 0) {
@@ -575,7 +614,7 @@ function applyConfigFilters({
     deployerHoldings: number;
     observedVolume: number;
     curveVelocity: number;
-    hasSocials: boolean;
+    hasSocials: boolean | null;
     age: number;
 }): string | null {
     if (!config) return null;
@@ -612,7 +651,7 @@ function applyConfigFilters({
     if (config.minVelocity !== undefined && curveVelocity < config.minVelocity) {
         return `Curve velocity too low (${curveVelocity.toFixed(2)} < ${config.minVelocity})`;
     }
-    if (config.requireSocials && !hasSocials) {
+    if (config.requireSocials && hasSocials === false) {
         return 'Required socials missing';
     }
 

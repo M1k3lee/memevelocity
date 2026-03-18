@@ -1,4 +1,5 @@
 import type { TokenData } from '../types/token';
+import { sanitizeTokenIdentity } from './tokenIdentity';
 
 export interface MarketSnapshot {
     mint: string;
@@ -87,8 +88,8 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
 
     const snapshot: InternalMarketSnapshot = {
         mint: token.mint,
-        symbol: token.symbol || existing?.symbol || '???',
-        name: token.name || existing?.name || 'Unknown',
+        symbol: sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(existing?.symbol) || '',
+        name: sanitizeTokenIdentity(token.name) || sanitizeTokenIdentity(existing?.name) || '',
         createdAt: existing?.createdAt || token.timestamp || now,
         firstSeenAt: existing?.firstSeenAt || now,
         lastSeenAt: now,

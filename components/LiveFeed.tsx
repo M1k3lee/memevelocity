@@ -6,112 +6,117 @@ import { detectRug } from '../utils/rugDetector';
 import { recordMarketEvent } from '../utils/marketData';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
+import { getTokenDisplayName, getTokenDisplaySymbol, hasUsableTokenIdentity } from '../utils/tokenIdentity';
 
 function hasUsableIdentity(token: TokenData): boolean {
-    const symbol = token.symbol?.trim();
-    const name = token.name?.trim();
-
-    return Boolean(
-        symbol &&
-        name &&
-        symbol !== '???' &&
-        name !== '???' &&
-        name !== 'Unknown'
-    );
+    return hasUsableTokenIdentity(token.symbol) && hasUsableTokenIdentity(token.name);
 }
 
 // 🗂️ ITEM COMPONENTS - Redesigned for Vertical Space
-const JunkItem = memo(({ token, reason }: { token: TokenData, reason: string }) => (
-    <div className="flex items-center justify-between p-3 mb-2 bg-red-500/5 border border-red-500/10 rounded group hover:bg-red-500/10 transition-all">
-        <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-500/40 group-hover:text-red-500 transition-colors">
-                <Trash2 size={14} />
-            </div>
-            <div className="flex flex-col overflow-hidden">
-                <span className="text-xs font-bold text-red-400 truncate">{token.symbol}</span>
-                <span className="text-[10px] text-red-500/60 truncate">{reason}</span>
-            </div>
-        </div>
-        <div className="text-right flex flex-col items-end">
-            <span className="text-[10px] font-mono text-red-900/50">{new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
-            <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-red-500/30 hover:text-red-500"><ExternalLink size={10} /></a>
-        </div>
-    </div>
-));
+const JunkItem = memo(({ token, reason }: { token: TokenData, reason: string }) => {
+    const symbol = getTokenDisplaySymbol(token);
 
-const StreamItem = memo(({ token, rugCheck }: { token: TokenData, rugCheck: any }) => (
-    <div className="p-4 mb-3 rounded-xl border border-[#222] bg-[#1a1a1a]/40 hover:border-blue-500/30 hover:bg-[#1a1a1a]/60 transition-all group">
-        <div className="flex justify-between items-start mb-2">
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-                    <Zap size={18} />
+    return (
+        <div className="flex items-center justify-between p-3 mb-2 bg-red-500/5 border border-red-500/10 rounded group hover:bg-red-500/10 transition-all">
+            <div className="flex items-center gap-3 overflow-hidden">
+                <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-500/40 group-hover:text-red-500 transition-colors">
+                    <Trash2 size={14} />
                 </div>
-                <div>
-                    <h3 className="text-sm font-bold text-gray-100">{token.symbol}</h3>
-                    <p className="text-[10px] text-gray-500 truncate max-w-[120px]">{token.name}</p>
+                <div className="flex flex-col overflow-hidden">
+                    <span className="text-xs font-bold text-red-400 truncate">{symbol}</span>
+                    <span className="text-[10px] text-red-500/60 truncate">{reason}</span>
                 </div>
             </div>
-            <div className="text-right">
-                <span className="text-[10px] font-mono text-gray-500 block mb-1">
-                    {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </span>
-                <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-blue-500/70 hover:text-blue-400">
-                    Explorer <ExternalLink size={10} />
-                </a>
+            <div className="text-right flex flex-col items-end">
+                <span className="text-[10px] font-mono text-red-900/50">{new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
+                <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-red-500/30 hover:text-red-500"><ExternalLink size={10} /></a>
             </div>
         </div>
-        <div className="flex gap-4 mt-3">
-            <div className="flex-1 bg-black/30 p-2 rounded-lg border border-[#222]">
-                <span className="text-[9px] text-gray-600 block uppercase font-bold tracking-tighter">Liquidity</span>
-                <span className="text-xs font-mono text-blue-400">{(token.vSolInBondingCurve || 0).toFixed(2)} SOL</span>
-            </div>
-            <div className="flex-1 bg-black/30 p-2 rounded-lg border border-[#333]/30">
-                <span className="text-[9px] text-gray-600 block uppercase font-bold tracking-tighter">Risk Score</span>
-                <span className={`text-xs font-mono ${rugCheck.warnings.length === 0 ? 'text-green-500' : 'text-yellow-500'}`}>
-                    {rugCheck.warnings.length === 0 ? 'LOW' : 'MEDIUM'}
-                </span>
-            </div>
-        </div>
-    </div>
-));
+    );
+});
 
-const GemItem = memo(({ token }: { token: TokenData }) => (
-    <div className="p-5 mb-4 rounded-2xl border border-green-500/20 bg-green-500/5 hover:bg-green-500/10 hover:shadow-[0_0_30px_rgba(20,241,149,0.05)] transition-all group relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-            <Diamond size={60} />
-        </div>
-        <div className="flex justify-between items-center mb-4 relative z-10">
-            <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
-                    <Diamond size={24} className="animate-pulse" />
-                </div>
-                <div>
-                    <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-black text-green-400 tracking-tight">{token.symbol}</h3>
-                        <span className="flex h-2 w-2 rounded-full bg-green-500 animate-ping"></span>
+const StreamItem = memo(({ token, rugCheck }: { token: TokenData, rugCheck: any }) => {
+    const symbol = getTokenDisplaySymbol(token);
+    const name = getTokenDisplayName(token);
+
+    return (
+        <div className="p-4 mb-3 rounded-xl border border-[#222] bg-[#1a1a1a]/40 hover:border-blue-500/30 hover:bg-[#1a1a1a]/60 transition-all group">
+            <div className="flex justify-between items-start mb-2">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                        <Zap size={18} />
                     </div>
-                    <p className="text-xs text-green-500/60 font-medium">Verified Liquid Premium</p>
+                    <div>
+                        <h3 className="text-sm font-bold text-gray-100">{symbol}</h3>
+                        <p className="text-[10px] text-gray-500 truncate max-w-[120px]">{name}</p>
+                    </div>
+                </div>
+                <div className="text-right">
+                    <span className="text-[10px] font-mono text-gray-500 block mb-1">
+                        {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                    <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-blue-500/70 hover:text-blue-400">
+                        Explorer <ExternalLink size={10} />
+                    </a>
                 </div>
             </div>
-            <div className="text-right text-[10px] font-mono text-green-300/50">
-                {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            <div className="flex gap-4 mt-3">
+                <div className="flex-1 bg-black/30 p-2 rounded-lg border border-[#222]">
+                    <span className="text-[9px] text-gray-600 block uppercase font-bold tracking-tighter">Liquidity</span>
+                    <span className="text-xs font-mono text-blue-400">{(token.vSolInBondingCurve || 0).toFixed(2)} SOL</span>
+                </div>
+                <div className="flex-1 bg-black/30 p-2 rounded-lg border border-[#333]/30">
+                    <span className="text-[9px] text-gray-600 block uppercase font-bold tracking-tighter">Risk Score</span>
+                    <span className={`text-xs font-mono ${rugCheck.warnings.length === 0 ? 'text-green-500' : 'text-yellow-500'}`}>
+                        {rugCheck.warnings.length === 0 ? 'LOW' : 'MEDIUM'}
+                    </span>
+                </div>
             </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 mb-4 relative z-10">
-            <div className="bg-green-500/10 p-3 rounded-xl border border-green-500/10">
-                <span className="text-[10px] text-green-700 block uppercase font-bold">Reserves</span>
-                <span className="text-sm font-mono text-green-400 font-bold">{(token.vSolInBondingCurve || 0).toFixed(2)} SOL</span>
+    );
+});
+
+const GemItem = memo(({ token }: { token: TokenData }) => {
+    const symbol = getTokenDisplaySymbol(token);
+
+    return (
+        <div className="p-5 mb-4 rounded-2xl border border-green-500/20 bg-green-500/5 hover:bg-green-500/10 hover:shadow-[0_0_30px_rgba(20,241,149,0.05)] transition-all group relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                <Diamond size={60} />
             </div>
-            <div className="bg-green-500/10 p-3 rounded-xl border border-green-500/10 flex flex-col justify-center items-center">
-                <ShieldCheck size={18} className="text-green-500 mb-1" />
-                <span className="text-[9px] text-green-500 font-bold">CONTRACT SAFE</span>
+            <div className="flex justify-between items-center mb-4 relative z-10">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                        <Diamond size={24} className="animate-pulse" />
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-black text-green-400 tracking-tight">{symbol}</h3>
+                            <span className="flex h-2 w-2 rounded-full bg-green-500 animate-ping"></span>
+                        </div>
+                        <p className="text-xs text-green-500/60 font-medium">Verified Liquid Premium</p>
+                    </div>
+                </div>
+                <div className="text-right text-[10px] font-mono text-green-300/50">
+                    {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </div>
             </div>
+            <div className="grid grid-cols-2 gap-3 mb-4 relative z-10">
+                <div className="bg-green-500/10 p-3 rounded-xl border border-green-500/10">
+                    <span className="text-[10px] text-green-700 block uppercase font-bold">Reserves</span>
+                    <span className="text-sm font-mono text-green-400 font-bold">{(token.vSolInBondingCurve || 0).toFixed(2)} SOL</span>
+                </div>
+                <div className="bg-green-500/10 p-3 rounded-xl border border-green-500/10 flex flex-col justify-center items-center">
+                    <ShieldCheck size={18} className="text-green-500 mb-1" />
+                    <span className="text-[9px] text-green-500 font-bold">CONTRACT SAFE</span>
+                </div>
+            </div>
+            <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="block w-full py-2.5 text-center text-xs font-black bg-green-500 text-black rounded-xl hover:bg-green-400 transition-colors relative z-10 shadow-lg shadow-green-500/20">
+                TRADE ON PUMP.FUN
+            </a>
         </div>
-        <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="block w-full py-2.5 text-center text-xs font-black bg-green-500 text-black rounded-xl hover:bg-green-400 transition-colors relative z-10 shadow-lg shadow-green-500/20">
-            TRADE ON PUMP.FUN
-        </a>
-    </div>
-));
+    );
+});
 
 interface LiveFeedProps {
     onTokenDetected: (token: TokenData) => void;
@@ -280,6 +285,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const processMarketEvent = (token: TokenData) => {
         const mergedToken = mergeToken(token);
         recordMarketEvent(mergedToken);
+        const displaySymbol = getTokenDisplaySymbol(mergedToken);
 
         if (mergedToken.txType === "create") {
             subscribeToTokenTrades(mergedToken.mint);
@@ -287,14 +293,14 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
         const rugCheck = detectRug(mergedToken, 'medium');
         let type: 'gem' | 'junk' | 'stream' = 'stream';
-        let detail = `${mergedToken.txType.toUpperCase()}: ${mergedToken.symbol}`;
+        let detail = `${mergedToken.txType.toUpperCase()}: ${displaySymbol}`;
 
         if (mergedToken.txType === "create" && rugCheck.isRug) {
             type = 'junk';
-            detail = `🚩 INCINERATED: ${mergedToken.symbol} - ${rugCheck.reason}`;
+            detail = `🚩 INCINERATED: ${displaySymbol} - ${rugCheck.reason}`;
         } else if (mergedToken.txType === "create" && hasUsableIdentity(mergedToken) && (mergedToken.vSolInBondingCurve || 0) > 35) {
             type = 'gem';
-            detail = `💎 GEM DETECTED: ${mergedToken.symbol} - High Liquidity (${mergedToken.vSolInBondingCurve.toFixed(1)} SOL)`;
+            detail = `💎 GEM DETECTED: ${displaySymbol} - High Liquidity (${mergedToken.vSolInBondingCurve.toFixed(1)} SOL)`;
         }
 
         if (mergedToken.txType === "create") {

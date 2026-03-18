@@ -1,4 +1,5 @@
 import type { TokenData } from '../types/token';
+import { sanitizeTokenIdentity } from './tokenIdentity';
 
 function normalizeSol(value?: number): number {
     if (!value || Number.isNaN(value)) return 0;
@@ -15,8 +16,8 @@ export function normalizeTokenEvent(data: any, receivedAt: number = Date.now()):
         vTokensInBondingCurve: data.vTokensInBondingCurve || 0,
         vSolInBondingCurve: normalizeSol(data.vSolInBondingCurve),
         marketCapSol: normalizeSol(data.marketCapSol) || normalizeSol(data.vSolInBondingCurve),
-        name: data.name || "",
-        symbol: data.symbol || "???",
+        name: sanitizeTokenIdentity(data.name),
+        symbol: sanitizeTokenIdentity(data.symbol),
         uri: data.uri || "",
         timestamp: receivedAt
     };
@@ -26,8 +27,8 @@ export function mergeTokenData(existing: TokenData | undefined, token: TokenData
     return {
         ...existing,
         ...token,
-        name: token.name || existing?.name || "Unknown",
-        symbol: token.symbol || existing?.symbol || "???",
+        name: sanitizeTokenIdentity(token.name) || sanitizeTokenIdentity(existing?.name) || "",
+        symbol: sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(existing?.symbol) || "",
         uri: token.uri || existing?.uri || "",
         timestamp: existing?.timestamp || token.timestamp
     };
