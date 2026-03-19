@@ -20,6 +20,8 @@ const ActiveTrades = dynamic(() => import('../components/ActiveTrades'), { ssr: 
 const DashboardStats = dynamic(() => import('../components/DashboardStats'), { ssr: false });
 const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: false });
 
+const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
+
 function getBondingCurveProgressFromFeed(token: TokenData): number {
   if (!token.vTokensInBondingCurve) return 0;
   return Math.max(0, Math.min(100,
@@ -986,9 +988,15 @@ export default function Home() {
         trailingStopPercent: undefined
       };
 
+      const holdTimeSeconds = trade.buyTime ? (Date.now() - trade.buyTime) / 1000 : 0;
+      const paperTradeWarmupActive = (config.isDemo || trade.isPaper) && holdTimeSeconds < PAPER_TRADE_EXIT_WARMUP_SECONDS;
+      if (paperTradeWarmupActive) {
+        return;
+      }
+
       // Time-based exit (for speed trading and first buyer)
       if (trade.buyTime && exitStrategy.maxHoldTime < Infinity) {
-        const holdTime = (Date.now() - trade.buyTime) / 1000; // seconds
+        const holdTime = holdTimeSeconds; // seconds
         const minHoldTime = exitStrategy.minHoldTime || 0;
 
         // Check minimum hold time (for first buyer mode)
@@ -1007,7 +1015,7 @@ export default function Home() {
 
       // Momentum-based exit (for first buyer mode)
       if (exitStrategy.momentumExit && trade.buyTime) {
-        const holdTime = (Date.now() - trade.buyTime) / 1000;
+        const holdTime = holdTimeSeconds;
         const minHoldTime = exitStrategy.minHoldTime || 0;
 
         // Only check momentum after minimum hold time
@@ -1025,7 +1033,7 @@ export default function Home() {
       }
 
       if (config.mode === 'high' && trade.buyTime) {
-        const holdTime = (Date.now() - trade.buyTime) / 1000;
+        const holdTime = holdTimeSeconds;
         if (holdTime < 10) {
           return;
         }
@@ -1193,7 +1201,7 @@ export default function Home() {
       // Paper Trading: Quick exit on small profits to test system more frequently
       // Exit at 5% profit if held for more than 30 seconds (for testing)
       if (config.isDemo && trade.buyTime && trade.buyPrice > 0 && trade.currentPrice > 0) {
-        const holdTime = (Date.now() - trade.buyTime) / 1000;
+        const holdTime = holdTimeSeconds;
         const quickProfit = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
 
         // If we're up 5%+ and held for 30+ seconds, take profit (paper trading optimization)

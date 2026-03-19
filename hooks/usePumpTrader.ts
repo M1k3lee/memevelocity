@@ -36,6 +36,8 @@ export interface ActiveTrade {
     isPaper?: boolean; // New: Tracks if this was a demo/paper trade
 }
 
+type SellSnapshot = Partial<Pick<ActiveTrade, 'buyPrice' | 'currentPrice' | 'pnlPercent' | 'highestPrice' | 'lastPriceUpdate' | 'lastPriceChangeTime' | 'lastLiquidity'>>;
+
 export const usePumpTrader = (wallet: Keypair | null, connection: Connection, heliusKey?: string) => {
     const [activeTrades, setActiveTrades] = useState<ActiveTrade[]>([]);
     const [tradeHistory, setTradeHistory] = useState<ActiveTrade[]>([]);
@@ -45,6 +47,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const [stats, setStats] = useState({ totalProfit: 0, wins: 0, losses: 0 });
     const [isCleaning, setIsCleaning] = useState(false);
     const processingMintsRef = useRef<Set<string>>(new Set());
+    const activeTradesRef = useRef<ActiveTrade[]>([]);
 
     // Profit Protection Vault
     const [vaultBalance, setVaultBalance] = useState(0);
@@ -90,6 +93,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     // Persistence
     useEffect(() => {
+        activeTradesRef.current = activeTrades;
         localStorage.setItem('pump_active_trades', JSON.stringify(activeTrades));
     }, [activeTrades]);
 
@@ -127,24 +131,25 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     }, []);
 
     // Define sellToken early so it can be used in useEffect
-    const sellToken = useCallback(async (mint: string, amountPercent: number = 100) => {
+    const sellToken = useCallback(async (mint: string, amountPercent: number = 100, snapshot?: SellSnapshot) => {
         if (!wallet && !isDemo) return;
         if (processingMintsRef.current.has(mint)) return;
 
-        const trade = activeTrades.find(t => t.mint === mint);
+        const trade = activeTradesRef.current.find(t => t.mint === mint);
         if (!trade || trade.status === "closed" || trade.status === "selling") return;
+        const effectiveTrade = snapshot ? { ...trade, ...snapshot } : trade;
 
         processingMintsRef.current.add(mint);
-        addLog(`Attempting to SELL ${amountPercent}% of ${trade.symbol}...`);
+        addLog(`Attempting to SELL ${amountPercent}% of ${effectiveTrade.symbol}...`);
 
         try {
             if (isDemo) {
                 const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
-                const soldTokenAmount = (trade.amountTokens || 0) * sellFraction;
-                const sellPrice = trade.currentPrice || 0;
-                const costBasis = (trade.buyPrice || 0) * soldTokenAmount;
+                const soldTokenAmount = (effectiveTrade.amountTokens || 0) * sellFraction;
+                const sellPrice = effectiveTrade.currentPrice || 0;
+                const costBasis = (effectiveTrade.buyPrice || 0) * soldTokenAmount;
 
-                const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 120000);
+                const isStale = effectiveTrade.lastPriceUpdate && (Date.now() - effectiveTrade.lastPriceUpdate > 120000);
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
                 const rawRevenue = soldTokenAmount * effectiveSellPrice;
@@ -161,16 +166,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }));
 
                 const closedTrade: ActiveTrade = {
-                    ...trade,
+                    ...effectiveTrade,
                     status: "closed" as const,
                     currentPrice: effectiveSellPrice,
-                    pnlPercent: trade.buyPrice > 0 ? ((effectiveSellPrice - trade.buyPrice) / trade.buyPrice) * 100 : 0,
+                    pnlPercent: effectiveTrade.buyPrice > 0 ? ((effectiveSellPrice - effectiveTrade.buyPrice) / effectiveTrade.buyPrice) * 100 : 0,
                     isPaper: true
                 };
 
                 if (amountPercent >= 99) {
                     setTradeHistory(prev => {
-                        if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (trade.buyTime || 0)) < 1000)) return prev;
+                        if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (effectiveTrade.buyTime || 0)) < 1000)) return prev;
                         return [closedTrade, ...prev].slice(0, 100);
                     });
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
@@ -195,20 +200,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
             if (balance === 0) {
-                if (Date.now() - (trade.lastPriceChangeTime || 0) > 60000) {
-                    addLog(`Sell: No balance for ${trade.symbol}. Closing as RUG loss.`);
-                    const closedTrade: ActiveTrade = { ...trade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
+                if (Date.now() - (effectiveTrade.lastPriceChangeTime || 0) > 60000) {
+                    addLog(`Sell: No balance for ${effectiveTrade.symbol}. Closing as RUG loss.`);
+                    const closedTrade: ActiveTrade = { ...effectiveTrade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
                     setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
 
-                    const lossAmount = trade.amountSolPaid || 0;
+                    const lossAmount = effectiveTrade.amountSolPaid || 0;
                     setStats(prev => ({ ...prev, totalProfit: prev.totalProfit - lossAmount, losses: prev.losses + 1 }));
                 }
                 return;
             }
 
             const amountToSell = balance * (amountPercent / 100);
-            const tradeAmountPaid = trade.amountSolPaid || 0.03;
+            const tradeAmountPaid = effectiveTrade.amountSolPaid || 0.03;
 
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
 
@@ -268,14 +273,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             if (amountPercent >= 99) {
                 const closedTrade: ActiveTrade = {
-                    ...trade,
+                    ...effectiveTrade,
                     status: "closed" as const,
-                    currentPrice: trade.currentPrice,
+                    currentPrice: effectiveTrade.currentPrice,
                     pnlPercent: finalPnlPercent,
                     txId: signature
                 };
                 setTradeHistory(prev => {
-                    if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (trade.buyTime || 0)) < 1000)) return prev;
+                    if (prev.some(t => t.mint === mint && Math.abs((t.buyTime || 0) - (effectiveTrade.buyTime || 0)) < 1000)) return prev;
                     return [closedTrade, ...prev].slice(0, 100);
                 });
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
@@ -289,14 +294,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             }
 
             addLog(`✅ Sell Confirmed! Realized: ${netProfit > 0 ? '+' : ''}${netProfit.toFixed(4)} SOL (${realizedPnlPercent.toFixed(1)}%)`);
-            toast.success(`Sold ${trade.symbol}! PnL: ${netProfit.toFixed(4)} SOL`);
+            toast.success(`Sold ${effectiveTrade.symbol}! PnL: ${netProfit.toFixed(4)} SOL`);
 
         } catch (error: any) {
             const msg = error.message || "Execution error";
             addLog(`❌ Sell Failed for ${trade.symbol}: ${msg}`);
             if (msg.includes("Account") || msg.includes("not found")) {
                 setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-                const lossAmount = trade.amountSolPaid || 0;
+                const lossAmount = effectiveTrade.amountSolPaid || 0;
                 setStats(prev => ({
                     ...prev,
                     totalProfit: prev.totalProfit - lossAmount,
@@ -308,7 +313,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } finally {
             processingMintsRef.current.delete(mint);
         }
-    }, [wallet, isDemo, activeTrades, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
+    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
 
     // --- PRICE CALCULATION ENGINE ---
 
@@ -355,12 +360,25 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                         const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
                         const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
+                        const lastPriceUpdate = Date.now();
+                        const lastPriceChangeTime = priceToUse !== trade.currentPrice ? lastPriceUpdate : trade.lastPriceChangeTime;
+                        const nextLiquidity = currentLiquidity > 0 ? currentLiquidity : trade.lastLiquidity;
+                        const sellSnapshot: SellSnapshot = {
+                            buyPrice,
+                            currentPrice: priceToUse,
+                            pnlPercent: pnl,
+                            highestPrice,
+                            lastPriceUpdate,
+                            lastPriceChangeTime,
+                            lastLiquidity: nextLiquidity
+                        };
+                        const shouldManageExitsInHook = !isDemo && !trade.isPaper;
 
                         const prevLiq = trade.lastLiquidity || 0;
-                        if (prevLiq > 0 && trade.lastPriceUpdate) {
+                        if (shouldManageExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
                             if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
                                 updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
-                                sellToken(trade.mint, 100);
+                                sellToken(trade.mint, 100, sellSnapshot);
                                 addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
                                 return;
                             }
@@ -372,9 +390,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
 
                         // 1. STOP LOSS
-                        if (pnl <= -strategy.stopLoss) {
+                        if (shouldManageExitsInHook && pnl <= -strategy.stopLoss) {
                             updates.set(trade.mint, { status: "selling" });
-                            sellToken(trade.mint, 100);
+                            sellToken(trade.mint, 100, sellSnapshot);
                             addLog(`🛑 STOP LOSS: ${trade.symbol} at ${pnl.toFixed(2)}% (Limit: -${strategy.stopLoss}%)`);
                             return;
                         }
@@ -382,12 +400,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         // 2. TIME LIMIT / STAGNATION (For GOD MODE / SNIPER)
                         // If holding > maxHoldTime (e.g. 10m) and profit is negligible (<5%), EXIT.
                         // Don't hold dead bags.
-                        if (strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {
+                        if (shouldManageExitsInHook && strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {
                             // If we are in deep profit, maybe hold? But if stagnant, sell.
                             // If we are losing, definitely sell.
                             if (pnl < 10) {
                                 updates.set(trade.mint, { status: "selling" });
-                                sellToken(trade.mint, 100);
+                                sellToken(trade.mint, 100, sellSnapshot);
                                 addLog(`⏰ TIME LIMIT: ${trade.symbol} held for ${timeOpen.toFixed(0)}s. Stagnant at ${pnl.toFixed(2)}%. Exiting.`);
                                 return;
                             }
@@ -401,9 +419,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             currentPrice: priceToUse,
                             pnlPercent: pnl,
                             highestPrice,
-                            lastPriceUpdate: Date.now(),
-                            lastPriceChangeTime: priceToUse !== trade.currentPrice ? Date.now() : trade.lastPriceChangeTime,
-                            lastLiquidity: currentLiquidity > 0 ? currentLiquidity : trade.lastLiquidity
+                            lastPriceUpdate,
+                            lastPriceChangeTime,
+                            lastLiquidity: nextLiquidity
                         });
                     }
                 } catch (e) { }
@@ -506,7 +524,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const newTrade: ActiveTrade = {
                 mint, symbol, buyPrice, amountTokens, amountSolPaid: amountSol,
                 currentPrice: buyPrice, pnlPercent: 0, status: "open",
-                txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol
+                txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol,
+                highestPrice: buyPrice, lastPriceUpdate: Date.now(), lastPriceChangeTime: Date.now(), partialSells: {}, isPaper: true
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
@@ -541,7 +560,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             const newTrade: ActiveTrade = {
                 mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: amountSol,
                 currentPrice: initialPrice || 0, pnlPercent: 0, status: "open", txId: signature,
-                buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol
+                buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol, partialSells: {}
             };
 
             setActiveTrades(prev => [newTrade, ...prev]);
