@@ -8,7 +8,9 @@ import type { TokenData } from '../types/token';
 import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings } from 'lucide-react';
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
-import { analyzeEnhanced } from '../utils/enhancedAnalyzer';
+import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
+import { getMarketSnapshot } from '../utils/marketData';
+import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 
 // Dynamic imports for components
 const WalletManager = dynamic(() => import('../components/WalletManager'), { ssr: false });
@@ -17,6 +19,135 @@ const LiveFeed = dynamic(() => import('../components/LiveFeed'), { ssr: false })
 const ActiveTrades = dynamic(() => import('../components/ActiveTrades'), { ssr: false });
 const DashboardStats = dynamic(() => import('../components/DashboardStats'), { ssr: false });
 const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: false });
+
+function getBondingCurveProgressFromFeed(token: TokenData): number {
+  if (!token.vTokensInBondingCurve) return 0;
+  return Math.max(0, Math.min(100,
+    100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)
+  ));
+}
+
+function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum: number): EnhancedAnalysis {
+  const snapshot = getMarketSnapshot(token.mint);
+  const liquidity = token.vSolInBondingCurve || 30;
+  const liquidityGrowth = liquidity - 30;
+  const bondingCurveProgress = getBondingCurveProgressFromFeed(token);
+  const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
+  const tradeCount = snapshot?.tradeCount || 0;
+  const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+  const buyPressure = snapshot?.buyPressure ?? 0.5;
+  const priceChangePercent = snapshot?.priceChangePercent || 0;
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  const strengths: string[] = [];
+
+  let score = 18;
+
+  if (hasUsableTokenIdentity(token.symbol) || hasUsableTokenIdentity(token.name)) {
+    score += 12;
+    strengths.push('Launch feed metadata present');
+  } else {
+    warnings.push('Using mint fallback identity');
+  }
+
+  if (liquidity >= 35) {
+    score += 22;
+    strengths.push(`High liquidity: ${liquidity.toFixed(1)} SOL`);
+  } else if (liquidity >= 32) {
+    score += 14;
+  } else if (liquidity < 31) {
+    score -= 18;
+    reasons.push('Liquidity too low for paper trade');
+  }
+
+  if (liquidityGrowth >= 2) {
+    score += 18;
+    strengths.push(`Liquidity growth: +${liquidityGrowth.toFixed(1)} SOL`);
+  } else if (liquidityGrowth > 0.5) {
+    score += 10;
+  } else if (liquidityGrowth < 0) {
+    score -= 15;
+    warnings.push('Liquidity is fading');
+  } else {
+    warnings.push('Liquidity growth is still shallow');
+  }
+
+  if (momentum >= 1.5) {
+    score += 18;
+    strengths.push(`Strong momentum: ${momentum.toFixed(1)} SOL/min`);
+  } else if (momentum >= 0.5) {
+    score += 10;
+  } else {
+    score -= 8;
+    warnings.push('Momentum is weak');
+  }
+
+  if (buyPressure >= 0.65) {
+    score += 10;
+  } else if (tradeCount > 0 && buyPressure < 0.4) {
+    score -= 10;
+    warnings.push('Sell pressure is elevated');
+  }
+
+  if (tradeCount >= 4) score += 8;
+  if (uniqueTraderCount >= 4) score += 6;
+
+  if (priceChangePercent <= -10) {
+    score -= 15;
+    reasons.push('Price is falling too quickly');
+  } else if (priceChangePercent >= 5) {
+    score += 6;
+  }
+
+  if (age > 180) {
+    score -= 10;
+    warnings.push('Token is getting stale');
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  const passed = score >= 35 && liquidity >= 31 && liquidityGrowth >= 0 && momentum >= 0.25;
+  const riskLevel: EnhancedAnalysis['riskLevel'] =
+    score >= 60 ? 'medium' :
+      score >= 35 ? 'high' :
+        'critical';
+
+  return {
+    score,
+    riskLevel,
+    passed,
+    reasons,
+    warnings,
+    strengths,
+    bondingCurveProgress,
+    marketCap: liquidity,
+    tiers: {
+      tier0: 0,
+      tier1: 0,
+      tier2: 0,
+      tier3: 0,
+      tier4: 0,
+      totalScore: score * 5
+    },
+    metrics: {
+      holderCount: uniqueTraderCount,
+      deployerHoldings: -1,
+      top10Concentration: 0,
+      observedVolume,
+      buyPressure,
+      bondingCurveVelocity: age > 0 ? (bondingCurveProgress / age) * 60 : 0,
+      liquidityDepth: liquidity,
+      tradeCount,
+      uniqueTraderCount,
+      priceChangePercent,
+      contractSecurity: {
+        freezeAuthority: false,
+        mintAuthority: false,
+        updateAuthority: false
+      }
+    }
+  };
+}
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -567,7 +698,7 @@ export default function Home() {
       // Full enhanced analysis
       // NOTE: Demo mode uses REAL tokens, not simulated ones
       // Only skip analysis for SIM tokens in simulation mode (not demo mode)
-      let analysis;
+      let analysis: EnhancedAnalysis;
       if (token.mint.startsWith('SIM') && !config.isDemo) {
         // For simulated tokens, create a simplified analysis
         const devBuy = (token.vSolInBondingCurve || 30) - 30;
@@ -581,6 +712,14 @@ export default function Home() {
           strengths: devBuy >= 2.0 ? ['High dev commitment'] : [],
           bondingCurveProgress: 5,
           marketCap: token.vSolInBondingCurve || 30,
+          tiers: {
+            tier0: isRug ? 20 : 80,
+            tier1: 0,
+            tier2: 0,
+            tier3: 0,
+            tier4: 0,
+            totalScore: (isRug ? 20 : 75) * 5
+          },
           metrics: {
             holderCount: 100,
             deployerHoldings: 10,
@@ -595,6 +734,8 @@ export default function Home() {
             contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
           }
         };
+      } else if (config.isDemo && !config.heliusKey) {
+        analysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
       } else {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
@@ -614,6 +755,13 @@ export default function Home() {
         const riskMode = riskModeMap[config.mode] || 'medium';
         // @ts-ignore
         analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, config.advanced);
+
+        if (config.isDemo && analysis.score < 35) {
+          const fallbackAnalysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
+          if (fallbackAnalysis.score > analysis.score) {
+            analysis = fallbackAnalysis;
+          }
+        }
       }
 
       // Mode-based filtering with analysis scores
@@ -630,6 +778,10 @@ export default function Home() {
       if (config.isDemo) {
         // Paper trading: Lower thresholds to allow more trades for testing
         minScore = Math.max(15, minScore - 10);
+      }
+
+      if (config.isDemo && !config.heliusKey) {
+        minScore = Math.max(35, minScore - 35);
       }
 
       // For high-risk mode with strong momentum, we can be slightly more lenient

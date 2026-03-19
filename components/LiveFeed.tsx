@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { Activity, ExternalLink, RefreshCw, Zap, AlertTriangle, Pause, Play, Trash2, Diamond, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
-import { detectRug } from '../utils/rugDetector';
+import { detectRug, type RugDetectionResult } from '../utils/rugDetector';
 import { recordMarketEvent } from '../utils/marketData';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
@@ -138,6 +138,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const onTokenDetectedRef = useRef(onTokenDetected);
     const tokenCacheRef = useRef<Map<string, TokenData>>(new Map());
     const analysisDispatchRef = useRef<Map<string, { lastDispatchedAt: number; lastLiquidity: number }>>(new Map());
+    const rugChecksRef = useRef<Map<string, RugDetectionResult>>(new Map());
+    const featuredGemsRef = useRef<Set<string>>(new Set());
     const trackedMintsRef = useRef<string[]>([]);
     const subscribedMintsRef = useRef<Set<string>>(new Set());
     const MAX_TRACKED_MINTS = 200;
@@ -159,9 +161,9 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const _junkyard: Array<{ token: TokenData, reason: string }> = [];
 
         tokens.slice(0, 100).forEach(token => {
-            const rugCheck = detectRug(token, 'medium');
+            const rugCheck = rugChecksRef.current.get(token.mint) || { isRug: false, confidence: 0, warnings: [] };
             if (rugCheck.isRug) _junkyard.push({ token, reason: rugCheck.reason || 'Rug Detected' });
-            else if (hasUsableIdentity(token) && (token.vSolInBondingCurve || 0) > 35 && rugCheck.warnings.length === 0) _gems.push(token);
+            else if (featuredGemsRef.current.has(token.mint)) _gems.push(token);
             else _stream.push({ token, rugCheck });
         });
 
@@ -247,6 +249,19 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         return merged;
     };
 
+    const updateGemState = (token: TokenData, rugCheck: RugDetectionResult) => {
+        const currentLiquidity = token.vSolInBondingCurve || 0;
+        const alreadyFeatured = featuredGemsRef.current.has(token.mint);
+        const hasCleanSignal = hasUsableIdentity(token) && !rugCheck.isRug && rugCheck.warnings.length === 0;
+
+        if (hasCleanSignal && (currentLiquidity >= 35 || (alreadyFeatured && currentLiquidity >= 33))) {
+            featuredGemsRef.current.add(token.mint);
+            return;
+        }
+
+        featuredGemsRef.current.delete(token.mint);
+    };
+
     const shouldDispatchAnalysis = (token: TokenData) => {
         const now = Date.now();
         const currentLiquidity = token.vSolInBondingCurve || 0;
@@ -292,13 +307,15 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         }
 
         const rugCheck = detectRug(mergedToken, 'medium');
+        rugChecksRef.current.set(mergedToken.mint, rugCheck);
+        updateGemState(mergedToken, rugCheck);
         let type: 'gem' | 'junk' | 'stream' = 'stream';
         let detail = `${mergedToken.txType.toUpperCase()}: ${displaySymbol}`;
 
         if (mergedToken.txType === "create" && rugCheck.isRug) {
             type = 'junk';
             detail = `🚩 INCINERATED: ${displaySymbol} - ${rugCheck.reason}`;
-        } else if (mergedToken.txType === "create" && hasUsableIdentity(mergedToken) && (mergedToken.vSolInBondingCurve || 0) > 35) {
+        } else if (mergedToken.txType === "create" && featuredGemsRef.current.has(mergedToken.mint)) {
             type = 'gem';
             detail = `💎 GEM DETECTED: ${displaySymbol} - High Liquidity (${mergedToken.vSolInBondingCurve.toFixed(1)} SOL)`;
         }
@@ -339,6 +356,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 wsRef.current = null;
             }
             analysisDispatchRef.current.clear();
+            rugChecksRef.current.clear();
+            featuredGemsRef.current.clear();
             trackedMintsRef.current = [];
             subscribedMintsRef.current.clear();
         };
