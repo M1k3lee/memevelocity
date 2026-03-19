@@ -86,7 +86,9 @@ export function detectRug(
             }
         }
 
-        recentTokenNames.set(identityText, { timestamp: Date.now(), mint: token.mint });
+        if (!isRug || lastSeen?.mint === token.mint) {
+            recentTokenNames.set(identityText, { timestamp: Date.now(), mint: token.mint });
+        }
     }
 
     if (identityText && !isRug) {

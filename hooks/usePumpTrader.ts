@@ -3,6 +3,7 @@ import { Connection, Keypair } from '@solana/web3.js';
 import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
+import { getMarketSnapshot } from '../utils/marketData';
 
 const SOL_FEE_RESERVE = 0.02; // Reduced from 0.05 to allow small balance trading
 
@@ -332,7 +333,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     let price = 0;
                     let currentLiquidity = 0;
 
-                    if (trade.mint.startsWith('SIM') && !isDemo) {
+                    if (trade.isPaper || isDemo) {
+                        const snapshot = getMarketSnapshot(trade.mint);
+                        if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
+                            price = snapshot.currentPrice;
+                            currentLiquidity = snapshot.currentLiquiditySol;
+                        } else {
+                            price = trade.currentPrice > 0 ? trade.currentPrice : trade.buyPrice;
+                            currentLiquidity = trade.lastLiquidity || 0;
+                        }
+                    } else if (trade.mint.startsWith('SIM') && !isDemo) {
                         const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug");
                         const basePrice = trade.currentPrice > 0 ? trade.currentPrice : (trade.buyPrice > 0 ? trade.buyPrice : 0.000001);
                         const change = 1 + (Math.random() * 0.1 - 0.05) + (isRug ? -0.01 : 0.005);

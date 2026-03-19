@@ -326,7 +326,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
         setTokens(prev => [mergedToken, ...prev.filter(t => t.mint !== mergedToken.mint)].slice(0, 150));
 
-        if (shouldDispatchAnalysis(mergedToken)) {
+        if (!rugCheck.isRug && shouldDispatchAnalysis(mergedToken)) {
             onTokenDetectedRef.current(mergedToken);
         }
     };
