@@ -133,6 +133,12 @@ export const getTokenBalance = async (walletPubKey: string, mintAddress: string,
             setCachedValue(tokenBalanceCache, cacheKey, total, 15000);
             return total;
         } catch (error) {
+            const errorMsg = String((error as any)?.message || error);
+            if (errorMsg.includes('Invalid param: could not find mint')) {
+                setCachedValue(tokenBalanceCache, cacheKey, 0, 5000);
+                return 0;
+            }
+
             handleRpcError('getTokenBalance', error);
             console.error("Error fetching token balance:", error);
             const fallback = cached.value ?? 0;

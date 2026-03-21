@@ -21,6 +21,7 @@ const DashboardStats = dynamic(() => import('../components/DashboardStats'), { s
 const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: false });
 
 const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
+const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 
 function getBondingCurveProgressFromFeed(token: TokenData): number {
   if (!token.vTokensInBondingCurve) return 0;
@@ -994,6 +995,14 @@ export default function Home() {
       const holdTimeSeconds = trade.buyTime ? (Date.now() - trade.buyTime) / 1000 : 0;
       const paperTradeWarmupActive = (config.isDemo || trade.isPaper) && holdTimeSeconds < PAPER_TRADE_EXIT_WARMUP_SECONDS;
       if (paperTradeWarmupActive) {
+        return;
+      }
+
+      const liveTradeSettlementActive =
+        !config.isDemo &&
+        !trade.isPaper &&
+        (((trade.amountTokens || 0) <= 0) || holdTimeSeconds < LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS);
+      if (liveTradeSettlementActive) {
         return;
       }
 

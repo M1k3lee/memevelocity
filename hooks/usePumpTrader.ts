@@ -6,6 +6,8 @@ import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpDat
 import { getMarketSnapshot } from '../utils/marketData';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 
+const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
+
 export interface ActiveTrade {
     mint: string;
     symbol: string;
@@ -200,6 +202,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
             if (balance === 0) {
+                const ageMs = Date.now() - (effectiveTrade.buyTime || 0);
+                if (ageMs < LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS * 1000) {
+                    setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
+                    return;
+                }
+
                 if (Date.now() - (effectiveTrade.lastPriceChangeTime || 0) > 60000) {
                     addLog(`Sell: No balance for ${effectiveTrade.symbol}. Closing as RUG loss.`);
                     const closedTrade: ActiveTrade = { ...effectiveTrade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
@@ -381,7 +389,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             lastPriceChangeTime,
                             lastLiquidity: nextLiquidity
                         };
-                        const shouldManageExitsInHook = !isDemo && !trade.isPaper;
+                        const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
+                        const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
+                        const shouldManageExitsInHook =
+                            !isDemo &&
+                            !trade.isPaper &&
+                            (trade.amountTokens || 0) > 0 &&
+                            timeOpen >= LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
 
                         const prevLiq = trade.lastLiquidity || 0;
                         if (shouldManageExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
@@ -395,8 +409,6 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                         // --- NEW: STRATEGIC EXIT LOGIC (TP/SL/TIME) ---
                         // Ensure strategy exists (backwards compatibility)
-                        const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
-                        const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
 
                         // 1. STOP LOSS
                         if (shouldManageExitsInHook && pnl <= -strategy.stopLoss) {
