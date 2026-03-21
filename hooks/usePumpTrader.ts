@@ -18,6 +18,41 @@ function getLiveExitWarmupSeconds(trade?: Pick<ActiveTrade, 'exitStrategy'>): nu
     return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
 }
 
+function sanitizePaperObservedPrice(trade: ActiveTrade, candidatePrice: number): number {
+    if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) {
+        return 0;
+    }
+
+    if (trade.buyPrice > 0) {
+        const ratioToBuy = candidatePrice / trade.buyPrice;
+        if (ratioToBuy > 50 || ratioToBuy < 0.02) {
+            if (trade.currentPrice > 0) {
+                const currentRatioToBuy = trade.currentPrice / trade.buyPrice;
+                if (currentRatioToBuy <= 50 && currentRatioToBuy >= 0.02) {
+                    return trade.currentPrice;
+                }
+            }
+            return trade.buyPrice;
+        }
+    }
+
+    const referencePrice =
+        trade.currentPrice > 0
+            ? trade.currentPrice
+            : (trade.highestPrice && trade.highestPrice > 0
+                ? trade.highestPrice
+                : trade.buyPrice);
+
+    if (referencePrice > 0) {
+        const ratio = candidatePrice / referencePrice;
+        if (ratio > 8 || ratio < 0.125) {
+            return referencePrice;
+        }
+    }
+
+    return candidatePrice;
+}
+
 export interface ActiveTrade {
     mint: string;
     symbol: string;
@@ -312,7 +347,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (isDemo) {
                 const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
                 const soldTokenAmount = (effectiveTrade.amountTokens || 0) * sellFraction;
-                const sellPrice = effectiveTrade.currentPrice || 0;
+                const sellPrice = sanitizePaperObservedPrice(effectiveTrade, effectiveTrade.currentPrice || 0);
                 const costBasis = (effectiveTrade.buyPrice || 0) * soldTokenAmount;
 
                 const isStale = effectiveTrade.lastPriceUpdate && (Date.now() - effectiveTrade.lastPriceUpdate > 120000);
@@ -527,7 +562,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     if (trade.isPaper || isDemo) {
                         const snapshot = getMarketSnapshot(trade.mint);
                         if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
-                            price = snapshot.currentPrice;
+                            price = sanitizePaperObservedPrice(trade, snapshot.currentPrice);
                             currentLiquidity = snapshot.currentLiquiditySol;
                         } else {
                             price = trade.currentPrice > 0 ? trade.currentPrice : trade.buyPrice;
@@ -579,6 +614,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
                         const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
                         const liveExitWarmupSeconds = getLiveExitWarmupSeconds(trade);
+                        const isFastCompoundTrade = !!strategy.maxHoldTime && strategy.maxHoldTime <= 90;
                         const shouldManageExitsInHook =
                             !isDemo &&
                             !trade.isPaper &&
@@ -587,7 +623,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                         const prevLiq = trade.lastLiquidity || 0;
                         if (shouldManageExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
-                            const rugDropThreshold = strategy.maxHoldTime && strategy.maxHoldTime <= 90 ? 0.12 : 0.2;
+                            const rugDropThreshold = isFastCompoundTrade ? 0.1 : 0.2;
                             if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > rugDropThreshold) {
                                 updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
                                 sellToken(trade.mint, 100, sellSnapshot);
@@ -598,6 +634,23 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                         // --- NEW: STRATEGIC EXIT LOGIC (TP/SL/TIME) ---
                         // Ensure strategy exists (backwards compatibility)
+
+                        if (shouldManageExitsInHook && isFastCompoundTrade) {
+                            const peakPnl = highestPrice > buyPrice ? ((highestPrice - buyPrice) / buyPrice) * 100 : pnl;
+                            if (timeOpen >= 6 && pnl <= -4) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100, sellSnapshot);
+                                addLog(`⚡ FAST KILL: ${trade.symbol} hit ${pnl.toFixed(2)}% in the opening window. Exiting.`);
+                                return;
+                            }
+
+                            if (timeOpen >= 10 && peakPnl >= 4 && pnl <= 0) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100, sellSnapshot);
+                                addLog(`⚡ FAST GIVEBACK EXIT: ${trade.symbol} faded from ${peakPnl.toFixed(2)}% to ${pnl.toFixed(2)}%. Exiting.`);
+                                return;
+                            }
+                        }
 
                         // 1. STOP LOSS
                         if (shouldManageExitsInHook && pnl <= -strategy.stopLoss) {

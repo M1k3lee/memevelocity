@@ -173,8 +173,8 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         } else if (preset === "micro") {
             // MICRO WALLET COMPOUNDER
             setAmount(0.008);
-            setTakeProfit(18);
-            setStopLoss(8);
+            setTakeProfit(12);
+            setStopLoss(6);
             setMaxConcurrentTrades(1);
             setDynamicSizing(false);
             setAdvancedConfig({

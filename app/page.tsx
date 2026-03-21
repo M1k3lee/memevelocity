@@ -820,12 +820,13 @@ export default function Home() {
           : undefined;
 
         const exitStrategy = {
-          takeProfit: aggressiveSetup ? Math.max(14, config.takeProfit - 2) : config.takeProfit,
-          takeProfit2: aggressiveSetup ? Math.max(config.takeProfit + 12, 30) : Math.max(config.takeProfit + 17, 35),
-          stopLoss: aggressiveSetup ? Math.min(config.stopLoss, 8) : config.stopLoss,
-          maxHoldTime: aggressiveSetup ? 75 : 90,
+          takeProfit: Math.min(config.takeProfit, aggressiveSetup ? 12 : 14),
+          takeProfit2: undefined,
+          stopLoss: Math.min(config.stopLoss, aggressiveSetup ? 5 : 6),
+          maxHoldTime: aggressiveSetup ? 45 : 60,
           trailingStop: false,
-          minHoldTime: 10
+          momentumExit: true,
+          minHoldTime: 8
         };
         const microSlippage = Math.max(config.advanced?.slippage || 35, aggressiveSetup ? 45 : 35);
 
@@ -1257,6 +1258,26 @@ export default function Home() {
         // Time-based exit after max hold time
         if (holdTime >= exitStrategy.maxHoldTime) {
           addLog(`⏰ TIME EXIT: ${trade.symbol} held for ${Math.floor(holdTime)}s (max: ${exitStrategy.maxHoldTime}s). Selling...`);
+          sellToken(trade.mint, 100);
+          return;
+        }
+      }
+
+      const isFastCompoundTrade = !!exitStrategy.maxHoldTime && exitStrategy.maxHoldTime <= 90;
+      if (isFastCompoundTrade && trade.buyPrice > 0 && trade.currentPrice > 0) {
+        const currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
+        const peakPnl = trade.highestPrice && trade.highestPrice > trade.buyPrice
+          ? ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100
+          : currentPnl;
+
+        if (holdTimeSeconds >= 6 && currentPnl <= -4) {
+          addLog(`⚡ FAST KILL: ${trade.symbol} hit ${currentPnl.toFixed(1)}% inside the opening window. Exiting.`);
+          sellToken(trade.mint, 100);
+          return;
+        }
+
+        if (holdTimeSeconds >= 10 && peakPnl >= 4 && currentPnl <= 0) {
+          addLog(`⚡ FAST GIVEBACK EXIT: ${trade.symbol} faded from ${peakPnl.toFixed(1)}% to ${currentPnl.toFixed(1)}%. Exiting.`);
           sellToken(trade.mint, 100);
           return;
         }
