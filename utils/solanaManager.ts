@@ -350,6 +350,12 @@ export const getHolderStats = async (mintAddress: string, conn: Connection = con
             setCachedValue(holderStatsCache, mintAddress, result, 45000);
             return result;
         } catch (e) {
+            const errorMsg = String((e as any)?.message || e);
+            if (errorMsg.includes('Invalid param: not a Token mint')) {
+                setCachedValue(holderStatsCache, mintAddress, null, 30000);
+                return null;
+            }
+
             handleRpcError('getHolderStats', e);
             console.error("Error fetching holder stats:", e);
             setCachedValue(holderStatsCache, mintAddress, null, 10000);

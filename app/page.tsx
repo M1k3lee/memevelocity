@@ -801,7 +801,10 @@ export default function Home() {
         addLog(`⚠️ RPC issues detected - lowering score threshold to ${minScore} for ${token.symbol}`);
       }
 
-      if (analysis.score < minScore) {
+      // The analyzer already decides pass/fail per strategy. Keep the score gate
+      // for weak/fallback analyses, but don't block a token that the live
+      // strategy-specific analyzer has explicitly approved.
+      if (analysis.score < minScore && !analysis.passed) {
         addLog(`🚫 Rejected: ${token.symbol} - Score: ${analysis.score}/100 (Need: ${minScore}) - ${analysis.riskLevel.toUpperCase()} risk`);
         addLog(`   Bonding Curve: ${analysis.bondingCurveProgress.toFixed(1)}% | Market Cap: ${analysis.marketCap.toFixed(1)} SOL`);
         if (analysis.reasons.length > 0) {
