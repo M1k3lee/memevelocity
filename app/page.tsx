@@ -844,8 +844,12 @@ export default function Home() {
           'custom': 'medium'
         };
         const riskMode = riskModeMap[config.mode] || 'medium';
+        const analysisConfig =
+          config.mode === 'degen' && momentum >= 1.5
+            ? { ...config.advanced, minBondingCurve: 0 }
+            : config.advanced;
         // @ts-ignore
-        analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, config.advanced);
+        analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, analysisConfig);
 
         if (config.isDemo && analysis.score < 35) {
           const fallbackAnalysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
