@@ -185,7 +185,7 @@ function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decisi
   const hasStrongFlow = buyCount >= 2 && buyPressure >= 0.65 && observedVolume >= 1.5;
   const hasCurveConfirmation = bondingCurveProgress >= 0.2 && observedVolume >= 0.75 && uniqueTraderCount >= 2;
 
-  if (hasSecondaryBuyer && (buyPressure >= 0.55 || hasStrongFlow || hasCurveConfirmation)) {
+  if (hasStrongFlow || (hasSecondaryBuyer && hasCurveConfirmation)) {
     return { decision: 'pass' };
   }
 
@@ -877,6 +877,11 @@ export default function Home() {
       // But still maintain minimum quality (don't go below 25 in real mode, 20 in demo)
       if (config.mode === 'high' && age < 120 && momentum > 2) {
         minScore = config.isDemo ? 15 : 20;
+      }
+
+      if (!config.isDemo && config.mode === 'sniper' && analysis.score < 25) {
+        addLog(`🚫 Sniper Reject: ${token.symbol} - Live sniper score floor not met (${analysis.score}/100 < 25).`);
+        return;
       }
 
       // If RPC is failing (analysis might be incomplete), be very lenient
