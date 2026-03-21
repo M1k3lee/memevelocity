@@ -206,8 +206,31 @@ export async function analyzeEnhanced(
         }
         strengths.push(...tier4.strengths);
 
+        let effectiveConfig = config;
+        if (config && isDegenMode) {
+            effectiveConfig = { ...config };
+
+            if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 6) {
+                effectiveConfig.minHolderCount = 6;
+                warnings.push('Degen fallback: relaxing holder floor to 6 while RPC holder data is unavailable');
+            }
+
+            if (!marketSnapshot) {
+                if ((effectiveConfig.minVolume24h ?? effectiveConfig.minVolume ?? 0) > 0) {
+                    effectiveConfig.minVolume24h = 0;
+                    effectiveConfig.minVolume = 0;
+                    warnings.push('Degen fallback: ignoring observed-volume floor until trade-flow snapshot is available');
+                }
+
+                if ((effectiveConfig.minVelocity ?? 0) > 0) {
+                    effectiveConfig.minVelocity = 0;
+                    warnings.push('Degen fallback: ignoring velocity floor until trade-flow snapshot is available');
+                }
+            }
+        }
+
         const filterFailure = applyConfigFilters({
-            config,
+            config: effectiveConfig,
             liquidity,
             bondingCurveProgress,
             holderCount: holderMetrics.holderCount,

@@ -158,12 +158,12 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 minLiquidity: 5,
                 maxLiquidity: 2000,
                 minVolume: 2,
-                minHolderCount: 10,
+                minHolderCount: 6,
                 maxTop10: 60,
                 maxDev: 15,
                 minBondingCurve: 1,
                 maxBondingCurve: 60,
-                minVelocity: 1.0, // Needs velocity
+                minVelocity: 0, // Final degen pass logic still enforces momentum or high liquidity
                 rugCheckStrictness: "standard",
                 requireSocials: false,
                 avoidSnipers: false,
