@@ -388,7 +388,11 @@ export default function Home() {
       if (timeSinceLastTrade < minTimeBetweenTrades) return;
 
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
-      if (openTradesCount >= (config.maxConcurrentTrades || 1)) {
+      const effectiveMaxConcurrentTrades =
+        !config.isDemo && config.mode === 'degen' && realBalance > 0 && realBalance < 0.1
+          ? 1
+          : (config.maxConcurrentTrades || 1);
+      if (openTradesCount >= effectiveMaxConcurrentTrades) {
         const now = Date.now();
         if ((now - lastCapacityLogAt.current) > 15000) {
           addLog(`⏸ Scanner paused: ${openTradesCount}/${config.maxConcurrentTrades || 1} open trades. Waiting for an exit before new entries.`);
@@ -861,6 +865,7 @@ export default function Home() {
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
+      if (!config.isDemo && config.mode === 'degen') minScore = Math.max(minScore, 30);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -871,6 +876,28 @@ export default function Home() {
       if (config.mode === 'sniper' && analysis.score < 25) {
         addLog(`🚫 Sniper Reject: ${token.symbol} - Live sniper score floor not met (${analysis.score}/100 < 25).`);
         return;
+      }
+
+      if (!config.isDemo && config.mode === 'degen') {
+        const snapshot = getMarketSnapshot(token.mint);
+        const tradeCount = snapshot?.tradeCount || analysis.metrics.tradeCount || 0;
+        const buyCount = snapshot?.buyCount || 0;
+        const uniqueTraderCount = snapshot?.uniqueTraderCount || analysis.metrics.uniqueTraderCount || 0;
+        const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
+        const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
+        const strongFlowConfirmation =
+          buyCount >= 3 &&
+          tradeCount >= 3 &&
+          uniqueTraderCount >= 3 &&
+          observedVolume >= 1.5 &&
+          buyPressure >= 0.65;
+        const curveReady = analysis.bondingCurveProgress >= 5;
+        const deepLiquidityConfirmation = analysis.marketCap >= 60 && analysis.bondingCurveProgress >= 2;
+
+        if (!curveReady && !strongFlowConfirmation && !deepLiquidityConfirmation) {
+          addLog(`ðŸš« Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          return;
+        }
       }
 
       // If RPC is failing (analysis might be incomplete), be very lenient

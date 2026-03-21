@@ -152,8 +152,9 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         } else if (preset === "degen") {
             // MOMENTUM / HIGH RISK
             setAmount(0.01);
-            setTakeProfit(100);
-            setStopLoss(25);
+            setTakeProfit(35);
+            setStopLoss(14);
+            setMaxConcurrentTrades(1);
             setAdvancedConfig({
                 minLiquidity: 5,
                 maxLiquidity: 2000,
