@@ -751,12 +751,19 @@ export default function Home() {
           observedVolume >= 1.2 &&
           buyPressure >= 0.55 &&
           netFlow > 0.75;
-        const strongFlow = launchPulse || breakoutFlow;
+        const persistentFlow =
+          age <= 120 &&
+          tradeCount >= 15 &&
+          uniqueTraderCount >= 4 &&
+          observedVolume >= 1.5 &&
+          buyPressure >= 0.5 &&
+          netFlow > 0.75;
+        const strongFlow = launchPulse || breakoutFlow || persistentFlow;
         const curveReady = bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.75;
         const deepLiquidity = liquidity >= 40 && (bondingCurveProgress >= 0.5 || tradeCount >= 4);
 
         if (!strongFlow && !curveReady && !deepLiquidity) {
-          if (age < 45) {
+          if (age < 60) {
             scheduleRetry(5000, `MICRO wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
           } else {
             addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
@@ -777,32 +784,29 @@ export default function Home() {
           return;
         }
 
-        const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
-        const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
-        if (!Number.isFinite(freshPrice) || freshPrice <= 0 || !Number.isFinite(oldPrice) || oldPrice <= 0) {
-          scheduleRetry(5000, `MICRO wait: ${token.symbol} verification price unavailable.`);
+        const freshLiquidity = freshData.vSolInBondingCurve || 0;
+        const freshCurveProgress = Number.isFinite(freshData.bondingCurveProgress) ? freshData.bondingCurveProgress : 0;
+        if (freshLiquidity <= 0) {
+          scheduleRetry(5000, `MICRO wait: ${token.symbol} verification liquidity unavailable.`);
           return;
         }
-        const change = ((freshPrice - oldPrice) / oldPrice) * 100;
+        const liquidityDeltaPercent = liquidity > 0 ? ((freshLiquidity - liquidity) / liquidity) * 100 : 0;
+        const curveDelta = freshCurveProgress - bondingCurveProgress;
 
-        if (change < -3) {
-          addLog(`MICRO Reject: ${token.symbol} reversed ${change.toFixed(2)}% during verification.`);
+        if (liquidityDeltaPercent < -12 || curveDelta < -3) {
+          addLog(`MICRO Reject: ${token.symbol} lost momentum during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
           return;
         }
-        if (change < -0.6) {
-          scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back ${change.toFixed(2)}% during verification.`);
+        if (liquidityDeltaPercent < -4 || curveDelta < -1) {
+          scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
           return;
         }
-        if (freshData.vSolInBondingCurve < liquidity * 0.9) {
-          addLog(`MICRO Reject: ${token.symbol} lost liquidity during verification.`);
-          return;
-        }
-        if (freshData.vSolInBondingCurve < liquidity * 0.96) {
-          scheduleRetry(4000, `MICRO wait: ${token.symbol} liquidity dipped during verification.`);
+        if (freshCurveProgress <= 0 && bondingCurveProgress > 0) {
+          scheduleRetry(4000, `MICRO wait: ${token.symbol} verification curve still syncing.`);
           return;
         }
 
-        token.vSolInBondingCurve = freshData.vSolInBondingCurve;
+        token.vSolInBondingCurve = freshLiquidity;
         token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
         const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
