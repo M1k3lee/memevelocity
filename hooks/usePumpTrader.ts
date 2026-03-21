@@ -184,6 +184,46 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
     }, [wallet, isDemo, connection]);
 
+    const syncLiveTradeFromWallet = useCallback(async (mint: string, settledAmountSol?: number) => {
+        if (!wallet || isDemo) return false;
+
+        const walletPubkey = wallet.publicKey.toBase58();
+        const balance = await getTokenBalance(walletPubkey, mint, connection);
+        if (balance <= 0) return false;
+
+        const existingTrade = activeTradesRef.current.find(t => t.mint === mint);
+        const amountSolPaid = settledAmountSol && settledAmountSol > 0
+            ? settledAmountSol
+            : (existingTrade?.amountSolPaid || existingTrade?.originalAmount || 0);
+        const derivedBuyPrice = amountSolPaid > 0 ? amountSolPaid / balance : (existingTrade?.buyPrice || 0);
+        const now = Date.now();
+
+        setActiveTrades(prev => prev.map(t => {
+            if (t.mint !== mint) return t;
+
+            const nextCurrentPrice = t.currentPrice > 0
+                ? t.currentPrice
+                : (derivedBuyPrice > 0 ? derivedBuyPrice : 0);
+            const nextHighestPrice = t.highestPrice && t.highestPrice > 0
+                ? t.highestPrice
+                : nextCurrentPrice;
+
+            return {
+                ...t,
+                amountTokens: balance,
+                amountSolPaid: amountSolPaid > 0 ? amountSolPaid : t.amountSolPaid,
+                originalAmount: amountSolPaid > 0 ? amountSolPaid : t.originalAmount,
+                buyPrice: derivedBuyPrice > 0 ? derivedBuyPrice : t.buyPrice,
+                currentPrice: nextCurrentPrice,
+                highestPrice: nextHighestPrice,
+                lastPriceUpdate: t.lastPriceUpdate || now,
+                lastPriceChangeTime: t.lastPriceChangeTime || now
+            };
+        }));
+
+        return true;
+    }, [wallet, isDemo, connection]);
+
     // Define sellToken early so it can be used in useEffect
     const sellToken = useCallback(async (mint: string, amountPercent: number = 100, snapshot?: SellSnapshot) => {
         if (!wallet && !isDemo) return;
@@ -433,7 +473,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     const priceToUse = price > 0 ? price : (trade.currentPrice > 0 ? trade.currentPrice : 0);
                     if (priceToUse > 0) {
                         let buyPrice = trade.buyPrice;
-                        if (buyPrice === 0 || buyPrice < 0.000000001) buyPrice = priceToUse;
+                        const hasSettledPosition = trade.isPaper || isDemo || (trade.amountTokens || 0) > 0;
+                        if (hasSettledPosition && (buyPrice === 0 || buyPrice < 0.000000001)) {
+                            buyPrice = priceToUse;
+                        }
 
                         const pnl = buyPrice > 0 ? ((priceToUse - buyPrice) / buyPrice) * 100 : 0;
                         const highestPrice = trade.highestPrice ? Math.max(trade.highestPrice, priceToUse) : priceToUse;
@@ -664,8 +707,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             addLog(`Buy Tx Sent: ${signature.substring(0, 8)}...`);
 
             const newTrade: ActiveTrade = {
-                mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: effectiveAmountSol,
-                currentPrice: initialPrice || 0, pnlPercent: 0, status: "open", txId: signature,
+                mint, symbol, buyPrice: 0, amountTokens: 0, amountSolPaid: effectiveAmountSol,
+                currentPrice: 0, pnlPercent: 0, status: "open", txId: signature,
                 buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: effectiveAmountSol, partialSells: {}
             };
 
@@ -674,27 +717,29 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
                 if (!res.value.err) {
-                    await new Promise(r => setTimeout(r, 2000));
-                    const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
                     const balanceAfterBuy = await getBalance(wallet.publicKey.toBase58(), connection);
                     const actualSpentSol =
                         balanceBeforeBuy !== null && balanceAfterBuy !== null
                             ? Math.max(0, balanceBeforeBuy - balanceAfterBuy)
                             : effectiveAmountSol;
 
-                    if (actualTokens > 0) {
-                        setActiveTrades(prev => prev.map(t => t.mint === mint ? {
-                            ...t,
-                            buyPrice: actualSpentSol / actualTokens,
-                            amountTokens: actualTokens,
-                            amountSolPaid: actualSpentSol,
-                            originalAmount: actualSpentSol
-                        } : t));
+                    let settled = false;
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                        if (attempt > 0) {
+                            await new Promise(r => setTimeout(r, 2000));
+                        }
+
+                        settled = await syncLiveTradeFromWallet(mint, actualSpentSol);
+                        if (settled) break;
+                    }
+
+                    if (!settled) {
+                        addLog(`⚠️ ${symbol} buy confirmed, but token balance is still settling. Portfolio sync will keep correcting the entry.`);
                     }
                 } else {
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
                 }
-                syncTrades();
+                setTimeout(() => { void syncTrades(); }, 4000);
             });
         } catch (error: any) {
             addLog(`Buy Failed: ${error.message}`);
@@ -706,11 +751,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const syncTrades = async () => {
         if (isDemo || !wallet) return;
         addLog("Syncing portfolio...");
-        for (const trade of activeTrades.filter(t => t.status === "open")) {
+        for (const trade of activeTradesRef.current.filter(t => t.status === "open")) {
             try {
                 const bal = await getTokenBalance(wallet.publicKey.toBase58(), trade.mint, connection);
                 if (bal > 0) {
-                    setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? { ...t, amountTokens: bal } : t));
+                    const normalizedBuyPrice = (trade.amountSolPaid || 0) > 0 ? (trade.amountSolPaid || 0) / bal : trade.buyPrice;
+                    setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
+                        ...t,
+                        amountTokens: bal,
+                        buyPrice: normalizedBuyPrice > 0 ? normalizedBuyPrice : t.buyPrice,
+                        currentPrice: t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.currentPrice),
+                        highestPrice: t.highestPrice && t.highestPrice > 0
+                            ? t.highestPrice
+                            : (t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.highestPrice))
+                    } : t));
                 } else if (Date.now() - (trade.buyTime || 0) > 60000) {
                     setActiveTrades(prev => prev.filter(t => t.mint !== trade.mint));
                 }

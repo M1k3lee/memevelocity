@@ -142,14 +142,17 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                         (trade.amountTokens * trade.buyPrice > 0 ? `${(trade.amountTokens * trade.buyPrice).toFixed(3)} SOL` : "-")}
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
-                                    {trade.buyPrice > 0 ? trade.buyPrice.toFixed(9) : "Pending"}
+                                    {!trade.isPaper && (trade.amountTokens || 0) <= 0
+                                        ? "Settling..."
+                                        : (trade.buyPrice > 0 ? trade.buyPrice.toFixed(9) : "Pending")}
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
                                     {(() => {
                                         const isStale = trade.lastPriceUpdate && (Date.now() - trade.lastPriceUpdate > 30000); // 30s stale warning
+                                        const isSettling = !trade.isPaper && (trade.amountTokens || 0) <= 0;
                                         return (
                                             <div className="flex flex-col">
-                                                <span>{trade.currentPrice > 0 ? trade.currentPrice.toFixed(9) : "Updating..."}</span>
+                                                <span>{isSettling ? "Settling..." : (trade.currentPrice > 0 ? trade.currentPrice.toFixed(9) : "Updating...")}</span>
                                                 {isStale && (
                                                     <span className="text-orange-500 text-[9px] flex items-center gap-1 animate-pulse">
                                                         ⚠️ STALE ({Math.floor((Date.now() - (trade.lastPriceUpdate || 0)) / 1000)}s)
@@ -161,6 +164,11 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                 </td>
                                 <td className="p-3">
                                     {(() => {
+                                        const isSettling = !trade.isPaper && (trade.amountTokens || 0) <= 0;
+                                        if (isSettling) {
+                                            return <span className="text-gray-500 text-xs">Settling fill...</span>;
+                                        }
+
                                         // Calculate PnL in real-time as fallback
                                         let displayPnlPercent = trade.pnlPercent;
                                         let displayPnlSol = 0;
