@@ -133,6 +133,15 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         localStorage.removeItem('pump_logs');
     }, []);
 
+    const withRpcTimeout = useCallback(async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+            })
+        ]);
+    }, []);
+
     const reclaimMintAccountRent = useCallback(async (mint: string): Promise<number> => {
         if (!wallet || isDemo) return 0;
 
@@ -142,9 +151,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 import('@solana/spl-token')
             ]);
 
-            const accounts = await connection.getParsedTokenAccountsByOwner(
-                wallet.publicKey,
-                { mint: new PublicKey(mint) }
+            const accounts = await withRpcTimeout(
+                connection.getParsedTokenAccountsByOwner(
+                    wallet.publicKey,
+                    { mint: new PublicKey(mint) }
+                ),
+                12000,
+                'Rent reclaim account scan'
             );
 
             const emptyAccounts = accounts.value.filter(acc => {
@@ -164,13 +177,25 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 );
             });
 
-            const { blockhash } = await connection.getLatestBlockhash();
+            const { blockhash } = await withRpcTimeout(
+                connection.getLatestBlockhash(),
+                10000,
+                'Rent reclaim blockhash fetch'
+            );
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = wallet.publicKey;
             transaction.sign(wallet);
 
-            const signature = await connection.sendRawTransaction(transaction.serialize());
-            await connection.confirmTransaction(signature, 'confirmed');
+            const signature = await withRpcTimeout(
+                connection.sendRawTransaction(transaction.serialize()),
+                10000,
+                'Rent reclaim transaction send'
+            );
+            await withRpcTimeout(
+                connection.confirmTransaction(signature, 'confirmed'),
+                20000,
+                'Rent reclaim confirmation'
+            );
             await new Promise(resolve => setTimeout(resolve, 1000));
 
             const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
@@ -182,7 +207,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } catch {
             return 0;
         }
-    }, [wallet, isDemo, connection]);
+    }, [wallet, isDemo, connection, withRpcTimeout]);
 
     const syncLiveTradeFromWallet = useCallback(async (mint: string, settledAmountSol?: number) => {
         if (!wallet || isDemo) return false;
@@ -826,24 +851,51 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const cleanupWaste = async () => {
         if (!wallet || isDemo) return;
         setIsCleaning(true);
-        addLog("🧹 Cleanup in progress...");
+        addLog("Cleanup in progress...");
         try {
             const { Transaction } = await import('@solana/web3.js');
             const { TOKEN_PROGRAM_ID, createCloseAccountInstruction } = await import('@solana/spl-token');
-            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { programId: TOKEN_PROGRAM_ID });
-            const toClose = accounts.value.filter(acc => acc.account.data.parsed.info.tokenAmount.uiAmount <= 0 && !activeTrades.some(t => t.mint === acc.account.data.parsed.info.mint)).slice(0, 20);
-            if (toClose.length === 0) { setIsCleaning(false); return; }
+            addLog("Scanning wallet for empty token accounts...");
+            const accounts = await withRpcTimeout(
+                connection.getParsedTokenAccountsByOwner(wallet.publicKey, { programId: TOKEN_PROGRAM_ID }),
+                12000,
+                'Cleanup account scan'
+            );
+            const toClose = accounts.value
+                .filter(acc => acc.account.data.parsed.info.tokenAmount.uiAmount <= 0 && !activeTradesRef.current.some(t => t.mint === acc.account.data.parsed.info.mint))
+                .slice(0, 20);
+            if (toClose.length === 0) {
+                addLog("No empty token accounts found to close.");
+                return;
+            }
+            addLog(`Found ${toClose.length} empty account${toClose.length === 1 ? '' : 's'}. Preparing cleanup transaction...`);
             const transaction = new Transaction();
             toClose.forEach(acc => transaction.add(createCloseAccountInstruction(acc.pubkey, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM_ID)));
-            const { blockhash } = await connection.getLatestBlockhash();
+            const { blockhash } = await withRpcTimeout(
+                connection.getLatestBlockhash(),
+                10000,
+                'Cleanup blockhash fetch'
+            );
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = wallet.publicKey;
             transaction.sign(wallet);
-            const sig = await connection.sendRawTransaction(transaction.serialize());
+            const sig = await withRpcTimeout(
+                connection.sendRawTransaction(transaction.serialize()),
+                10000,
+                'Cleanup transaction send'
+            );
             addLog(`Cleanup Tx Sent: ${sig.substring(0, 8)}...`);
-            await connection.confirmTransaction(sig);
-            addLog(`✅ Rescued ${(toClose.length * 0.00204).toFixed(4)} SOL`);
-        } catch (e: any) { addLog(`Cleanup Failed: ${e.message}`); } finally { setIsCleaning(false); }
+            await withRpcTimeout(
+                connection.confirmTransaction(sig, 'confirmed'),
+                20000,
+                'Cleanup confirmation'
+            );
+            addLog(`Rescued ${(toClose.length * 0.00204).toFixed(4)} SOL`);
+        } catch (e: any) {
+            addLog(`Cleanup Failed: ${e.message}`);
+        } finally {
+            setIsCleaning(false);
+        }
     };
 
     const recoverTrades = async () => {
