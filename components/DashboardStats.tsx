@@ -46,7 +46,7 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
                 <div className="absolute -right-4 -top-4 bg-[var(--secondary)]/10 w-24 h-24 rounded-full blur-2xl"></div>
                 <div className="flex items-center gap-2 text-gray-400 mb-1">
                     <TrendingUp size={16} />
-                    <span className="text-xs uppercase tracking-wider font-semibold">Total PnL</span>
+                    <span className="text-xs uppercase tracking-wider font-semibold">Tracked Trade PnL</span>
                 </div>
                 <div>
                     <span className={`text-3xl font-bold tracking-tight ${stats.totalProfit >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
@@ -54,6 +54,7 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
                     </span>
                     <span className="text-sm text-gray-500 ml-1">SOL</span>
                 </div>
+                <div className="text-[10px] text-gray-500 mt-1">Wallet balance remains the source of truth.</div>
             </div>
 
             {/* Win Rate Card */}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Connection, Keypair } from '@solana/web3.js';
+import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
@@ -224,6 +224,43 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         return true;
     }, [wallet, isDemo, connection]);
 
+    const getWalletSolDeltaFromSignature = useCallback(async (signature: string): Promise<number | null> => {
+        if (!wallet || isDemo) return null;
+
+        const walletPubkey = wallet.publicKey.toBase58();
+
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                const tx = await connection.getParsedTransaction(signature, {
+                    commitment: 'confirmed',
+                    maxSupportedTransactionVersion: 0
+                });
+
+                const accountKeys = (tx?.transaction.message.accountKeys || []) as Array<any>;
+                const walletIndex = accountKeys.findIndex((key: any) => {
+                    if (key?.pubkey?.toBase58) return key.pubkey.toBase58() === walletPubkey;
+                    if (key?.toBase58) return key.toBase58() === walletPubkey;
+                    return false;
+                });
+
+                if (
+                    tx?.meta &&
+                    walletIndex >= 0 &&
+                    tx.meta.preBalances[walletIndex] !== undefined &&
+                    tx.meta.postBalances[walletIndex] !== undefined
+                ) {
+                    return (tx.meta.postBalances[walletIndex] - tx.meta.preBalances[walletIndex]) / LAMPORTS_PER_SOL;
+                }
+            } catch {
+                // Retry below when RPC is rate-limited or transaction indexing lags.
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 750 * (attempt + 1)));
+        }
+
+        return null;
+    }, [wallet, isDemo, connection]);
+
     // Define sellToken early so it can be used in useEffect
     const sellToken = useCallback(async (mint: string, amountPercent: number = 100, snapshot?: SellSnapshot) => {
         if (!wallet && !isDemo) return;
@@ -352,7 +389,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (confirmation.value.err) throw new Error("On-chain execution failed");
 
             await new Promise(resolve => setTimeout(resolve, 2000));
-            const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
+            const txDelta = await getWalletSolDeltaFromSignature(signature);
+            const balanceAfter = txDelta === null ? await getBalance(wallet.publicKey.toBase58(), connection) : null;
             let reclaimedRent = 0;
             if (amountPercent >= 99) {
                 reclaimedRent = await reclaimMintAccountRent(mint);
@@ -361,7 +399,17 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 }
             }
 
-            const revenue = ((balanceAfter ?? 0) - (balanceBefore ?? 0)) + reclaimedRent;
+            let revenue: number | null = txDelta !== null ? Math.max(0, txDelta) : null;
+            if (revenue === null && balanceBefore !== null && balanceAfter !== null) {
+                revenue = Math.max(0, balanceAfter - balanceBefore);
+            }
+            if (revenue === null) {
+                const fallbackRevenue = effectiveTrade.currentPrice > 0 ? amountToSell * effectiveTrade.currentPrice : 0;
+                revenue = Math.max(0, fallbackRevenue);
+                addLog(`⚠️ ${effectiveTrade.symbol} sell confirmed, but RPC could not verify exact SOL delta. Using estimated revenue.`);
+            }
+
+            revenue += reclaimedRent;
             const costBasis = tradeAmountPaid * (amountPercent / 100);
             const netProfit = revenue - costBasis;
             const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
@@ -421,7 +469,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } finally {
             processingMintsRef.current.delete(mint);
         }
-    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance, reclaimMintAccountRent]);
+    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance, reclaimMintAccountRent, getWalletSolDeltaFromSignature]);
 
     // --- PRICE CALCULATION ENGINE ---
 
@@ -717,11 +765,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
                 if (!res.value.err) {
-                    const balanceAfterBuy = await getBalance(wallet.publicKey.toBase58(), connection);
+                    const txDelta = await getWalletSolDeltaFromSignature(signature);
+                    const balanceAfterBuy = txDelta === null ? await getBalance(wallet.publicKey.toBase58(), connection) : null;
                     const actualSpentSol =
-                        balanceBeforeBuy !== null && balanceAfterBuy !== null
-                            ? Math.max(0, balanceBeforeBuy - balanceAfterBuy)
-                            : effectiveAmountSol;
+                        txDelta !== null
+                            ? Math.max(0, -txDelta)
+                            : (balanceBeforeBuy !== null && balanceAfterBuy !== null
+                                ? Math.max(0, balanceBeforeBuy - balanceAfterBuy)
+                                : effectiveAmountSol);
 
                     let settled = false;
                     for (let attempt = 0; attempt < 5; attempt++) {
