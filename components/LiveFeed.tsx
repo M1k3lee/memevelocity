@@ -143,6 +143,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const featuredGemsRef = useRef<Set<string>>(new Set());
     const trackedMintsRef = useRef<string[]>([]);
     const subscribedMintsRef = useRef<Set<string>>(new Set());
+    const lastFeedEventAtRef = useRef(Date.now());
     const MAX_TRACKED_MINTS = 200;
 
     // Keep terminal updates inside the panel instead of scrolling the page viewport.
@@ -196,11 +197,13 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             ws.onopen = () => {
                 setStatus("connected");
                 setLastError("");
+                lastFeedEventAtRef.current = Date.now();
                 ws.send(JSON.stringify({ method: "subscribeNewToken" }));
             };
 
             ws.onmessage = async (event) => {
                 if (paused) return;
+                lastFeedEventAtRef.current = Date.now();
                 try {
                     const data = JSON.parse(event.data);
                     if (data.mint) {
@@ -224,6 +227,26 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             scheduleReconnect(err?.message || "Feed connection failed");
         }
     };
+
+    useEffect(() => {
+        if (paused || isSimulating) return;
+
+        const interval = setInterval(() => {
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== WebSocket.OPEN || status !== "connected") {
+                return;
+            }
+
+            if ((Date.now() - lastFeedEventAtRef.current) < 25000) {
+                return;
+            }
+
+            setLastError("Feed stalled. Reconnecting...");
+            ws.close();
+        }, 10000);
+
+        return () => clearInterval(interval);
+    }, [paused, isSimulating, status]);
 
     const subscribeToTokenTrades = (mint: string) => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || subscribedMintsRef.current.has(mint)) {
