@@ -1409,7 +1409,7 @@ export default function Home() {
             {/* Quick Bot Toggle */}
             <div className="glass-panel p-4">
               <h3 className="text-sm font-bold glow-text mb-4 text-gray-400">Quick Actions</h3>
-              <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} realBalance={realBalance} />
+              <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} realBalance={realBalance} config={config} />
             </div>
 
             {/* System Logs */}
@@ -1464,7 +1464,7 @@ export default function Home() {
           {/* Settings Tab - Always mounted, hidden if not active */}
           <div className={`col-span-12 flex justify-center animate-fade-in ${activeTab === 'settings' ? 'block' : 'hidden'}`}>
             <div className="w-full max-w-2xl">
-              <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} />
+              <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} config={config} />
             </div>
           </div>
 

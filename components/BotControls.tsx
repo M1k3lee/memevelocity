@@ -39,20 +39,21 @@ interface BotControlsProps {
     onConfigChange: (config: BotConfig) => void;
     walletConnected: boolean;
     realBalance?: number;
+    config?: Partial<BotConfig>;
 }
 
-export default function BotControls({ onConfigChange, walletConnected, realBalance = 0 }: BotControlsProps) {
-    const [isRunning, setIsRunning] = useState(false);
-    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "custom">("runner");
-    const [amount, setAmount] = useState(0.01);
-    const [takeProfit, setTakeProfit] = useState(20);
-    const [stopLoss, setStopLoss] = useState(10);
-    const [isDemo, setIsDemo] = useState(false);
-    const [isSimulating, setIsSimulating] = useState(false);
-    const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(1);
-    const [dynamicSizing, setDynamicSizing] = useState(true);
+export default function BotControls({ onConfigChange, walletConnected, realBalance = 0, config }: BotControlsProps) {
+    const [isRunning, setIsRunning] = useState(config?.isRunning ?? false);
+    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "custom") ?? "runner");
+    const [amount, setAmount] = useState(config?.amount ?? 0.01);
+    const [takeProfit, setTakeProfit] = useState(config?.takeProfit ?? 20);
+    const [stopLoss, setStopLoss] = useState(config?.stopLoss ?? 10);
+    const [isDemo, setIsDemo] = useState(config?.isDemo ?? false);
+    const [isSimulating, setIsSimulating] = useState(config?.isSimulating ?? false);
+    const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(config?.maxConcurrentTrades ?? 1);
+    const [dynamicSizing, setDynamicSizing] = useState(config?.dynamicSizing ?? true);
     const [activeTab, setActiveTab] = useState<'basic' | 'advanced'>('basic');
-    const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>({
+    const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>(config?.advanced ?? {
         minLiquidity: 10,
         maxLiquidity: 1000,
         minVolume: 5,
@@ -69,6 +70,22 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
     });
     const liveReserve = getAdaptiveFeeReserve(realBalance);
     const baseTradeFitsBalance = isDemo || (amount + liveReserve) <= (realBalance || 0);
+
+    useEffect(() => {
+        if (!config) return;
+        setIsRunning(config.isRunning ?? false);
+        setMode((config.mode as "runner" | "sniper" | "degen" | "custom") ?? "runner");
+        setAmount(config.amount ?? 0.01);
+        setTakeProfit(config.takeProfit ?? 20);
+        setStopLoss(config.stopLoss ?? 10);
+        setIsDemo(config.isDemo ?? false);
+        setIsSimulating(config.isSimulating ?? false);
+        setMaxConcurrentTrades(config.maxConcurrentTrades ?? 1);
+        setDynamicSizing(config.dynamicSizing ?? true);
+        if (config.advanced) {
+            setAdvancedConfig(config.advanced);
+        }
+    }, [config]);
 
     // Update parent whenever config changes
     useEffect(() => {
