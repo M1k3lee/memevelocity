@@ -11,6 +11,7 @@ import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { getMarketSnapshot } from '../utils/marketData';
 import { getLatestToken } from '../utils/liveTokenStore';
+import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
 
@@ -24,6 +25,7 @@ const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: 
 
 const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
+const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
 
 function getBondingCurveProgressFromFeed(token: TokenData): number {
   if (!token.vTokensInBondingCurve) return 0;
@@ -449,7 +451,6 @@ export default function Home() {
 
     // Auto-stop if balance is critical (ONLY for real trading with real wallet)
     // Demo mode has its own balance management in usePumpTrader
-      const MIN_RESERVE = 0.01; // Reduced from 0.02 to allow more trades
       const currentBal = balanceRef.current;
       // Reuse timeSinceLastTrade from line 163
 
@@ -462,10 +463,11 @@ export default function Home() {
         }
 
         const canTrustBalanceReading = currentBal !== -1 && (timeSinceLastTrade >= 10000) && (currentBal > 0 || flickerCount.current >= 3);
+        const sizing = fitTradeAmountToBalance(config.amount, currentBal);
 
-        // Only auto-stop if balance is truly insufficient for next trade + fees
-        if (canTrustBalanceReading && currentBal < (config.amount + MIN_RESERVE)) {
-          addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, need ~${(config.amount + MIN_RESERVE).toFixed(4)} SOL. Auto-stopping bot.`);
+        // Only auto-stop if adaptive micro-wallet sizing cannot fit even a minimum viable trade.
+        if (canTrustBalanceReading && sizing.fittedAmountSol < MIN_VIABLE_LIVE_TRADE_SOL) {
+          addLog(`⚠️ CRITICAL BALANCE: Have ${currentBal.toFixed(4)} SOL, reserve ${sizing.reserveSol.toFixed(4)} SOL leaves only ${sizing.fittedAmountSol.toFixed(4)} SOL tradable. Auto-stopping bot.`);
           setConfig((prev: any) => ({ ...prev, isRunning: false }));
           return;
         }
