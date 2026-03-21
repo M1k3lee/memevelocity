@@ -8,6 +8,16 @@ import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 
+function getLiveExitWarmupSeconds(trade?: Pick<ActiveTrade, 'exitStrategy'>): number {
+    if (trade?.exitStrategy?.maxHoldTime && trade.exitStrategy.maxHoldTime <= 90) {
+        return 6;
+    }
+    if (trade?.exitStrategy?.maxHoldTime && trade.exitStrategy.maxHoldTime <= 120) {
+        return 10;
+    }
+    return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
+}
+
 export interface ActiveTrade {
     mint: string;
     symbol: string;
@@ -355,9 +365,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (!wallet) return;
 
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
+            const liveExitWarmupSeconds = getLiveExitWarmupSeconds(effectiveTrade);
             if (balance === 0) {
                 const ageMs = Date.now() - (effectiveTrade.buyTime || 0);
-                if (ageMs < LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS * 1000) {
+                if (ageMs < liveExitWarmupSeconds * 1000) {
                     setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
                     return;
                 }
@@ -567,18 +578,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         };
                         const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
                         const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
+                        const liveExitWarmupSeconds = getLiveExitWarmupSeconds(trade);
                         const shouldManageExitsInHook =
                             !isDemo &&
                             !trade.isPaper &&
                             (trade.amountTokens || 0) > 0 &&
-                            timeOpen >= LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
+                            timeOpen >= liveExitWarmupSeconds;
 
                         const prevLiq = trade.lastLiquidity || 0;
                         if (shouldManageExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
-                            if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > 0.2) {
+                            const rugDropThreshold = strategy.maxHoldTime && strategy.maxHoldTime <= 90 ? 0.12 : 0.2;
+                            if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > rugDropThreshold) {
                                 updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
                                 sellToken(trade.mint, 100, sellSnapshot);
-                                addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >20%. Selling!`);
+                                addLog(`🚨 RUG PULL DETECTED: ${trade.symbol} liquidity dropped >${(rugDropThreshold * 100).toFixed(0)}%. Selling!`);
                                 return;
                             }
                         }
@@ -635,6 +648,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         .map(t => t.mint)
         .sort();
     const openTradeSubscriptionKey = openTradeMints.join(',');
+    const hasFastExitTrade = activeTrades.some(t => t.status === "open" && !!t.exitStrategy?.maxHoldTime && t.exitStrategy.maxHoldTime <= 90);
 
     // WebSocket Hook
     useEffect(() => {
@@ -663,7 +677,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 if (!data?.mint || (!data.vSolInBondingCurve && !data.price)) return;
 
                 const now = Date.now();
-                if ((now - lastWebsocketRefreshRef.current) < 750) return;
+                const minRefreshMs = hasFastExitTrade ? 300 : 750;
+                if ((now - lastWebsocketRefreshRef.current) < minRefreshMs) return;
                 lastWebsocketRefreshRef.current = now;
                 void updatePrices();
             } catch {
@@ -677,13 +692,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             }
             ws.close();
         };
-    }, [wallet, isDemo, openTradeSubscriptionKey, updatePrices]);
+    }, [wallet, isDemo, openTradeSubscriptionKey, updatePrices, hasFastExitTrade]);
 
     // Polling Hook (2s Heartbeat)
     useEffect(() => {
-        const interval = setInterval(updatePrices, 2000);
+        const intervalMs = hasFastExitTrade ? 1000 : 2000;
+        const interval = setInterval(updatePrices, intervalMs);
         return () => clearInterval(interval);
-    }, [updatePrices]);
+    }, [updatePrices, hasFastExitTrade]);
 
     const subscribeToToken = (mint: string) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

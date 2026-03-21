@@ -27,6 +27,12 @@ const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
 
+function getLiveExitWarmupSeconds(mode: string | undefined): number {
+  if (mode === 'micro') return 6;
+  if (mode === 'degen') return 10;
+  return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
+}
+
 function getBondingCurveProgressFromFeed(token: TokenData): number {
   if (!token.vTokensInBondingCurve) return 0;
   return Math.max(0, Math.min(100,
@@ -1221,10 +1227,11 @@ export default function Home() {
         return;
       }
 
+      const liveExitWarmupSeconds = getLiveExitWarmupSeconds(config.mode);
       const liveTradeSettlementActive =
         !config.isDemo &&
         !trade.isPaper &&
-        (((trade.amountTokens || 0) <= 0) || holdTimeSeconds < LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS);
+        (((trade.amountTokens || 0) <= 0) || holdTimeSeconds < liveExitWarmupSeconds);
       if (liveTradeSettlementActive) {
         return;
       }
