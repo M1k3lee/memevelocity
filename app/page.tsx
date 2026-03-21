@@ -11,6 +11,7 @@ import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { getMarketSnapshot } from '../utils/marketData';
 import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
+import { getIdentityQuarantine } from '../utils/rugDetector';
 
 // Dynamic imports for components
 const WalletManager = dynamic(() => import('../components/WalletManager'), { ssr: false });
@@ -149,6 +150,63 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
         updateAuthority: false
       }
     }
+  };
+}
+
+function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decision: 'pass' | 'wait' | 'reject'; reason?: string; waitTimeMs?: number } {
+  const snapshot = getMarketSnapshot(token.mint);
+  const liquidity = token.vSolInBondingCurve || 30;
+  const liquidityGrowth = liquidity - 30;
+  const bondingCurveProgress = getBondingCurveProgressFromFeed(token);
+  const tradeCount = snapshot?.tradeCount || 0;
+  const buyCount = snapshot?.buyCount || 0;
+  const sellCount = snapshot?.sellCount || 0;
+  const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+  const buyPressure = snapshot?.buyPressure ?? 0;
+  const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
+  const netFlow = snapshot?.netFlowSol || 0;
+
+  if (sellCount > buyCount && age < 45) {
+    return {
+      decision: 'reject',
+      reason: `Early sell pressure (${sellCount} sells vs ${buyCount} buys)`
+    };
+  }
+
+  if (netFlow < -0.25 && age < 45) {
+    return {
+      decision: 'reject',
+      reason: `Net flow turned negative too early (${netFlow.toFixed(2)} SOL)`
+    };
+  }
+
+  const hasSecondaryBuyer = tradeCount >= 1 && uniqueTraderCount >= 2;
+  const hasStrongFlow = buyCount >= 2 && buyPressure >= 0.65 && observedVolume >= 1.5;
+  const hasCurveConfirmation = bondingCurveProgress >= 0.2 && observedVolume >= 0.75 && uniqueTraderCount >= 2;
+
+  if (hasSecondaryBuyer && (buyPressure >= 0.55 || hasStrongFlow || hasCurveConfirmation)) {
+    return { decision: 'pass' };
+  }
+
+  if (age < 12) {
+    return {
+      decision: 'wait',
+      reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets)`,
+      waitTimeMs: 6000
+    };
+  }
+
+  if (age < 25) {
+    return {
+      decision: 'wait',
+      reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure)`,
+      waitTimeMs: 8000
+    };
+  }
+
+  return {
+    decision: 'reject',
+    reason: `No follow-through after launch (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
   };
 }
 
@@ -672,6 +730,23 @@ export default function Home() {
         return;
       }
 
+      if (!config.isDemo && config.mode === 'sniper') {
+        const sniperConfirmation = evaluateLiveSniperConfirmation(token, age);
+        if (sniperConfirmation.decision === 'wait') {
+          scheduleRetry(
+            sniperConfirmation.waitTimeMs || 6000,
+            `⏳ ${token.symbol} sniper confirmation: ${sniperConfirmation.reason}`
+          );
+          return;
+        }
+
+        if (sniperConfirmation.decision === 'reject') {
+          addLog(`🚫 Sniper Reject: ${token.symbol} - ${sniperConfirmation.reason}`);
+          processedMints.current.add(token.mint);
+          return;
+        }
+      }
+
       const shouldQueueYoungTokenRetry =
         age < 30 &&
         config.mode !== 'high' &&
@@ -1003,6 +1078,13 @@ export default function Home() {
         !trade.isPaper &&
         (((trade.amountTokens || 0) <= 0) || holdTimeSeconds < LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS);
       if (liveTradeSettlementActive) {
+        return;
+      }
+
+      const quarantine = getIdentityQuarantine(trade.symbol);
+      if (!config.isDemo && !trade.isPaper && quarantine && holdTimeSeconds < 120) {
+        addLog(`🚨 COPYCAT KILL SWITCH: ${trade.symbol} flagged after entry (${quarantine.reason}). Selling...`);
+        sellToken(trade.mint, 100);
         return;
       }
 

@@ -7,6 +7,7 @@ import { getTokenIdentityKey, sanitizeTokenIdentity } from './tokenIdentity';
  */
 
 const recentTokenNames = new Map<string, { timestamp: number; mint: string }>();
+const quarantinedIdentities = new Map<string, { timestamp: number; mint: string; reason: string }>();
 const NAME_COOLDOWN = 5 * 60 * 1000;
 
 const SUSPICIOUS_PATTERNS = [
@@ -38,7 +39,21 @@ setInterval(() => {
             recentTokenNames.delete(name);
         }
     }
+    for (const [name, data] of quarantinedIdentities.entries()) {
+        if (now - data.timestamp > NAME_COOLDOWN) {
+            quarantinedIdentities.delete(name);
+        }
+    }
 }, 60000);
+
+function quarantineIdentity(identityText: string, mint: string, reason: string) {
+    if (!identityText) return;
+    quarantinedIdentities.set(identityText, {
+        timestamp: Date.now(),
+        mint,
+        reason
+    });
+}
 
 export interface RugDetectionResult {
     isRug: boolean;
@@ -74,6 +89,7 @@ export function detectRug(
                         isRug = true;
                         confidence = 95;
                         reason = `COPYCAT SCAM: ${identityLabel} "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`;
+                        quarantineIdentity(identityText, token.mint, reason);
                     } else {
                         warnings.push(`Duplicate ${identityLabel.toLowerCase()}: "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`);
                         confidence = 40;
@@ -82,6 +98,7 @@ export function detectRug(
                     isRug = true;
                     confidence = 95;
                     reason = `COPYCAT SCAM: ${identityLabel} "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`;
+                    quarantineIdentity(identityText, token.mint, reason);
                 }
             }
         }
@@ -102,6 +119,7 @@ export function detectRug(
                 isRug = true;
                 confidence = 90;
                 reason = `SUSPICIOUS NAME: "${displayIdentity}" matches a known scam pattern`;
+                quarantineIdentity(identityText, token.mint, reason);
             }
             break;
         }
@@ -174,6 +192,7 @@ export function quickRugCheck(token: TokenData): { passed: boolean; reason?: str
 
 export function clearNameCache(): void {
     recentTokenNames.clear();
+    quarantinedIdentities.clear();
 }
 
 export function getRugStats(): { totalNamesTracked: number; recentNames: string[] } {
@@ -189,5 +208,30 @@ export function getRugStats(): { totalNamesTracked: number; recentNames: string[
     return {
         totalNamesTracked: recentTokenNames.size,
         recentNames: recentNames.slice(0, 20)
+    };
+}
+
+export function getIdentityQuarantine(identityOrToken?: string | Pick<TokenData, 'symbol' | 'name'>): { reason: string; mint: string; ageMs: number } | null {
+    const identity = typeof identityOrToken === 'string'
+        ? sanitizeTokenIdentity(identityOrToken)
+        : identityOrToken
+            ? getTokenIdentityKey(identityOrToken)
+            : '';
+
+    if (!identity) return null;
+
+    const entry = quarantinedIdentities.get(identity.toLowerCase());
+    if (!entry) return null;
+
+    const ageMs = Date.now() - entry.timestamp;
+    if (ageMs > NAME_COOLDOWN) {
+        quarantinedIdentities.delete(identity.toLowerCase());
+        return null;
+    }
+
+    return {
+        reason: entry.reason,
+        mint: entry.mint,
+        ageMs
     };
 }
