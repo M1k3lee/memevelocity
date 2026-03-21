@@ -4,8 +4,7 @@ import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
 import { getMarketSnapshot } from '../utils/marketData';
-
-const SOL_FEE_RESERVE = 0.02; // Reduced from 0.05 to allow small balance trading
+import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 
 export interface ActiveTrade {
     mint: string;
@@ -552,15 +551,22 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
         try {
             const bal = await getBalance(wallet.publicKey.toBase58(), connection);
-            if (bal === null || bal < amountSol + SOL_FEE_RESERVE) {
-                addLog(`Error: Insufficient balance. Need ${amountSol + SOL_FEE_RESERVE} SOL.`);
+            const sizing = fitTradeAmountToBalance(amountSol, bal);
+            const effectiveAmountSol = sizing.fittedAmountSol;
+
+            if (bal === null || effectiveAmountSol <= 0) {
+                addLog(`Error: Insufficient balance. Need ${sizing.reserveSol.toFixed(4)} SOL reserved for fees.`);
                 return;
             }
 
-            const priorityFee = amountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, amountSol * 0.05));
+            if (sizing.adjusted) {
+                addLog(`Micro wallet auto-size: ${symbol} reduced from ${amountSol.toFixed(4)} to ${effectiveAmountSol.toFixed(4)} SOL to keep ${sizing.reserveSol.toFixed(4)} SOL in reserve.`);
+            }
+
+            const priorityFee = effectiveAmountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, effectiveAmountSol * 0.05));
             const transactionBuffer = await getTradeTransaction({
                 publicKey: wallet.publicKey.toBase58(),
-                action: "buy", mint, amount: amountSol, denominatedInSol: "true",
+                action: "buy", mint, amount: effectiveAmountSol, denominatedInSol: "true",
                 slippage, priorityFee, pool: "pump"
             });
 
@@ -568,9 +574,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             addLog(`Buy Tx Sent: ${signature.substring(0, 8)}...`);
 
             const newTrade: ActiveTrade = {
-                mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: amountSol,
+                mint, symbol, buyPrice: initialPrice || 0, amountTokens: 0, amountSolPaid: effectiveAmountSol,
                 currentPrice: initialPrice || 0, pnlPercent: 0, status: "open", txId: signature,
-                buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol, partialSells: {}
+                buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: effectiveAmountSol, partialSells: {}
             };
 
             setActiveTrades(prev => [newTrade, ...prev]);
@@ -581,7 +587,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     await new Promise(r => setTimeout(r, 2000));
                     const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
                     if (actualTokens > 0) {
-                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: amountSol / actualTokens, amountTokens: actualTokens } : t));
+                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: effectiveAmountSol / actualTokens, amountTokens: actualTokens } : t));
                     }
                 } else {
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Square, Settings, AlertTriangle, AlertCircle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
+import { getAdaptiveFeeReserve } from '../utils/tradeSizing';
 
 export interface AdvancedConfig {
     minLiquidity: number;       // SOL
@@ -66,6 +67,8 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         avoidSnipers: true,
         slippage: 20
     });
+    const liveReserve = getAdaptiveFeeReserve(realBalance);
+    const baseTradeFitsBalance = isDemo || (amount + liveReserve) <= (realBalance || 0);
 
     // Update parent whenever config changes
     useEffect(() => {
@@ -255,12 +258,20 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                             type="range" min="0.01" max="1" step="0.01"
                             value={amount}
                             onChange={(e) => setAmount(parseFloat(e.target.value))}
-                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${(amount + (isDemo ? 0 : 0.02)) > (isDemo ? 1000 : realBalance) ? 'bg-red-900' : 'bg-[#222]'}`}
+                            className={`w-full h-2 rounded-lg appearance-none cursor-pointer mt-2 ${baseTradeFitsBalance ? 'bg-[#222]' : 'bg-red-900'}`}
                         />
-                        {amount + 0.02 > (realBalance || 0) && !isDemo && (
+                        {!baseTradeFitsBalance && !isDemo && (
                             <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
-                                <AlertTriangle size={10} /> Insufficient balance (need ~0.02 SOL reserve for fees).
+                                <AlertTriangle size={10} /> Insufficient balance for base size after keeping ~{liveReserve.toFixed(4)} SOL reserve.
                             </p>
+                        )}
+                        {!isDemo && realBalance > 0 && realBalance <= 0.05 && (
+                            <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded">
+                                <p className="text-[10px] text-emerald-400 font-bold mb-1">Micro wallet mode active</p>
+                                <p className="text-[9px] text-gray-400 leading-tight">
+                                    Live buys will auto-size down when needed and keep about {liveReserve.toFixed(4)} SOL free for fees and exits.
+                                </p>
+                            </div>
                         )}
                         {amount < 0.02 && !isDemo && (
                             <div className="mt-2 p-2 bg-purple-500/10 border border-purple-500/20 rounded">
