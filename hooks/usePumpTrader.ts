@@ -769,14 +769,42 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 addLog(`Micro wallet auto-size: ${symbol} reduced from ${amountSol.toFixed(4)} to ${effectiveAmountSol.toFixed(4)} SOL to keep ${sizing.reserveSol.toFixed(4)} SOL in reserve.`);
             }
 
-            const priorityFee = effectiveAmountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, effectiveAmountSol * 0.05));
-            const transactionBuffer = await getTradeTransaction({
-                publicKey: wallet.publicKey.toBase58(),
-                action: "buy", mint, amount: effectiveAmountSol, denominatedInSol: "true",
-                slippage, priorityFee, pool: "pump"
-            });
+            let currentSlippage = slippage;
+            let priorityFee = effectiveAmountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, effectiveAmountSol * 0.05));
+            const buildBuyTransaction = async (targetSlippage: number, targetPriorityFee: number) => {
+                return getTradeTransaction({
+                    publicKey: wallet.publicKey.toBase58(),
+                    action: "buy",
+                    mint,
+                    amount: effectiveAmountSol,
+                    denominatedInSol: "true",
+                    slippage: targetSlippage,
+                    priorityFee: targetPriorityFee,
+                    pool: "pump"
+                });
+            };
 
-            const signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+            let transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
+            let signature: string;
+            try {
+                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+            } catch (error: any) {
+                const msg = error?.message || "";
+                const shouldRetrySlippage =
+                    msg.includes("TooMuchSolRequired") ||
+                    msg.includes("0x1772") ||
+                    msg.toLowerCase().includes("slippage");
+
+                if (!shouldRetrySlippage) {
+                    throw error;
+                }
+
+                currentSlippage = Math.max(currentSlippage + 15, 45);
+                priorityFee = Math.min(0.003, priorityFee + 0.0007);
+                addLog(`Buy retry: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`);
+                transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
+                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+            }
             addLog(`Buy Tx Sent: ${signature.substring(0, 8)}...`);
 
             const newTrade: ActiveTrade = {

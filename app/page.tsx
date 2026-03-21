@@ -946,8 +946,9 @@ export default function Home() {
       // Higher score = larger position (up to 2x base amount)
       // Lower score = smaller position (down to 0.5x base amount)
       let positionSize = config.amount;
+      const liveDegenMinMultiplier = !config.isDemo && config.mode === 'degen' ? 0.75 : 0.5;
       if (config.dynamicSizing) {
-        const scoreMultiplier = Math.max(0.5, Math.min(2.0, (analysis.score / 50))); // 0.5x to 2.0x
+        const scoreMultiplier = Math.max(liveDegenMinMultiplier, Math.min(2.0, (analysis.score / 50)));
         positionSize = config.amount * scoreMultiplier;
 
         if (Math.abs(positionSize - config.amount) > 0.001) {
@@ -967,7 +968,7 @@ export default function Home() {
 
       // Cap position size for safety
       positionSize = Math.min(positionSize, config.amount * 2); // Never more than 2x base
-      positionSize = Math.max(positionSize, config.amount * 0.3); // Never less than 0.3x base
+      positionSize = Math.max(positionSize, config.amount * (!config.isDemo && config.mode === 'degen' ? 0.75 : 0.3));
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
