@@ -389,7 +389,7 @@ export default function Home() {
 
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
       const effectiveMaxConcurrentTrades =
-        !config.isDemo && config.mode === 'degen' && realBalance > 0 && realBalance < 0.1
+        !config.isDemo && (config.mode === 'degen' || config.mode === 'micro') && realBalance > 0 && realBalance < 0.1
           ? 1
           : (config.maxConcurrentTrades || 1);
       if (openTradesCount >= effectiveMaxConcurrentTrades) {
@@ -721,6 +721,84 @@ export default function Home() {
       } catch (e) { }
     }
 
+    if (config.mode === 'micro') {
+      try {
+        const age = (Date.now() - token.timestamp) / 1000;
+        const liquidity = token.vSolInBondingCurve || 30;
+        const liquidityGrowth = liquidity - 30;
+        const snapshot = getMarketSnapshot(token.mint);
+        const tradeCount = snapshot?.tradeCount || 0;
+        const buyCount = snapshot?.buyCount || 0;
+        const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+        const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
+        const buyPressure = snapshot?.buyPressure ?? 0;
+        const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
+        const bondingCurveProgress = token.vTokensInBondingCurve > 0
+          ? Math.max(0, Math.min(100, 100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)))
+          : 0;
+
+        const strongFlow =
+          age <= 60 &&
+          buyCount >= 3 &&
+          tradeCount >= 3 &&
+          uniqueTraderCount >= 3 &&
+          observedVolume >= 1.5 &&
+          buyPressure >= 0.7 &&
+          netFlow > 0.75;
+        const curveReady = bondingCurveProgress >= 2 && liquidityGrowth >= 1.2;
+        const deepLiquidity = liquidity >= 45 && bondingCurveProgress >= 1;
+
+        if (!strongFlow && !curveReady && !deepLiquidity) {
+          addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+          return;
+        }
+
+        addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}%`);
+        await new Promise(r => setTimeout(r, 1200));
+        const freshData = await getPumpData(token.mint, connection);
+        if (!freshData) {
+          addLog(`MICRO Reject: ${token.symbol} - verification snapshot unavailable`);
+          return;
+        }
+
+        const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
+        const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+        const change = ((freshPrice - oldPrice) / oldPrice) * 100;
+
+        if (change < -0.4) {
+          addLog(`MICRO Reject: ${token.symbol} reversed ${change.toFixed(2)}% during verification.`);
+          return;
+        }
+        if (freshData.vSolInBondingCurve < liquidity * 0.95) {
+          addLog(`MICRO Reject: ${token.symbol} lost liquidity during verification.`);
+          return;
+        }
+
+        token.vSolInBondingCurve = freshData.vSolInBondingCurve;
+        token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
+
+        const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
+          ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+          : undefined;
+
+        const exitStrategy = {
+          takeProfit: 18,
+          takeProfit2: 35,
+          stopLoss: 9,
+          maxHoldTime: 90,
+          trailingStop: false,
+          minHoldTime: 12
+        };
+
+        setLastTradeTime(Date.now());
+        await buyToken(token.mint, token.symbol, config.amount, config.advanced?.slippage || 35, initialPrice, exitStrategy);
+        return;
+      } catch (error: any) {
+        addLog(`MICRO error for ${token.symbol}: ${error.message}`);
+        return;
+      }
+    }
+
     // === ENHANCED TOKEN ANALYSIS (Safe/Medium/High modes) - Based on Research ===
     try {
       // ENTRY CONFIRMATION: Wait for momentum confirmation before buying
@@ -840,6 +918,7 @@ export default function Home() {
           'sniper': 'sniper',
           'first': 'sniper',
           'degen': 'degen',
+          'micro': 'velocity',
           'high': 'degen',
           'velocity': 'degen',
           'scalp': 'degen',
@@ -865,6 +944,7 @@ export default function Home() {
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
+      else if (config.mode === 'micro') minScore = 45;
       if (!config.isDemo && config.mode === 'degen') minScore = Math.max(minScore, 30);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
@@ -973,7 +1053,7 @@ export default function Home() {
       // Higher score = larger position (up to 2x base amount)
       // Lower score = smaller position (down to 0.5x base amount)
       let positionSize = config.amount;
-      const liveDegenMinMultiplier = !config.isDemo && config.mode === 'degen' ? 0.75 : 0.5;
+      const liveDegenMinMultiplier = !config.isDemo && (config.mode === 'degen' || config.mode === 'micro') ? 0.75 : 0.5;
       if (config.dynamicSizing) {
         const scoreMultiplier = Math.max(liveDegenMinMultiplier, Math.min(2.0, (analysis.score / 50)));
         positionSize = config.amount * scoreMultiplier;
@@ -995,7 +1075,7 @@ export default function Home() {
 
       // Cap position size for safety
       positionSize = Math.min(positionSize, config.amount * 2); // Never more than 2x base
-      positionSize = Math.max(positionSize, config.amount * (!config.isDemo && config.mode === 'degen' ? 0.75 : 0.3));
+      positionSize = Math.max(positionSize, config.amount * (!config.isDemo && (config.mode === 'degen' || config.mode === 'micro') ? 0.75 : 0.3));
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
@@ -1011,10 +1091,12 @@ export default function Home() {
 
       const exitStrategy = {
         takeProfit: config.takeProfit,
+        takeProfit2: config.mode === 'micro' ? 35 : undefined,
         stopLoss: config.stopLoss,
-        maxHoldTime: config.mode === 'sniper' ? 300 : (config.mode === 'degen' ? 120 : 3600), // Sniper/Degen = short hold, Runner = long
+        maxHoldTime: config.mode === 'micro' ? 90 : (config.mode === 'sniper' ? 300 : (config.mode === 'degen' ? 120 : 3600)), // Sniper/Degen = short hold, Runner = long
         trailingStop: config.mode === 'runner', // Enable trailing stop for runners
         momentumExit: config.mode === 'degen', // Momentum exit for degens
+        minHoldTime: config.mode === 'micro' ? 12 : undefined,
       };
 
       await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice, exitStrategy);

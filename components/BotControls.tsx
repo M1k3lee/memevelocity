@@ -25,7 +25,7 @@ interface BotConfig {
     amount: number;
     takeProfit: number;
     stopLoss: number;
-    mode: "runner" | "sniper" | "degen" | "custom" | "safe" | "medium" | "high" | "velocity";
+    mode: "runner" | "sniper" | "degen" | "micro" | "custom" | "safe" | "medium" | "high" | "velocity";
     isRunning: boolean;
     isDemo: boolean;
     isSimulating: boolean;
@@ -44,7 +44,7 @@ interface BotControlsProps {
 
 export default function BotControls({ onConfigChange, walletConnected, realBalance = 0, config }: BotControlsProps) {
     const [isRunning, setIsRunning] = useState(config?.isRunning ?? false);
-    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "custom") ?? "runner");
+    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "micro" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "micro" | "custom") ?? "runner");
     const [amount, setAmount] = useState(config?.amount ?? 0.01);
     const [takeProfit, setTakeProfit] = useState(config?.takeProfit ?? 20);
     const [stopLoss, setStopLoss] = useState(config?.stopLoss ?? 10);
@@ -74,7 +74,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
     useEffect(() => {
         if (!config) return;
         setIsRunning(config.isRunning ?? false);
-        setMode((config.mode as "runner" | "sniper" | "degen" | "custom") ?? "runner");
+        setMode((config.mode as "runner" | "sniper" | "degen" | "micro" | "custom") ?? "runner");
         setAmount(config.amount ?? 0.01);
         setTakeProfit(config.takeProfit ?? 20);
         setStopLoss(config.stopLoss ?? 10);
@@ -107,7 +107,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         });
     }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
-    const setPreset = (preset: "runner" | "sniper" | "degen" | "custom") => {
+    const setPreset = (preset: "runner" | "sniper" | "degen" | "micro" | "custom") => {
         setMode(preset);
         if (preset === "runner") {
             // THE ULTRA PROFITABLE CONFIG (Tier 0-4 Strict)
@@ -170,6 +170,28 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 avoidSnipers: false,
                 slippage: 25
             });
+        } else if (preset === "micro") {
+            // MICRO WALLET COMPOUNDER
+            setAmount(0.008);
+            setTakeProfit(18);
+            setStopLoss(9);
+            setMaxConcurrentTrades(1);
+            setDynamicSizing(false);
+            setAdvancedConfig({
+                minLiquidity: 8,
+                maxLiquidity: 200,
+                minVolume: 1.5,
+                minHolderCount: 6,
+                maxTop10: 55,
+                maxDev: 12,
+                minBondingCurve: 2,
+                maxBondingCurve: 18,
+                minVelocity: 0.4,
+                rugCheckStrictness: "standard",
+                requireSocials: false,
+                avoidSnipers: true,
+                slippage: 35
+            });
         }
     };
 
@@ -192,7 +214,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
 
             <div className="mb-4">
                 <label className="text-gray-400 text-sm mb-2 block">Trading Strategy</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     <button
                         onClick={() => setPreset("runner")}
                         className={`p-3 rounded border transition-all ${mode === "runner" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
@@ -213,6 +235,13 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     >
                         <div className="font-bold whitespace-nowrap">🎰 DEGEN</div>
                         <div className="text-[10px] opacity-70">Momentum | High Risk</div>
+                    </button>
+                    <button
+                        onClick={() => setPreset("micro")}
+                        className={`p-3 rounded border transition-all ${mode === "micro" ? "border-[#ff7a00] bg-[rgba(255,122,0,0.1)] text-[#ff9a3d]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                    >
+                        <div className="font-bold whitespace-nowrap">MICRO</div>
+                        <div className="text-[10px] opacity-70">1-Pos | Fast Compound</div>
                     </button>
                     <button
                         onClick={() => setPreset("custom")}
