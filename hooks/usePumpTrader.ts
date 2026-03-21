@@ -57,6 +57,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const [profitProtectionPercent, setProfitProtectionPercent] = useState(25);
 
     const wsRef = useRef<WebSocket | null>(null);
+    const lastWebsocketRefreshRef = useRef(0);
 
     // Initial Load
     useEffect(() => {
@@ -454,33 +455,54 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
     }, [activeTrades, connection, isDemo, addLog, sellToken]);
 
+    const openTradeMints = activeTrades
+        .filter(t => t.status === "open")
+        .map(t => t.mint)
+        .sort();
+    const openTradeSubscriptionKey = openTradeMints.join(',');
+
     // WebSocket Hook
     useEffect(() => {
         if (!wallet && !isDemo) return;
-        const url = heliusKey ? `wss://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'wss://pumpportal.fun/api/data';
-        const ws = new WebSocket(url);
+
+        if (!openTradeSubscriptionKey) {
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+            return;
+        }
+
+        const subscriptionMints = openTradeSubscriptionKey.split(',').filter(Boolean);
+        const ws = new WebSocket('wss://pumpportal.fun/api/data');
         wsRef.current = ws;
 
         ws.onopen = () => {
-            const mints = activeTrades.filter(t => t.status === "open").map(t => t.mint);
-            if (mints.length > 0) {
-                if (heliusKey) {
-                    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: mints }, { commitment: "processed" }] }));
-                } else {
-                    ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: mints }));
-                }
-            }
+            ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: subscriptionMints }));
+            void updatePrices();
         };
 
         ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if ((heliusKey && data.method === "logsNotification") || (data.mint && (data.vSolInBondingCurve || data.price))) {
-                updatePrices();
+            try {
+                const data = JSON.parse(event.data);
+                if (!data?.mint || (!data.vSolInBondingCurve && !data.price)) return;
+
+                const now = Date.now();
+                if ((now - lastWebsocketRefreshRef.current) < 750) return;
+                lastWebsocketRefreshRef.current = now;
+                void updatePrices();
+            } catch {
+                // Ignore malformed websocket messages from the live feed.
             }
         };
 
-        return () => ws.close();
-    }, [wallet, heliusKey, isDemo, activeTrades.length, updatePrices]);
+        return () => {
+            if (wsRef.current === ws) {
+                wsRef.current = null;
+            }
+            ws.close();
+        };
+    }, [wallet, isDemo, openTradeSubscriptionKey, updatePrices]);
 
     // Polling Hook (2s Heartbeat)
     useEffect(() => {
@@ -490,11 +512,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     const subscribeToToken = (mint: string) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            if (heliusKey) {
-                wsRef.current.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [mint] }, { commitment: "processed" }] }));
-            } else {
-                wsRef.current.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] }));
-            }
+            wsRef.current.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] }));
         }
     };
 

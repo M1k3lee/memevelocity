@@ -1,7 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getTokenBalance } from './solanaManager';
 import type { TokenData } from '../types/token';
-import { getMarketSnapshot } from './marketData';
+import { getMarketSnapshot, type MarketSnapshot } from './marketData';
 
 type ContractSecurity = {
     freezeAuthority: boolean;
@@ -18,6 +18,12 @@ type PumpSnapshot = {
     tokenTotalSupply: number;
     bondingCurveProgress: number;
     source: 'rpc' | 'feed';
+};
+
+type HolderMetrics = {
+    holderCount: number;
+    deployerHoldings: number;
+    top10Concentration: number;
 };
 
 export interface AdvancedConfig {
@@ -118,8 +124,18 @@ export async function analyzeEnhanced(
         const bondingCurveProgress = pumpData.bondingCurveProgress;
 
         // Get Metadata & Security
-        const metadata = await getTokenMetadata(token.mint, heliusKey);
+        const metadata = isDegenMode
+            ? {
+                name: token.name || '',
+                symbol: token.symbol || '',
+                uri: token.uri || ''
+            }
+            : await getTokenMetadata(token.mint, heliusKey);
         const contractSecurity = await checkContractSecurity(token.mint, connection);
+
+        if (isDegenMode) {
+            warnings.push('Degen fast path active - using launch-feed identity and light trade-flow estimates');
+        }
 
         // === TIER 0: METADATA & TECHNICAL SETUP ===
         // Must pass 100 points (All checks)
@@ -146,7 +162,9 @@ export async function analyzeEnhanced(
         }
 
         // === TIER 2: HOLDER DISTRIBUTION ===
-        const holderMetrics = await analyzeHolderDistribution(token, connection, heliusKey, bondingCurveProgress);
+        const holderMetrics = isDegenMode
+            ? estimateDegenHolderDistribution(marketSnapshot, bondingCurveProgress)
+            : await analyzeHolderDistribution(token, connection, heliusKey, bondingCurveProgress);
         const tier2 = calculateTier2(holderMetrics, age);
 
         if (isRunnerMode && tier2.score < 60) {
@@ -163,7 +181,7 @@ export async function analyzeEnhanced(
 
         // === TIER 3: ENGAGEMENT VELOCITY ===
         // We do a basic check here, can't fully replicate Twitter API v2 without key
-        const hasSocials = await checkSocials(metadata.uri || token.uri);
+        const hasSocials = isDegenMode ? false : await checkSocials(metadata.uri || token.uri);
         if (config?.requireSocials && hasSocials === null) {
             warnings.push('Social verification unavailable in browser build');
         }
@@ -368,7 +386,7 @@ function calculateTier1(timestamp: number) {
     return { score, strengths };
 }
 
-function calculateTier2(metrics: { holderCount: number, deployerHoldings: number, top10Concentration: number }, age: number) {
+function calculateTier2(metrics: HolderMetrics, age: number) {
     let score = 0;
     const strengths: string[] = [];
 
@@ -566,7 +584,31 @@ function getFeedPumpData(token: TokenData): PumpSnapshot | null {
     };
 }
 
-async function analyzeHolderDistribution(token: TokenData, conn: Connection, key?: string, curveProgress: number = 0) {
+function estimateDegenHolderDistribution(marketSnapshot: MarketSnapshot | null, curveProgress: number = 0): HolderMetrics {
+    const uniqueTraderCount = marketSnapshot?.uniqueTraderCount || 0;
+    const tradeCount = marketSnapshot?.tradeCount || 0;
+    const observedVolume = marketSnapshot?.observedVolumeSol || 0;
+
+    const holderCount = Math.max(
+        uniqueTraderCount,
+        Math.ceil(tradeCount * 0.65),
+        Math.floor(curveProgress * 1.5) + 6,
+        observedVolume >= 3 ? 10 : 0
+    );
+
+    const top10Concentration =
+        holderCount >= 25 ? 42 :
+            holderCount >= 15 ? 52 :
+                holderCount >= 10 ? 58 : 68;
+
+    return {
+        holderCount,
+        deployerHoldings: -1,
+        top10Concentration
+    };
+}
+
+async function analyzeHolderDistribution(token: TokenData, conn: Connection, key?: string, curveProgress: number = 0): Promise<HolderMetrics> {
     try {
         const realStats = await getHolderStats(token.mint, conn);
         const realCount = curveProgress >= 5 ? await getHolderCount(token.mint, conn) : null;
