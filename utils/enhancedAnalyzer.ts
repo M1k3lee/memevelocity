@@ -209,6 +209,17 @@ export async function analyzeEnhanced(
         let effectiveConfig = config;
         if (config && isDegenMode) {
             effectiveConfig = { ...config };
+            const hasEarlyFlowConfirmation = !!marketSnapshot &&
+                age <= 45 &&
+                (marketSnapshot.tradeCount >= 3 || marketSnapshot.buyCount >= 3) &&
+                marketSnapshot.uniqueTraderCount >= 3 &&
+                marketSnapshot.observedVolumeSol >= 1.5 &&
+                marketSnapshot.buyPressure >= 0.65;
+
+            if (hasEarlyFlowConfirmation && (effectiveConfig.minBondingCurve ?? 0) > 0) {
+                effectiveConfig.minBondingCurve = 0;
+                warnings.push('Degen confirmation: bypassing early curve floor due to strong early follow-through');
+            }
 
             if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 6) {
                 effectiveConfig.minHolderCount = 6;

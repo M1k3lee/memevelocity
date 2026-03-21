@@ -743,7 +743,7 @@ export default function Home() {
         return;
       }
 
-      if (!config.isDemo && config.mode === 'sniper') {
+      if (config.mode === 'sniper') {
         const sniperConfirmation = evaluateLiveSniperConfirmation(token, age);
         if (sniperConfirmation.decision === 'wait') {
           scheduleRetry(
@@ -825,8 +825,6 @@ export default function Home() {
             contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
           }
         };
-      } else if (config.isDemo && !config.heliusKey) {
-        analysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
       } else {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
@@ -851,12 +849,6 @@ export default function Home() {
         // @ts-ignore
         analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, analysisConfig);
 
-        if (config.isDemo && analysis.score < 35) {
-          const fallbackAnalysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
-          if (fallbackAnalysis.score > analysis.score) {
-            analysis = fallbackAnalysis;
-          }
-        }
       }
 
       // Mode-based filtering with analysis scores
@@ -870,22 +862,13 @@ export default function Home() {
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
 
-      if (config.isDemo) {
-        // Paper trading: Lower thresholds to allow more trades for testing
-        minScore = Math.max(15, minScore - 10);
-      }
-
-      if (config.isDemo && !config.heliusKey) {
-        minScore = Math.max(35, minScore - 35);
-      }
-
       // For high-risk mode with strong momentum, we can be slightly more lenient
-      // But still maintain minimum quality (don't go below 25 in real mode, 20 in demo)
+      // But still maintain minimum quality.
       if (config.mode === 'high' && age < 120 && momentum > 2) {
-        minScore = config.isDemo ? 15 : 20;
+        minScore = 20;
       }
 
-      if (!config.isDemo && config.mode === 'sniper' && analysis.score < 25) {
+      if (config.mode === 'sniper' && analysis.score < 25) {
         addLog(`🚫 Sniper Reject: ${token.symbol} - Live sniper score floor not met (${analysis.score}/100 < 25).`);
         return;
       }
@@ -893,7 +876,7 @@ export default function Home() {
       // If RPC is failing (analysis might be incomplete), be very lenient
       // Check if analysis has warnings about RPC issues
       const hasRpcIssues = analysis.warnings.some(w => w.includes('RPC') || w.includes('Access denied') || w.includes('rate limit') || w.includes('basic analysis'));
-      if (config.isDemo && hasRpcIssues) {
+      if (false && config.isDemo && hasRpcIssues) {
         // If RPC is failing, accept tokens with lower scores (analysis is incomplete)
         minScore = Math.max(10, minScore - 20); // Lower by 20 points, minimum 10
         addLog(`⚠️ RPC issues detected - lowering score threshold to ${minScore} for ${token.symbol}`);

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { Activity, ExternalLink, RefreshCw, Zap, AlertTriangle, Pause, Play, Trash2, Diamond, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { detectRug, type RugDetectionResult } from '../utils/rugDetector';
-import { recordMarketEvent } from '../utils/marketData';
+import { getMarketSnapshot, recordMarketEvent } from '../utils/marketData';
 import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
@@ -290,6 +290,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const now = Date.now();
         const currentLiquidity = token.vSolInBondingCurve || 0;
         const previous = analysisDispatchRef.current.get(token.mint);
+        const snapshot = getMarketSnapshot(token.mint);
 
         if (token.txType === "create" || !previous) {
             analysisDispatchRef.current.set(token.mint, {
@@ -308,7 +309,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             ? liquidityDelta / previous.lastLiquidity
             : liquidityDelta;
         const hasMeaningfulMove = liquidityDelta >= 1 || relativeLiquidityDelta >= 0.08;
-        const cooledDown = (now - previous.lastDispatchedAt) >= 20000;
+        const earlyLifecycle = !!snapshot && (now - snapshot.firstSeenAt) <= 30000;
+        const cooledDown = (now - previous.lastDispatchedAt) >= (earlyLifecycle ? 6000 : 20000);
 
         if (!hasMeaningfulMove || !cooledDown) {
             return false;
