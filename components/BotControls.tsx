@@ -174,23 +174,23 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             // MICRO WALLET COMPOUNDER
             setAmount(0.008);
             setTakeProfit(18);
-            setStopLoss(9);
+            setStopLoss(8);
             setMaxConcurrentTrades(1);
             setDynamicSizing(false);
             setAdvancedConfig({
                 minLiquidity: 8,
                 maxLiquidity: 200,
-                minVolume: 1.5,
+                minVolume: 1.0,
                 minHolderCount: 6,
                 maxTop10: 55,
                 maxDev: 12,
-                minBondingCurve: 2,
+                minBondingCurve: 1,
                 maxBondingCurve: 18,
-                minVelocity: 0.4,
+                minVelocity: 0.3,
                 rugCheckStrictness: "standard",
                 requireSocials: false,
                 avoidSnipers: true,
-                slippage: 35
+                slippage: 45
             });
         }
     };

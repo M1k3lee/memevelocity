@@ -737,40 +737,68 @@ export default function Home() {
           ? Math.max(0, Math.min(100, 100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)))
           : 0;
 
-        const strongFlow =
-          age <= 60 &&
-          buyCount >= 3 &&
+        const launchPulse =
+          age <= 75 &&
+          buyCount >= 2 &&
           tradeCount >= 3 &&
-          uniqueTraderCount >= 3 &&
-          observedVolume >= 1.5 &&
-          buyPressure >= 0.7 &&
+          uniqueTraderCount >= 2 &&
+          observedVolume >= 0.8 &&
+          buyPressure >= 0.58 &&
+          netFlow > 0.35;
+        const breakoutFlow =
+          age <= 90 &&
+          tradeCount >= 8 &&
+          observedVolume >= 1.2 &&
+          buyPressure >= 0.55 &&
           netFlow > 0.75;
-        const curveReady = bondingCurveProgress >= 2 && liquidityGrowth >= 1.2;
-        const deepLiquidity = liquidity >= 45 && bondingCurveProgress >= 1;
+        const strongFlow = launchPulse || breakoutFlow;
+        const curveReady = bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.75;
+        const deepLiquidity = liquidity >= 40 && (bondingCurveProgress >= 0.5 || tradeCount >= 4);
 
         if (!strongFlow && !curveReady && !deepLiquidity) {
-          addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+          if (age < 45) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+          } else {
+            addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+          }
           return;
         }
 
         addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}%`);
-        await new Promise(r => setTimeout(r, 1200));
+        const aggressiveSetup =
+          buyPressure >= 0.65 &&
+          tradeCount >= 6 &&
+          observedVolume >= 1.25 &&
+          bondingCurveProgress >= 2;
+        await new Promise(r => setTimeout(r, aggressiveSetup ? 800 : 1200));
         const freshData = await getPumpData(token.mint, connection);
         if (!freshData) {
-          addLog(`MICRO Reject: ${token.symbol} - verification snapshot unavailable`);
+          scheduleRetry(5000, `MICRO wait: ${token.symbol} verification snapshot unavailable.`);
           return;
         }
 
         const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
         const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+        if (!Number.isFinite(freshPrice) || freshPrice <= 0 || !Number.isFinite(oldPrice) || oldPrice <= 0) {
+          scheduleRetry(5000, `MICRO wait: ${token.symbol} verification price unavailable.`);
+          return;
+        }
         const change = ((freshPrice - oldPrice) / oldPrice) * 100;
 
-        if (change < -0.4) {
+        if (change < -3) {
           addLog(`MICRO Reject: ${token.symbol} reversed ${change.toFixed(2)}% during verification.`);
           return;
         }
-        if (freshData.vSolInBondingCurve < liquidity * 0.95) {
+        if (change < -0.6) {
+          scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back ${change.toFixed(2)}% during verification.`);
+          return;
+        }
+        if (freshData.vSolInBondingCurve < liquidity * 0.9) {
           addLog(`MICRO Reject: ${token.symbol} lost liquidity during verification.`);
+          return;
+        }
+        if (freshData.vSolInBondingCurve < liquidity * 0.96) {
+          scheduleRetry(4000, `MICRO wait: ${token.symbol} liquidity dipped during verification.`);
           return;
         }
 
@@ -782,16 +810,17 @@ export default function Home() {
           : undefined;
 
         const exitStrategy = {
-          takeProfit: 18,
-          takeProfit2: 35,
-          stopLoss: 9,
-          maxHoldTime: 90,
+          takeProfit: aggressiveSetup ? Math.max(14, config.takeProfit - 2) : config.takeProfit,
+          takeProfit2: aggressiveSetup ? Math.max(config.takeProfit + 12, 30) : Math.max(config.takeProfit + 17, 35),
+          stopLoss: aggressiveSetup ? Math.min(config.stopLoss, 8) : config.stopLoss,
+          maxHoldTime: aggressiveSetup ? 75 : 90,
           trailingStop: false,
-          minHoldTime: 12
+          minHoldTime: 10
         };
+        const microSlippage = Math.max(config.advanced?.slippage || 35, aggressiveSetup ? 45 : 35);
 
         setLastTradeTime(Date.now());
-        await buyToken(token.mint, token.symbol, config.amount, config.advanced?.slippage || 35, initialPrice, exitStrategy);
+        await buyToken(token.mint, token.symbol, config.amount, microSlippage, initialPrice, exitStrategy);
         return;
       } catch (error: any) {
         addLog(`MICRO error for ${token.symbol}: ${error.message}`);

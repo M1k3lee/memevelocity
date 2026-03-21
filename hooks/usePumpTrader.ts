@@ -785,25 +785,33 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             };
 
             let transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
-            let signature: string;
-            try {
-                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
-            } catch (error: any) {
-                const msg = error?.message || "";
-                const shouldRetrySlippage =
-                    msg.includes("TooMuchSolRequired") ||
-                    msg.includes("0x1772") ||
-                    msg.toLowerCase().includes("slippage");
+            let signature: string = "";
+            let buyError: any = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+                    buyError = null;
+                    break;
+                } catch (error: any) {
+                    buyError = error;
+                    const msg = error?.message || "";
+                    const shouldRetrySlippage =
+                        msg.includes("TooMuchSolRequired") ||
+                        msg.includes("0x1772") ||
+                        msg.toLowerCase().includes("slippage");
 
-                if (!shouldRetrySlippage) {
-                    throw error;
+                    if (!shouldRetrySlippage || attempt === 2) {
+                        break;
+                    }
+
+                    currentSlippage = Math.min(Math.max(currentSlippage + 15, 45), 65);
+                    priorityFee = Math.min(0.0045, priorityFee + 0.0007);
+                    addLog(`Buy retry ${attempt + 1}/2: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`);
+                    transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
                 }
-
-                currentSlippage = Math.max(currentSlippage + 15, 45);
-                priorityFee = Math.min(0.003, priorityFee + 0.0007);
-                addLog(`Buy retry: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`);
-                transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
-                signature = await signAndSendTransaction(connection, transactionBuffer, wallet);
+            }
+            if (buyError) {
+                throw buyError;
             }
             addLog(`Buy Tx Sent: ${signature.substring(0, 8)}...`);
 
