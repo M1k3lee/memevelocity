@@ -133,6 +133,57 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         localStorage.removeItem('pump_logs');
     }, []);
 
+    const reclaimMintAccountRent = useCallback(async (mint: string): Promise<number> => {
+        if (!wallet || isDemo) return 0;
+
+        try {
+            const [{ PublicKey, Transaction }, { TOKEN_PROGRAM_ID, createCloseAccountInstruction }] = await Promise.all([
+                import('@solana/web3.js'),
+                import('@solana/spl-token')
+            ]);
+
+            const accounts = await connection.getParsedTokenAccountsByOwner(
+                wallet.publicKey,
+                { mint: new PublicKey(mint) }
+            );
+
+            const emptyAccounts = accounts.value.filter(acc => {
+                const uiAmount = acc.account.data.parsed.info.tokenAmount.uiAmount || 0;
+                return uiAmount <= 0;
+            });
+
+            if (emptyAccounts.length === 0) {
+                return 0;
+            }
+
+            const balanceBefore = await getBalance(wallet.publicKey.toBase58(), connection);
+            const transaction = new Transaction();
+            emptyAccounts.forEach(acc => {
+                transaction.add(
+                    createCloseAccountInstruction(acc.pubkey, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM_ID)
+                );
+            });
+
+            const { blockhash } = await connection.getLatestBlockhash();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = wallet.publicKey;
+            transaction.sign(wallet);
+
+            const signature = await connection.sendRawTransaction(transaction.serialize());
+            await connection.confirmTransaction(signature, 'confirmed');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
+            if (balanceBefore === null || balanceAfter === null) {
+                return 0;
+            }
+
+            return Math.max(0, balanceAfter - balanceBefore);
+        } catch {
+            return 0;
+        }
+    }, [wallet, isDemo, connection]);
+
     // Define sellToken early so it can be used in useEffect
     const sellToken = useCallback(async (mint: string, amountPercent: number = 100, snapshot?: SellSnapshot) => {
         if (!wallet && !isDemo) return;
@@ -262,7 +313,15 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             await new Promise(resolve => setTimeout(resolve, 2000));
             const balanceAfter = await getBalance(wallet.publicKey.toBase58(), connection);
-            const revenue = (balanceAfter ?? 0) - (balanceBefore ?? 0);
+            let reclaimedRent = 0;
+            if (amountPercent >= 99) {
+                reclaimedRent = await reclaimMintAccountRent(mint);
+                if (reclaimedRent > 0) {
+                    addLog(`Recovered ${reclaimedRent.toFixed(4)} SOL rent from ${effectiveTrade.symbol}.`);
+                }
+            }
+
+            const revenue = ((balanceAfter ?? 0) - (balanceBefore ?? 0)) + reclaimedRent;
             const costBasis = tradeAmountPaid * (amountPercent / 100);
             const netProfit = revenue - costBasis;
             const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
@@ -322,7 +381,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } finally {
             processingMintsRef.current.delete(mint);
         }
-    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance]);
+    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance, reclaimMintAccountRent]);
 
     // --- PRICE CALCULATION ENGINE ---
 
@@ -580,6 +639,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
 
         try {
+            const balanceBeforeBuy = await getBalance(wallet.publicKey.toBase58(), connection);
             const bal = await getBalance(wallet.publicKey.toBase58(), connection);
             const sizing = fitTradeAmountToBalance(amountSol, bal);
             const effectiveAmountSol = sizing.fittedAmountSol;
@@ -616,8 +676,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 if (!res.value.err) {
                     await new Promise(r => setTimeout(r, 2000));
                     const actualTokens = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
+                    const balanceAfterBuy = await getBalance(wallet.publicKey.toBase58(), connection);
+                    const actualSpentSol =
+                        balanceBeforeBuy !== null && balanceAfterBuy !== null
+                            ? Math.max(0, balanceBeforeBuy - balanceAfterBuy)
+                            : effectiveAmountSol;
+
                     if (actualTokens > 0) {
-                        setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, buyPrice: effectiveAmountSol / actualTokens, amountTokens: actualTokens } : t));
+                        setActiveTrades(prev => prev.map(t => t.mint === mint ? {
+                            ...t,
+                            buyPrice: actualSpentSol / actualTokens,
+                            amountTokens: actualTokens,
+                            amountSolPaid: actualSpentSol,
+                            originalAmount: actualSpentSol
+                        } : t));
                     }
                 } else {
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
