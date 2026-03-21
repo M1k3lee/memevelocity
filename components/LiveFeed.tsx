@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, memo, useMemo } from 'react';
 import { Activity, ExternalLink, RefreshCw, Zap, AlertTriangle, Pause, Play, Trash2, Diamond, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { detectRug, type RugDetectionResult } from '../utils/rugDetector';
 import { recordMarketEvent } from '../utils/marketData';
+import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 import { getTokenDisplayName, getTokenDisplaySymbol, hasUsableTokenIdentity } from '../utils/tokenIdentity';
@@ -299,6 +300,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
 
     const processMarketEvent = (token: TokenData) => {
         const mergedToken = mergeToken(token);
+        recordLatestToken(mergedToken);
         recordMarketEvent(mergedToken);
         const displaySymbol = getTokenDisplaySymbol(mergedToken);
 

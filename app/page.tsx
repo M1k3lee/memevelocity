@@ -10,6 +10,7 @@ import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { getMarketSnapshot } from '../utils/marketData';
+import { getLatestToken } from '../utils/liveTokenStore';
 import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
 
@@ -324,6 +325,7 @@ export default function Home() {
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
   const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
   const pendingRetries = useRef<Set<string>>(new Set());
+  const lastCapacityLogAt = useRef(0);
   const normalAnalysisCooldownMs = 25000;
   const retryAnalysisCooldownMs = 8000;
 
@@ -350,8 +352,10 @@ export default function Home() {
 
       pendingRetries.current.add(token.mint);
       addLog(message);
-      window.setTimeout(() => onTokenDetected(token, true), waitTime);
+      window.setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), waitTime);
     };
+
+    token = getLatestToken(token.mint) || token;
 
     if (isRetrying) {
       pendingRetries.current.delete(token.mint);
@@ -382,7 +386,14 @@ export default function Home() {
       if (timeSinceLastTrade < minTimeBetweenTrades) return;
 
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
-      if (openTradesCount >= (config.maxConcurrentTrades || 1)) return;
+      if (openTradesCount >= (config.maxConcurrentTrades || 1)) {
+        const now = Date.now();
+        if ((now - lastCapacityLogAt.current) > 15000) {
+          addLog(`⏸ Scanner paused: ${openTradesCount}/${config.maxConcurrentTrades || 1} open trades. Waiting for an exit before new entries.`);
+          lastCapacityLogAt.current = now;
+        }
+        return;
+      }
 
       if (!wallet && !config.isDemo) return;
 
@@ -765,7 +776,7 @@ export default function Home() {
           if (!pendingRetries.current.has(token.mint)) {
             pendingRetries.current.add(token.mint);
             addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
-            setTimeout(() => onTokenDetected(token, true), 15000);
+            setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), 15000);
           }
           return;
         } else if (momentum >= 1.5) {
@@ -908,7 +919,7 @@ export default function Home() {
         if (analysis.reasons.some(r => r.includes('Too early')) && age < 60) {
           const waitTime = isRetrying ? 20000 : 15000;
           addLog(`⏳ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
-          setTimeout(() => onTokenDetected(token, true), waitTime);
+          setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), waitTime);
           return;
         }
 
