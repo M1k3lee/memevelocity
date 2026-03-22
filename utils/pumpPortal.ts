@@ -1,7 +1,22 @@
-import { VersionedTransaction, Connection, Keypair, TransactionMessage } from "@solana/web3.js";
-import bs58 from "bs58";
+import { VersionedTransaction, Connection, Keypair } from "@solana/web3.js";
 
 const TRADE_API_URL = "https://pumpportal.fun/api/trade-local";
+const EXECUTION_FALLBACK_PATTERNS = [
+    "blockhash",
+    "timeout",
+    "timed out",
+    "429",
+    "rate limit",
+    "node is behind",
+    "transport",
+    "connection closed",
+    "service unavailable",
+    "temporarily unavailable",
+    "failed to send",
+    "preflight"
+];
+
+type TradePool = "auto" | "pump" | "pump-amm" | "raydium" | "raydium-cpmm" | "launchlab" | "bonk";
 
 export interface TradeParams {
     publicKey: string;
@@ -11,7 +26,7 @@ export interface TradeParams {
     denominatedInSol: "true" | "false";
     slippage: number;
     priorityFee: number;
-    pool: "pump";
+    pool: TradePool;
 }
 
 export const getTradeTransaction = async (params: TradeParams) => {
@@ -54,12 +69,32 @@ export const signAndSendTransaction = async (
         const transaction = VersionedTransaction.deserialize(transactionBuffer);
         transaction.sign([keypair]);
 
-        const signature = await connection.sendTransaction(transaction, {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed'
-        });
+        try {
+            return await connection.sendTransaction(transaction, {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+                maxRetries: 2
+            });
+        } catch (error: any) {
+            const message = String(error?.message || error).toLowerCase();
+            const isLikelySlippageFailure =
+                message.includes("slippage") ||
+                message.includes("toomuchsolrequired") ||
+                message.includes("0x1772");
+            const shouldUseFastFallback =
+                !isLikelySlippageFailure &&
+                EXECUTION_FALLBACK_PATTERNS.some((pattern) => message.includes(pattern));
 
-        return signature;
+            if (!shouldUseFastFallback) {
+                throw error;
+            }
+
+            return await connection.sendRawTransaction(transaction.serialize(), {
+                skipPreflight: true,
+                preflightCommitment: 'confirmed',
+                maxRetries: 5
+            });
+        }
     } catch (error) {
         console.error("Sign/Send Error:", error);
         throw error;

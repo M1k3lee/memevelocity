@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
-import { getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
+import { clearTokenBalanceCache, getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
 import { getMarketSnapshot } from '../utils/marketData';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 
@@ -259,6 +259,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (!wallet || isDemo) return false;
 
         const walletPubkey = wallet.publicKey.toBase58();
+        clearTokenBalanceCache(walletPubkey, mint);
         const balance = await getTokenBalance(walletPubkey, mint, connection);
         if (balance <= 0) return false;
 
@@ -403,6 +404,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             if (!wallet) return;
 
+            clearTokenBalanceCache(wallet.publicKey.toBase58(), mint);
             const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
             const liveExitWarmupSeconds = getLiveExitWarmupSeconds(effectiveTrade);
             if (balance === 0) {
@@ -447,7 +449,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     denominatedInSol: "false",
                     slippage: 25,
                     priorityFee,
-                    pool: "pump"
+                    pool: "auto"
                 });
             } catch (err: any) {
                 transactionBuffer = await getTradeTransaction({
@@ -458,7 +460,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     denominatedInSol: "false",
                     slippage: 50,
                     priorityFee: 0.003,
-                    pool: "pump"
+                    pool: "auto"
                 });
             }
 
@@ -875,18 +877,38 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 } catch (error: any) {
                     buyError = error;
                     const msg = error?.message || "";
+                    const normalizedMsg = msg.toLowerCase();
                     const shouldRetrySlippage =
                         msg.includes("TooMuchSolRequired") ||
                         msg.includes("0x1772") ||
-                        msg.toLowerCase().includes("slippage");
+                        normalizedMsg.includes("slippage");
+                    const shouldRetryTransport =
+                        normalizedMsg.includes("blockhash") ||
+                        normalizedMsg.includes("timeout") ||
+                        normalizedMsg.includes("timed out") ||
+                        normalizedMsg.includes("429") ||
+                        normalizedMsg.includes("rate limit") ||
+                        normalizedMsg.includes("node is behind") ||
+                        normalizedMsg.includes("transport") ||
+                        normalizedMsg.includes("service unavailable") ||
+                        normalizedMsg.includes("temporarily unavailable") ||
+                        normalizedMsg.includes("failed to send");
+                    const shouldRetryBuy = shouldRetrySlippage || shouldRetryTransport;
 
-                    if (!shouldRetrySlippage || attempt === 2) {
+                    if (!shouldRetryBuy || attempt === 2) {
                         break;
                     }
 
-                    currentSlippage = Math.min(Math.max(currentSlippage + 15, 45), 65);
-                    priorityFee = Math.min(0.0045, priorityFee + 0.0007);
-                    addLog(`Buy retry ${attempt + 1}/2: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`);
+                    currentSlippage = Math.min(
+                        Math.max(currentSlippage + (shouldRetrySlippage ? 15 : 10), 45),
+                        65
+                    );
+                    priorityFee = Math.min(0.0045, priorityFee + (shouldRetrySlippage ? 0.0007 : 0.0009));
+                    addLog(
+                        shouldRetrySlippage
+                            ? `Buy retry ${attempt + 1}/2: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`
+                            : `Buy retry ${attempt + 1}/2: ${symbol} hit a submit issue. Retrying with ${currentSlippage}% slippage and higher priority.`
+                    );
                     transactionBuffer = await buildBuyTransaction(currentSlippage, priorityFee);
                 }
             }
@@ -904,7 +926,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
 
-            connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
+            void connection.confirmTransaction(signature, 'confirmed').then(async (res) => {
                 if (!res.value.err) {
                     const txDelta = await getWalletSolDeltaFromSignature(signature);
                     const balanceAfterBuy = txDelta === null ? await getBalance(wallet.publicKey.toBase58(), connection) : null;
@@ -916,11 +938,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                                 : effectiveAmountSol);
 
                     let settled = false;
-                    for (let attempt = 0; attempt < 5; attempt++) {
+                    for (let attempt = 0; attempt < 7; attempt++) {
                         if (attempt > 0) {
-                            await new Promise(r => setTimeout(r, 2000));
+                            await new Promise(r => setTimeout(r, 1500));
                         }
 
+                        clearTokenBalanceCache(wallet.publicKey.toBase58(), mint);
                         settled = await syncLiveTradeFromWallet(mint, actualSpentSol);
                         if (settled) break;
                     }
@@ -931,6 +954,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 } else {
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
                 }
+                setTimeout(() => { void syncTrades(); }, 4000);
+            }).catch((error: any) => {
+                addLog(`Buy confirmation lag for ${symbol}: ${error.message || error}`);
                 setTimeout(() => { void syncTrades(); }, 4000);
             });
         } catch (error: any) {
@@ -945,6 +971,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         addLog("Syncing portfolio...");
         for (const trade of activeTradesRef.current.filter(t => t.status === "open")) {
             try {
+                if ((trade.amountTokens || 0) <= 0 || (Date.now() - (trade.buyTime || 0)) < 30000) {
+                    clearTokenBalanceCache(wallet.publicKey.toBase58(), trade.mint);
+                }
                 const bal = await getTokenBalance(wallet.publicKey.toBase58(), trade.mint, connection);
                 if (bal > 0) {
                     const normalizedBuyPrice = (trade.amountSolPaid || 0) > 0 ? (trade.amountSolPaid || 0) / bal : trade.buyPrice;

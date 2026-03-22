@@ -26,6 +26,11 @@ const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: 
 const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
+const MICRO_WALLET_MAX_SOL = 0.05;
+
+function isMicroWalletBalance(balance: number | null | undefined): boolean {
+  return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 && balance <= MICRO_WALLET_MAX_SOL;
+}
 
 function getLiveExitWarmupSeconds(mode: string | undefined): number {
   if (mode === 'micro') return 6;
@@ -760,6 +765,8 @@ export default function Home() {
         const liquidity = token.vSolInBondingCurve || 30;
         const liquidityGrowth = liquidity - 30;
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
+        const liveWalletBalance = balanceRef.current;
+        const isLiveMicroWallet = !config.isDemo && isMicroWalletBalance(liveWalletBalance);
         const snapshot = getMarketSnapshot(token.mint);
         const tradeCount = snapshot?.tradeCount || 0;
         const buyCount = snapshot?.buyCount || 0;
@@ -774,37 +781,57 @@ export default function Home() {
         const launchPulse =
           age <= 75 &&
           buyCount >= 1 &&
-          tradeCount >= 2 &&
+          tradeCount >= (isLiveMicroWallet ? 1 : 2) &&
           uniqueTraderCount >= 2 &&
-          observedVolume >= 0.45 &&
-          buyPressure >= 0.56 &&
-          netFlow > 0.2;
+          observedVolume >= (isLiveMicroWallet ? 0.3 : 0.45) &&
+          buyPressure >= (isLiveMicroWallet ? 0.53 : 0.56) &&
+          netFlow > (isLiveMicroWallet ? 0.12 : 0.2);
         const breakoutFlow =
-          age <= 90 &&
-          tradeCount >= 6 &&
-          uniqueTraderCount >= 3 &&
-          observedVolume >= 0.9 &&
-          buyPressure >= 0.54 &&
-          netFlow > 0.45;
+          age <= (isLiveMicroWallet ? 105 : 90) &&
+          tradeCount >= (isLiveMicroWallet ? 4 : 6) &&
+          uniqueTraderCount >= (isLiveMicroWallet ? 2 : 3) &&
+          observedVolume >= (isLiveMicroWallet ? 0.65 : 0.9) &&
+          buyPressure >= (isLiveMicroWallet ? 0.52 : 0.54) &&
+          netFlow > (isLiveMicroWallet ? 0.3 : 0.45);
         const persistentFlow =
           age <= 120 &&
-          tradeCount >= 12 &&
-          uniqueTraderCount >= 4 &&
-          observedVolume >= 1.2 &&
-          buyPressure >= 0.5 &&
-          netFlow > 0.55;
+          tradeCount >= (isLiveMicroWallet ? 9 : 12) &&
+          uniqueTraderCount >= (isLiveMicroWallet ? 3 : 4) &&
+          observedVolume >= (isLiveMicroWallet ? 0.9 : 1.2) &&
+          buyPressure >= (isLiveMicroWallet ? 0.48 : 0.5) &&
+          netFlow > (isLiveMicroWallet ? 0.4 : 0.55);
         const steadyTape =
           age <= 120 &&
-          tradeCount >= 20 &&
-          uniqueTraderCount >= 5 &&
-          observedVolume >= 1.0 &&
-          buyPressure >= 0.52;
-        const feedMomentum = age <= 45 && liquidityGrowth >= 0.6 && momentum >= 1.0;
+          tradeCount >= (isLiveMicroWallet ? 16 : 20) &&
+          uniqueTraderCount >= (isLiveMicroWallet ? 4 : 5) &&
+          observedVolume >= (isLiveMicroWallet ? 0.85 : 1.0) &&
+          buyPressure >= (isLiveMicroWallet ? 0.5 : 0.52);
+        const feedMomentum =
+          age <= (isLiveMicroWallet ? 60 : 45) &&
+          liquidityGrowth >= (isLiveMicroWallet ? 0.35 : 0.6) &&
+          momentum >= (isLiveMicroWallet ? 0.75 : 1.0);
         const strongFlow = launchPulse || breakoutFlow || persistentFlow || steadyTape;
-        const curveReady = bondingCurveProgress >= 1.0 && liquidityGrowth >= 0.45;
-        const curveStarter = bondingCurveProgress >= 0.6 && (liquidityGrowth >= 0.3 || observedVolume >= 0.5);
-        const deepLiquidity = liquidity >= 38 && (bondingCurveProgress >= 0.35 || tradeCount >= 3 || liquidityGrowth >= 0.6);
-        const waitingOnSnapshot = age <= 45 && tradeCount === 0 && observedVolume <= 0.2 && liquidityGrowth > 0.25;
+        const curveReady =
+          bondingCurveProgress >= (isLiveMicroWallet ? 0.75 : 1.0) &&
+          liquidityGrowth >= (isLiveMicroWallet ? 0.25 : 0.45);
+        const curveStarter =
+          bondingCurveProgress >= (isLiveMicroWallet ? 0.35 : 0.6) &&
+          (
+            liquidityGrowth >= (isLiveMicroWallet ? 0.15 : 0.3) ||
+            observedVolume >= (isLiveMicroWallet ? 0.35 : 0.5)
+          );
+        const deepLiquidity =
+          liquidity >= (isLiveMicroWallet ? 36 : 38) &&
+          (
+            bondingCurveProgress >= 0.35 ||
+            tradeCount >= (isLiveMicroWallet ? 2 : 3) ||
+            liquidityGrowth >= (isLiveMicroWallet ? 0.35 : 0.6)
+          );
+        const waitingOnSnapshot =
+          age <= 45 &&
+          tradeCount === 0 &&
+          observedVolume <= (isLiveMicroWallet ? 0.15 : 0.2) &&
+          liquidityGrowth > 0.25;
 
         if (!strongFlow && !curveReady && !deepLiquidity && !feedMomentum && !curveStarter) {
           if (age < 90 || waitingOnSnapshot) {
@@ -818,40 +845,61 @@ export default function Home() {
         addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}%`);
         const aggressiveSetup =
           (buyPressure >= 0.62 || feedMomentum) &&
-          tradeCount >= 5 &&
-          observedVolume >= 1.0 &&
-          (bondingCurveProgress >= 1.5 || liquidityGrowth >= 1.0);
-        await new Promise(r => setTimeout(r, aggressiveSetup ? 800 : 1200));
+          tradeCount >= (isLiveMicroWallet ? 4 : 5) &&
+          observedVolume >= (isLiveMicroWallet ? 0.75 : 1.0) &&
+          (bondingCurveProgress >= (isLiveMicroWallet ? 1.0 : 1.5) || liquidityGrowth >= (isLiveMicroWallet ? 0.7 : 1.0));
+        const verificationDelayMs = isLiveMicroWallet
+          ? (aggressiveSetup ? 350 : 650)
+          : (aggressiveSetup ? 800 : 1200);
+        await new Promise(r => setTimeout(r, verificationDelayMs));
         const freshData = await getPumpData(token.mint, connection);
         if (!freshData) {
-          scheduleRetry(5000, `MICRO wait: ${token.symbol} verification snapshot unavailable.`);
-          return;
+          const hasFeedVerification =
+            (strongFlow || curveReady || deepLiquidity || feedMomentum || curveStarter) &&
+            observedVolume >= (isLiveMicroWallet ? 0.35 : 0.55) &&
+            buyPressure >= (isLiveMicroWallet ? 0.52 : 0.56) &&
+            netFlow > (isLiveMicroWallet ? 0.12 : 0.25) &&
+            liquidityGrowth >= (isLiveMicroWallet ? 0.15 : 0.3);
+
+          if (!hasFeedVerification) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} verification snapshot unavailable.`);
+            return;
+          }
+
+          addLog(`MICRO fallback: ${token.symbol} using live feed verification while RPC snapshot is unavailable.`);
         }
 
-        const freshLiquidity = freshData.vSolInBondingCurve || 0;
-        const freshCurveProgress = Number.isFinite(freshData.bondingCurveProgress) ? freshData.bondingCurveProgress : 0;
-        if (freshLiquidity <= 0) {
+        const verifiedLiquidity = freshData?.vSolInBondingCurve || liquidity;
+        const verifiedCurveProgress = Number.isFinite(freshData?.bondingCurveProgress)
+          ? freshData!.bondingCurveProgress
+          : bondingCurveProgress;
+        const verifiedTokens = freshData?.vTokensInBondingCurve || token.vTokensInBondingCurve;
+
+        if (verifiedLiquidity <= 0) {
           scheduleRetry(5000, `MICRO wait: ${token.symbol} verification liquidity unavailable.`);
           return;
         }
-        const liquidityDeltaPercent = liquidity > 0 ? ((freshLiquidity - liquidity) / liquidity) * 100 : 0;
-        const curveDelta = freshCurveProgress - bondingCurveProgress;
 
-        if (liquidityDeltaPercent < -12 || curveDelta < -3) {
-          addLog(`MICRO Reject: ${token.symbol} lost momentum during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
-          return;
-        }
-        if (liquidityDeltaPercent < -4 || curveDelta < -1) {
-          scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
-          return;
-        }
-        if (freshCurveProgress <= 0 && bondingCurveProgress > 0) {
-          scheduleRetry(4000, `MICRO wait: ${token.symbol} verification curve still syncing.`);
-          return;
+        if (freshData) {
+          const liquidityDeltaPercent = liquidity > 0 ? ((verifiedLiquidity - liquidity) / liquidity) * 100 : 0;
+          const curveDelta = verifiedCurveProgress - bondingCurveProgress;
+
+          if (liquidityDeltaPercent < (isLiveMicroWallet ? -15 : -12) || curveDelta < (isLiveMicroWallet ? -4 : -3)) {
+            addLog(`MICRO Reject: ${token.symbol} lost momentum during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
+            return;
+          }
+          if (liquidityDeltaPercent < (isLiveMicroWallet ? -6 : -4) || curveDelta < (isLiveMicroWallet ? -1.5 : -1)) {
+            scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts).`);
+            return;
+          }
+          if (verifiedCurveProgress <= 0 && bondingCurveProgress > 0 && !isLiveMicroWallet) {
+            scheduleRetry(4000, `MICRO wait: ${token.symbol} verification curve still syncing.`);
+            return;
+          }
         }
 
-        token.vSolInBondingCurve = freshLiquidity;
-        token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
+        token.vSolInBondingCurve = verifiedLiquidity;
+        token.vTokensInBondingCurve = verifiedTokens;
 
         const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
           ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
@@ -866,7 +914,7 @@ export default function Home() {
           momentumExit: true,
           minHoldTime: 8
         };
-        const microSlippage = Math.max(config.advanced?.slippage || 35, aggressiveSetup ? 45 : 35);
+        const microSlippage = Math.max(config.advanced?.slippage || 35, aggressiveSetup ? 45 : (isLiveMicroWallet ? 40 : 35));
 
         setLastTradeTime(Date.now());
         await buyToken(token.mint, token.symbol, config.amount, microSlippage, initialPrice, exitStrategy);

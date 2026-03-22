@@ -42,6 +42,8 @@ const holderStatsCache = new Map<string, CacheEntry<any>>();
 const pendingTokenBalances = new Map<string, Promise<number>>();
 const pendingHolderCounts = new Map<string, Promise<number | null>>();
 const pendingHolderStats = new Map<string, Promise<any>>();
+const ZERO_TOKEN_BALANCE_CACHE_TTL_MS = 2000;
+const TOKEN_BALANCE_CACHE_TTL_MS = 15000;
 
 const getCachedValue = <T>(cache: Map<string, CacheEntry<T>>, key: string): { hit: boolean; value?: T } => {
     const entry = cache.get(key);
@@ -72,6 +74,25 @@ const withPendingRequest = async <T>(
 
 export const setGlobalConnection = (newConn: Connection) => {
     connection = newConn;
+};
+
+export const clearTokenBalanceCache = (walletPubKey?: string, mintAddress?: string) => {
+    const matches = (key: string) => {
+        const [cachedWallet, cachedMint] = key.split(':');
+        return (!walletPubKey || cachedWallet === walletPubKey) && (!mintAddress || cachedMint === mintAddress);
+    };
+
+    for (const key of [...tokenBalanceCache.keys()]) {
+        if (matches(key)) {
+            tokenBalanceCache.delete(key);
+        }
+    }
+
+    for (const key of [...pendingTokenBalances.keys()]) {
+        if (matches(key)) {
+            pendingTokenBalances.delete(key);
+        }
+    }
 };
 
 export const generateWallet = () => {
@@ -121,7 +142,7 @@ export const getTokenBalance = async (walletPubKey: string, mintAddress: string,
             const accounts = await conn.getParsedTokenAccountsByOwner(userPub, { mint: new PublicKey(mintAddress) });
 
             if (accounts.value.length === 0) {
-                setCachedValue(tokenBalanceCache, cacheKey, 0, 15000);
+                setCachedValue(tokenBalanceCache, cacheKey, 0, ZERO_TOKEN_BALANCE_CACHE_TTL_MS);
                 return 0;
             }
 
@@ -130,7 +151,12 @@ export const getTokenBalance = async (walletPubKey: string, mintAddress: string,
                 total += acc.account.data.parsed.info.tokenAmount.uiAmount;
             }
 
-            setCachedValue(tokenBalanceCache, cacheKey, total, 15000);
+            setCachedValue(
+                tokenBalanceCache,
+                cacheKey,
+                total,
+                total > 0 ? TOKEN_BALANCE_CACHE_TTL_MS : ZERO_TOKEN_BALANCE_CACHE_TTL_MS
+            );
             return total;
         } catch (error) {
             const errorMsg = String((error as any)?.message || error);

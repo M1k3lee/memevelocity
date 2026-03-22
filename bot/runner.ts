@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { createConnection, getBalance, getPumpData, getTokenBalance } from '../utils/solanaManager';
+import { clearTokenBalanceCache, createConnection, getBalance, getPumpData, getTokenBalance } from '../utils/solanaManager';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { detectRug } from '../utils/rugDetector';
 import { analyzeEnhanced } from '../utils/enhancedAnalyzer';
@@ -406,6 +406,7 @@ class PumpFunRunner {
             }
 
             await delay(2000);
+            clearTokenBalanceCache(this.wallet.publicKey.toBase58(), token.mint);
             const actualTokens = await getTokenBalance(this.wallet.publicKey.toBase58(), token.mint, this.connection);
             this.state.openPositions = this.state.openPositions.map((position) => {
                 if (position.txId !== signature) return position;
@@ -437,6 +438,7 @@ class PumpFunRunner {
 
         try {
             if (!this.config.dryRun && this.wallet && position.amountTokens <= 0) {
+                clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
                 const walletBalance = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
                 if (walletBalance > 0) {
                     position.amountTokens = walletBalance;
@@ -539,6 +541,7 @@ class PumpFunRunner {
                 throw new Error('Live mode requires a configured wallet');
             }
 
+            clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
             const tokenBalance = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
             if (tokenBalance <= 0) {
                 await this.forceCloseWorthlessPosition(position, `${reason} (no balance)`);
@@ -562,7 +565,7 @@ class PumpFunRunner {
                     denominatedInSol: 'false',
                     slippage: Math.max(this.config.slippage, 25),
                     priorityFee,
-                    pool: 'pump'
+                    pool: 'auto'
                 });
             } catch {
                 transactionBuffer = await getTradeTransaction({
@@ -573,7 +576,7 @@ class PumpFunRunner {
                     denominatedInSol: 'false',
                     slippage: Math.max(this.config.slippage, 50),
                     priorityFee: 0.003,
-                    pool: 'pump'
+                    pool: 'auto'
                 });
             }
 
@@ -586,6 +589,7 @@ class PumpFunRunner {
 
             await delay(2000);
             const balanceAfter = await getBalance(this.wallet.publicKey.toBase58(), this.connection);
+            clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
             const actualRemaining = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
             const revenue = (balanceAfter ?? 0) - (balanceBefore ?? 0);
             const costBasis = position.amountSolPaid * sellFraction;
