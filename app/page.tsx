@@ -732,6 +732,7 @@ export default function Home() {
         const age = (Date.now() - token.timestamp) / 1000;
         const liquidity = token.vSolInBondingCurve || 30;
         const liquidityGrowth = liquidity - 30;
+        const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
         const snapshot = getMarketSnapshot(token.mint);
         const tradeCount = snapshot?.tradeCount || 0;
         const buyCount = snapshot?.buyCount || 0;
@@ -745,32 +746,42 @@ export default function Home() {
 
         const launchPulse =
           age <= 75 &&
-          buyCount >= 2 &&
-          tradeCount >= 3 &&
+          buyCount >= 1 &&
+          tradeCount >= 2 &&
           uniqueTraderCount >= 2 &&
-          observedVolume >= 0.8 &&
-          buyPressure >= 0.58 &&
-          netFlow > 0.35;
+          observedVolume >= 0.45 &&
+          buyPressure >= 0.56 &&
+          netFlow > 0.2;
         const breakoutFlow =
           age <= 90 &&
-          tradeCount >= 8 &&
-          observedVolume >= 1.2 &&
-          buyPressure >= 0.55 &&
-          netFlow > 0.75;
+          tradeCount >= 6 &&
+          uniqueTraderCount >= 3 &&
+          observedVolume >= 0.9 &&
+          buyPressure >= 0.54 &&
+          netFlow > 0.45;
         const persistentFlow =
           age <= 120 &&
-          tradeCount >= 15 &&
+          tradeCount >= 12 &&
           uniqueTraderCount >= 4 &&
-          observedVolume >= 1.5 &&
+          observedVolume >= 1.2 &&
           buyPressure >= 0.5 &&
-          netFlow > 0.75;
-        const strongFlow = launchPulse || breakoutFlow || persistentFlow;
-        const curveReady = bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.75;
-        const deepLiquidity = liquidity >= 40 && (bondingCurveProgress >= 0.5 || tradeCount >= 4);
+          netFlow > 0.55;
+        const steadyTape =
+          age <= 120 &&
+          tradeCount >= 20 &&
+          uniqueTraderCount >= 5 &&
+          observedVolume >= 1.0 &&
+          buyPressure >= 0.52;
+        const feedMomentum = age <= 45 && liquidityGrowth >= 0.6 && momentum >= 1.0;
+        const strongFlow = launchPulse || breakoutFlow || persistentFlow || steadyTape;
+        const curveReady = bondingCurveProgress >= 1.0 && liquidityGrowth >= 0.45;
+        const curveStarter = bondingCurveProgress >= 0.6 && (liquidityGrowth >= 0.3 || observedVolume >= 0.5);
+        const deepLiquidity = liquidity >= 38 && (bondingCurveProgress >= 0.35 || tradeCount >= 3 || liquidityGrowth >= 0.6);
+        const waitingOnSnapshot = age <= 45 && tradeCount === 0 && observedVolume <= 0.2 && liquidityGrowth > 0.25;
 
-        if (!strongFlow && !curveReady && !deepLiquidity) {
-          if (age < 60) {
-            scheduleRetry(5000, `MICRO wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+        if (!strongFlow && !curveReady && !deepLiquidity && !feedMomentum && !curveStarter) {
+          if (age < 90 || waitingOnSnapshot) {
+            scheduleRetry(4000, `MICRO wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
           } else {
             addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
           }
@@ -779,10 +790,10 @@ export default function Home() {
 
         addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}%`);
         const aggressiveSetup =
-          buyPressure >= 0.65 &&
-          tradeCount >= 6 &&
-          observedVolume >= 1.25 &&
-          bondingCurveProgress >= 2;
+          (buyPressure >= 0.62 || feedMomentum) &&
+          tradeCount >= 5 &&
+          observedVolume >= 1.0 &&
+          (bondingCurveProgress >= 1.5 || liquidityGrowth >= 1.0);
         await new Promise(r => setTimeout(r, aggressiveSetup ? 800 : 1200));
         const freshData = await getPumpData(token.mint, connection);
         if (!freshData) {
@@ -1006,15 +1017,43 @@ export default function Home() {
         const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
         const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
         const strongFlowConfirmation =
-          buyCount >= 3 &&
+          buyCount >= 2 &&
           tradeCount >= 3 &&
-          uniqueTraderCount >= 3 &&
-          observedVolume >= 1.5 &&
-          buyPressure >= 0.65;
-        const curveReady = analysis.bondingCurveProgress >= 5;
-        const deepLiquidityConfirmation = analysis.marketCap >= 60 && analysis.bondingCurveProgress >= 2;
+          uniqueTraderCount >= 2 &&
+          observedVolume >= 1.0 &&
+          buyPressure >= 0.6;
+        const steadyTapeConfirmation =
+          tradeCount >= 15 &&
+          uniqueTraderCount >= 4 &&
+          observedVolume >= 1.2 &&
+          buyPressure >= 0.58;
+        const feedMomentumConfirmation =
+          age <= 45 &&
+          liquidityGrowth >= 0.75 &&
+          momentum >= 1.25;
+        const curveReady =
+          analysis.bondingCurveProgress >= 4 ||
+          (analysis.bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.5);
+        const deepLiquidityConfirmation =
+          analysis.marketCap >= 55 &&
+          (analysis.bondingCurveProgress >= 1.5 || liquidityGrowth >= 0.75);
+        const waitingOnSnapshot =
+          age <= 45 &&
+          tradeCount === 0 &&
+          uniqueTraderCount <= 1 &&
+          observedVolume <= 0.2 &&
+          liquidityGrowth > 0.25;
 
-        if (!curveReady && !strongFlowConfirmation && !deepLiquidityConfirmation) {
+        if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 35)) {
+          scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          return;
+        }
+
+        if (!curveReady && !strongFlowConfirmation && !steadyTapeConfirmation && !deepLiquidityConfirmation && !feedMomentumConfirmation) {
+          if (age < 75) {
+            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+            return;
+          }
           addLog(`ðŸš« Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }
