@@ -166,6 +166,7 @@ function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decisi
   const snapshot = getMarketSnapshot(token.mint);
   const liquidity = token.vSolInBondingCurve || 30;
   const liquidityGrowth = liquidity - 30;
+  const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
   const bondingCurveProgress = getBondingCurveProgressFromFeed(token);
   const tradeCount = snapshot?.tradeCount || 0;
   const buyCount = snapshot?.buyCount || 0;
@@ -189,26 +190,52 @@ function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decisi
     };
   }
 
-  const hasSecondaryBuyer = tradeCount >= 1 && uniqueTraderCount >= 2;
-  const hasStrongFlow = buyCount >= 2 && buyPressure >= 0.65 && observedVolume >= 1.5;
-  const hasCurveConfirmation = bondingCurveProgress >= 0.2 && observedVolume >= 0.75 && uniqueTraderCount >= 2;
+  const hasSecondaryBuyer = uniqueTraderCount >= 2 && (tradeCount >= 1 || buyCount >= 1);
+  const hasStrongFlow =
+    buyCount >= 2 &&
+    tradeCount >= 2 &&
+    uniqueTraderCount >= 2 &&
+    buyPressure >= 0.6 &&
+    observedVolume >= 1.0;
+  const hasTapeConfirmation =
+    tradeCount >= 6 &&
+    uniqueTraderCount >= 3 &&
+    buyPressure >= 0.58 &&
+    observedVolume >= 1.2;
+  const hasCurveConfirmation =
+    bondingCurveProgress >= 0.25 &&
+    observedVolume >= 0.6 &&
+    (uniqueTraderCount >= 2 || liquidityGrowth >= 1.0);
+  const hasFeedOnlyMomentum =
+    age <= 35 &&
+    tradeCount === 0 &&
+    liquidity >= 36 &&
+    liquidityGrowth >= 1.0 &&
+    bondingCurveProgress >= 0.35 &&
+    momentum >= 1.25;
+  const waitingOnSnapshot =
+    age <= 40 &&
+    tradeCount === 0 &&
+    uniqueTraderCount <= 1 &&
+    observedVolume <= 0.35 &&
+    liquidityGrowth > 0.2;
 
-  if (hasStrongFlow || (hasSecondaryBuyer && hasCurveConfirmation)) {
+  if (hasStrongFlow || hasTapeConfirmation || (hasSecondaryBuyer && hasCurveConfirmation) || hasFeedOnlyMomentum) {
     return { decision: 'pass' };
   }
 
-  if (age < 12) {
+  if (age < 12 || waitingOnSnapshot) {
     return {
       decision: 'wait',
-      reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets)`,
+      reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`,
       waitTimeMs: 6000
     };
   }
 
-  if (age < 25) {
+  if (age < 35 && (tradeCount > 0 || liquidityGrowth > 0.4 || bondingCurveProgress > 0.1)) {
     return {
       decision: 'wait',
-      reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure)`,
+      reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`,
       waitTimeMs: 8000
     };
   }
