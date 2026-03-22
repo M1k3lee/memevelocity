@@ -40,12 +40,13 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                         <tbody>
                             {history.map((trade, i) => {
                                 const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
-                                const solProfit = (trade.pnlPercent / 100) * originalCost;
+                                const solProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+                                const isPositive = solProfit >= 0;
                                 return (
                                     <tr key={`${trade.mint}-${i}`} className="border-b border-[#222]/30 hover:bg-[#151515] transition-colors">
                                         <td className="p-2">
                                             <div className="flex items-center gap-2">
-                                                <span className={`font-bold ${trade.pnlPercent >= 0 ? "text-green-400/80" : "text-red-400/80"}`}>
+                                                <span className={`font-bold ${isPositive ? "text-green-400/80" : "text-red-400/80"}`}>
                                                     {trade.symbol}
                                                 </span>
                                                 {trade.isPaper ? (
@@ -69,13 +70,13 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                                         <td className="p-2 font-mono text-gray-500 text-[10px]">{trade.buyPrice.toFixed(9)}</td>
                                         <td className="p-2 font-mono text-gray-500 text-[10px]">{trade.currentPrice.toFixed(9)}</td>
                                         <td className="p-2 text-right font-bold">
-                                            <span className={`flex items-center justify-end gap-1 ${trade.pnlPercent >= 0 ? "text-green-500" : "text-red-500"}`}>
+                                            <span className={`flex items-center justify-end gap-1 ${isPositive ? "text-green-500" : "text-red-500"}`}>
                                                 {trade.pnlPercent >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(1)}%
                                             </span>
                                         </td>
                                         <td className="p-2 text-right font-mono">
-                                            <span className={`${trade.pnlPercent >= 0 ? "text-green-400/70" : "text-red-400/70"} text-[10px]`}>
-                                                {trade.pnlPercent >= 0 ? "+" : ""}{solProfit.toFixed(4)} SOL
+                                            <span className={`${isPositive ? "text-green-400/70" : "text-red-400/70"} text-[10px]`}>
+                                                {isPositive ? "+" : ""}{solProfit.toFixed(4)} SOL
                                             </span>
                                         </td>
                                     </tr>

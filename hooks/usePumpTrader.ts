@@ -61,6 +61,7 @@ export interface ActiveTrade {
     amountSolPaid?: number; // Original SOL used
     currentPrice: number;
     pnlPercent: number;
+    realizedPnlSol?: number;
     status: "open" | "selling" | "closed";
     txId?: string;
     lastPriceUpdate?: number;
@@ -355,22 +356,24 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 const rawRevenue = soldTokenAmount * effectiveSellPrice;
                 const revenue = rawRevenue * 0.97; // 3% friction
-                const profit = revenue - costBasis;
-
                 const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
-                setDemoBalance(prev => prev + costBasis + profit + rentReclaim);
+                const netProfit = (revenue + rentReclaim) - costBasis;
+                const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
+
+                setDemoBalance(prev => prev + costBasis + netProfit);
 
                 setStats(prev => ({
-                    totalProfit: prev.totalProfit + profit,
-                    wins: profit > 0 ? prev.wins + 1 : prev.wins,
-                    losses: profit <= 0 ? prev.losses + 1 : prev.losses
+                    totalProfit: prev.totalProfit + netProfit,
+                    wins: netProfit > 0 ? prev.wins + 1 : prev.wins,
+                    losses: netProfit <= 0 ? prev.losses + 1 : prev.losses
                 }));
 
                 const closedTrade: ActiveTrade = {
                     ...effectiveTrade,
                     status: "closed" as const,
                     currentPrice: effectiveSellPrice,
-                    pnlPercent: effectiveTrade.buyPrice > 0 ? ((effectiveSellPrice - effectiveTrade.buyPrice) / effectiveTrade.buyPrice) * 100 : 0,
+                    pnlPercent: realizedPnlPercent,
+                    realizedPnlSol: netProfit,
                     isPaper: true
                 };
 
@@ -388,11 +391,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         amountTokens: (t.amountTokens || 0) * remainingFraction,
                         amountSolPaid: (t.amountSolPaid || 0) * remainingFraction,
                         currentPrice: effectiveSellPrice,
+                        realizedPnlSol: undefined,
                         pnlPercent: t.buyPrice > 0 ? ((effectiveSellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
                     } : t));
                 }
 
-                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Profit: ${profit.toFixed(4)} SOL`);
+                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Net: ${netProfit.toFixed(4)} SOL`);
                 processingMintsRef.current.delete(mint);
                 return;
             }
@@ -410,7 +414,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 if (Date.now() - (effectiveTrade.lastPriceChangeTime || 0) > 60000) {
                     addLog(`Sell: No balance for ${effectiveTrade.symbol}. Closing as RUG loss.`);
-                    const closedTrade: ActiveTrade = { ...effectiveTrade, status: "closed" as const, currentPrice: 0, pnlPercent: -100 };
+                    const closedTrade: ActiveTrade = {
+                        ...effectiveTrade,
+                        status: "closed" as const,
+                        currentPrice: 0,
+                        pnlPercent: -100,
+                        realizedPnlSol: -(effectiveTrade.amountSolPaid || 0)
+                    };
                     setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
                     setActiveTrades(prev => prev.filter(t => t.mint !== mint));
 
@@ -504,6 +514,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     status: "closed" as const,
                     currentPrice: effectiveTrade.currentPrice,
                     pnlPercent: finalPnlPercent,
+                    realizedPnlSol: netProfit,
                     txId: signature
                 };
                 setTradeHistory(prev => {
