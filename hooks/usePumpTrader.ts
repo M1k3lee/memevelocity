@@ -385,7 +385,24 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (isDemo) {
                 const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
                 const soldTokenAmount = (effectiveTrade.amountTokens || 0) * sellFraction;
-                const sellPrice = sanitizePaperObservedPrice(effectiveTrade, effectiveTrade.currentPrice || 0);
+                let sellPrice = sanitizePaperObservedPrice(effectiveTrade, effectiveTrade.currentPrice || 0);
+                try {
+                    const pumpData = await getPumpData(mint, connection);
+                    if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
+                        const livePrice = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1_000_000;
+                        sellPrice = sanitizePaperObservedPrice(effectiveTrade, livePrice);
+                    } else {
+                        const snapshot = getMarketSnapshot(mint);
+                        if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
+                            sellPrice = sanitizePaperObservedPrice(effectiveTrade, snapshot.currentPrice);
+                        }
+                    }
+                } catch {
+                    const snapshot = getMarketSnapshot(mint);
+                    if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
+                        sellPrice = sanitizePaperObservedPrice(effectiveTrade, snapshot.currentPrice);
+                    }
+                }
                 const costBasis = (effectiveTrade.buyPrice || 0) * soldTokenAmount;
 
                 const isStale = effectiveTrade.lastPriceUpdate && (Date.now() - effectiveTrade.lastPriceUpdate > 120000);
@@ -598,13 +615,20 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     let currentLiquidity = 0;
 
                     if (trade.isPaper || isDemo) {
-                        const snapshot = getMarketSnapshot(trade.mint);
-                        if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
-                            price = sanitizePaperObservedPrice(trade, snapshot.currentPrice);
-                            currentLiquidity = snapshot.currentLiquiditySol;
+                        const pumpData = await getPumpData(trade.mint, connection);
+                        if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
+                            const livePrice = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1_000_000;
+                            price = sanitizePaperObservedPrice(trade, livePrice);
+                            currentLiquidity = pumpData.vSolInBondingCurve;
                         } else {
-                            price = trade.currentPrice > 0 ? trade.currentPrice : trade.buyPrice;
-                            currentLiquidity = trade.lastLiquidity || 0;
+                            const snapshot = getMarketSnapshot(trade.mint);
+                            if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
+                                price = sanitizePaperObservedPrice(trade, snapshot.currentPrice);
+                                currentLiquidity = snapshot.currentLiquiditySol;
+                            } else {
+                                price = trade.currentPrice > 0 ? trade.currentPrice : trade.buyPrice;
+                                currentLiquidity = trade.lastLiquidity || 0;
+                            }
                         }
                     } else if (trade.mint.startsWith('SIM') && !isDemo) {
                         const isRug = trade.symbol.includes("Garbage") || trade.symbol.includes("Rug");
