@@ -277,6 +277,29 @@ class PumpFunRunner {
         return exit;
     }
 
+    private async confirmTokenBalance(mint: string, attempts: number = 3, delayMs: number = 1200): Promise<number> {
+        if (!this.wallet) {
+            return 0;
+        }
+
+        const walletAddress = this.wallet.publicKey.toBase58();
+        let balance = 0;
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            clearTokenBalanceCache(walletAddress, mint);
+            balance = await getTokenBalance(walletAddress, mint, this.connection);
+            if (balance > 0) {
+                return balance;
+            }
+
+            if (attempt < attempts - 1) {
+                await delay(delayMs);
+            }
+        }
+
+        return balance;
+    }
+
     private async executeBuy(
         token: TokenData,
         amountSol: number,
@@ -406,8 +429,7 @@ class PumpFunRunner {
             }
 
             await delay(2000);
-            clearTokenBalanceCache(this.wallet.publicKey.toBase58(), token.mint);
-            const actualTokens = await getTokenBalance(this.wallet.publicKey.toBase58(), token.mint, this.connection);
+            const actualTokens = await this.confirmTokenBalance(token.mint, 4, 1200);
             this.state.openPositions = this.state.openPositions.map((position) => {
                 if (position.txId !== signature) return position;
                 return {
@@ -419,7 +441,11 @@ class PumpFunRunner {
                 };
             });
 
-            this.log(`Buy confirmed for ${token.symbol}: ${actualTokens.toFixed(4)} tokens`);
+            if (actualTokens > 0) {
+                this.log(`Buy confirmed for ${token.symbol}: ${actualTokens.toFixed(4)} tokens`);
+            } else {
+                this.log(`Buy confirmed for ${token.symbol}, but wallet token balance is still settling. Runner will keep reconciling the position.`);
+            }
             await this.persistState();
         } finally {
             this.processingMints.delete(token.mint);
@@ -438,8 +464,7 @@ class PumpFunRunner {
 
         try {
             if (!this.config.dryRun && this.wallet && position.amountTokens <= 0) {
-                clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
-                const walletBalance = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
+                const walletBalance = await this.confirmTokenBalance(mint, 3, 1000);
                 if (walletBalance > 0) {
                     position.amountTokens = walletBalance;
                     if (position.amountSolPaid > 0) {
@@ -541,10 +566,9 @@ class PumpFunRunner {
                 throw new Error('Live mode requires a configured wallet');
             }
 
-            clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
-            const tokenBalance = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
+            const tokenBalance = await this.confirmTokenBalance(mint, 3, 1000);
             if (tokenBalance <= 0) {
-                await this.forceCloseWorthlessPosition(position, `${reason} (no balance)`);
+                this.log(`Sell skipped for ${position.symbol}: wallet token balance could not be verified after repeated checks. Leaving position open.`);
                 return;
             }
 
@@ -715,9 +739,10 @@ class PumpFunRunner {
         }
 
         for (const position of [...this.state.openPositions]) {
-            const balance = await getTokenBalance(this.wallet.publicKey.toBase58(), position.mint, this.connection);
+            const balance = await this.confirmTokenBalance(position.mint, 3, 1000);
             if (balance <= 0) {
-                await this.forceCloseWorthlessPosition(position, 'startup reconciliation');
+                this.log(`Startup reconciliation could not verify ${position.symbol} token balance after repeated checks. Keeping the position open for later sync.`);
+                this.subscribeToMint(position.mint);
                 continue;
             }
 

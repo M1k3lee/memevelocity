@@ -296,6 +296,27 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         return true;
     }, [wallet, isDemo, connection]);
 
+    const confirmLiveTokenBalance = useCallback(async (mint: string, attempts: number = 3, delayMs: number = 1200): Promise<number> => {
+        if (!wallet || isDemo) return 0;
+
+        const walletPubkey = wallet.publicKey.toBase58();
+        let balance = 0;
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            clearTokenBalanceCache(walletPubkey, mint);
+            balance = await getTokenBalance(walletPubkey, mint, connection);
+            if (balance > 0) {
+                return balance;
+            }
+
+            if (attempt < attempts - 1) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+
+        return balance;
+    }, [wallet, isDemo, connection]);
+
     const getWalletSolDeltaFromSignature = useCallback(async (signature: string): Promise<number | null> => {
         if (!wallet || isDemo) return null;
 
@@ -407,8 +428,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             if (!wallet) return;
 
-            clearTokenBalanceCache(wallet.publicKey.toBase58(), mint);
-            const balance = await getTokenBalance(wallet.publicKey.toBase58(), mint, connection);
+            const balance = await confirmLiveTokenBalance(mint, 3, 1000);
             const liveExitWarmupSeconds = getLiveExitWarmupSeconds(effectiveTrade);
             if (balance === 0) {
                 const ageMs = Date.now() - (effectiveTrade.buyTime || 0);
@@ -417,21 +437,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     return;
                 }
 
-                if (Date.now() - (effectiveTrade.lastPriceChangeTime || 0) > 60000) {
-                    addLog(`Sell: No balance for ${effectiveTrade.symbol}. Closing as RUG loss.`);
-                    const closedTrade: ActiveTrade = {
-                        ...effectiveTrade,
-                        status: "closed" as const,
-                        currentPrice: 0,
-                        pnlPercent: -100,
-                        realizedPnlSol: -(effectiveTrade.amountSolPaid || 0)
-                    };
-                    setTradeHistory(prev => [closedTrade, ...prev].slice(0, 100));
-                    setActiveTrades(prev => prev.filter(t => t.mint !== mint));
-
-                    const lossAmount = effectiveTrade.amountSolPaid || 0;
-                    setStats(prev => ({ ...prev, totalProfit: prev.totalProfit - lossAmount, losses: prev.losses + 1 }));
-                }
+                addLog(`Sell: Could not verify ${effectiveTrade.symbol} wallet balance after repeated checks. Leaving the trade open until sync confirms it.`);
+                setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "open" } : t));
                 return;
             }
 
@@ -481,23 +488,22 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             if (amountPercent >= 99) {
                 reclaimedRent = await reclaimMintAccountRent(mint);
                 if (reclaimedRent > 0) {
-                    addLog(`Recovered ${reclaimedRent.toFixed(4)} SOL rent from ${effectiveTrade.symbol}.`);
+                    addLog(`Recovered ${reclaimedRent.toFixed(4)} SOL rent from ${effectiveTrade.symbol} (excluded from trade PnL).`);
                 }
             }
 
-            let revenue: number | null = txDelta !== null ? Math.max(0, txDelta) : null;
-            if (revenue === null && balanceBefore !== null && balanceAfter !== null) {
-                revenue = Math.max(0, balanceAfter - balanceBefore);
+            let tradeRevenue: number | null = txDelta !== null ? Math.max(0, txDelta) : null;
+            if (tradeRevenue === null && balanceBefore !== null && balanceAfter !== null) {
+                tradeRevenue = Math.max(0, balanceAfter - balanceBefore);
             }
-            if (revenue === null) {
+            if (tradeRevenue === null) {
                 const fallbackRevenue = effectiveTrade.currentPrice > 0 ? amountToSell * effectiveTrade.currentPrice : 0;
-                revenue = Math.max(0, fallbackRevenue);
-                addLog(`⚠️ ${effectiveTrade.symbol} sell confirmed, but RPC could not verify exact SOL delta. Using estimated revenue.`);
+                tradeRevenue = Math.max(0, fallbackRevenue);
+                addLog(`⚠️ ${effectiveTrade.symbol} sell confirmed, but RPC could not verify the exact SOL delta. Using estimated trade revenue.`);
             }
 
-            revenue += reclaimedRent;
             const costBasis = tradeAmountPaid * (amountPercent / 100);
-            const netProfit = revenue - costBasis;
+            const netProfit = tradeRevenue - costBasis;
             const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
 
             if (profitProtectionEnabled && netProfit > 0) {
@@ -556,7 +562,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         } finally {
             processingMintsRef.current.delete(mint);
         }
-    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance, reclaimMintAccountRent, getWalletSolDeltaFromSignature]);
+    }, [wallet, isDemo, connection, addLog, setDemoBalance, setStats, setActiveTrades, setTradeHistory, profitProtectionEnabled, profitProtectionPercent, setVaultBalance, reclaimMintAccountRent, getWalletSolDeltaFromSignature, confirmLiveTokenBalance]);
 
     // --- PRICE CALCULATION ENGINE ---
 
@@ -974,10 +980,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         addLog("Syncing portfolio...");
         for (const trade of activeTradesRef.current.filter(t => t.status === "open")) {
             try {
-                if ((trade.amountTokens || 0) <= 0 || (Date.now() - (trade.buyTime || 0)) < 30000) {
-                    clearTokenBalanceCache(wallet.publicKey.toBase58(), trade.mint);
-                }
-                const bal = await getTokenBalance(wallet.publicKey.toBase58(), trade.mint, connection);
+                const balanceChecks = (trade.amountTokens || 0) <= 0 ? 3 : 1;
+                const bal = await confirmLiveTokenBalance(trade.mint, balanceChecks, 1000);
                 if (bal > 0) {
                     const normalizedBuyPrice = (trade.amountSolPaid || 0) > 0 ? (trade.amountSolPaid || 0) / bal : trade.buyPrice;
                     setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
@@ -990,7 +994,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             : (t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.highestPrice))
                     } : t));
                 } else if (Date.now() - (trade.buyTime || 0) > 60000) {
-                    setActiveTrades(prev => prev.filter(t => t.mint !== trade.mint));
+                    addLog(`Sync: ${trade.symbol} still has no verified token balance after repeated checks. Keeping the trade open for manual or later recovery.`);
                 }
             } catch (e) { }
         }
