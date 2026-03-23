@@ -174,9 +174,12 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                         let displayPnlSol = 0;
 
                                         if (trade.buyPrice > 0 && trade.currentPrice > 0) {
-                                            displayPnlPercent = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-                                            // Calculate SOL PnL: (Current Price - Buy Price) * Amount of Tokens
-                                            displayPnlSol = (trade.currentPrice - trade.buyPrice) * trade.amountTokens;
+                                            const effectiveCurrentPrice = trade.isPaper
+                                                ? trade.currentPrice * 0.97
+                                                : trade.currentPrice;
+                                            displayPnlPercent = ((effectiveCurrentPrice - trade.buyPrice) / trade.buyPrice) * 100;
+                                            // For paper trades, mirror the 3% exit friction used on close so active PnL matches history.
+                                            displayPnlSol = (effectiveCurrentPrice - trade.buyPrice) * trade.amountTokens;
                                         }
 
                                         if (trade.buyPrice === 0 && trade.currentPrice > 0) {
