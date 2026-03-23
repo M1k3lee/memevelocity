@@ -9,6 +9,7 @@ import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
+import { calculatePumpPrice } from '../utils/pumpMath';
 
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 
@@ -389,7 +390,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 try {
                     const pumpData = await getPumpData(mint, connection);
                     if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
-                        const livePrice = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1_000_000;
+                        const livePrice = calculatePumpPrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve);
                         sellPrice = sanitizePaperObservedPrice(effectiveTrade, livePrice);
                     } else {
                         const snapshot = getMarketSnapshot(mint);
@@ -617,7 +618,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     if (trade.isPaper || isDemo) {
                         const pumpData = await getPumpData(trade.mint, connection);
                         if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
-                            const livePrice = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1_000_000;
+                            const livePrice = calculatePumpPrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve);
                             price = sanitizePaperObservedPrice(trade, livePrice);
                             currentLiquidity = pumpData.vSolInBondingCurve;
                         } else {
@@ -641,7 +642,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             if (pumpData) {
                                 currentLiquidity = pumpData.vSolInBondingCurve;
                                 if (pumpData.vTokensInBondingCurve > 0 && pumpData.vSolInBondingCurve > 0) {
-                                    price = (pumpData.vSolInBondingCurve / pumpData.vTokensInBondingCurve) * 1000000;
+                                    price = calculatePumpPrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve);
                                 }
                             }
                             if (price === 0) {

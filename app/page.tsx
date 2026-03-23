@@ -15,6 +15,7 @@ import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
 import { formatTokenPrice } from '../utils/priceFormat';
+import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
 
 // Dynamic imports for components
 const WalletManager = dynamic(() => import('../components/WalletManager'), { ssr: false });
@@ -41,10 +42,7 @@ function getLiveExitWarmupSeconds(mode: string | undefined): number {
 }
 
 function getBondingCurveProgressFromFeed(token: TokenData): number {
-  if (!token.vTokensInBondingCurve) return 0;
-  return Math.max(0, Math.min(100,
-    100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)
-  ));
+  return calculateBondingCurveProgress(token.vTokensInBondingCurve);
 }
 
 function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum: number): EnhancedAnalysis {
@@ -593,7 +591,7 @@ export default function Home() {
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
         if (token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0) {
-          initialPrice = (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000;
+          initialPrice = calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve);
         } else {
           // Price will be fetched from blockchain in buyToken if not available here
           initialPrice = undefined;
@@ -651,7 +649,7 @@ export default function Home() {
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
         if (token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0) {
-          initialPrice = (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000;
+          initialPrice = calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve);
         } else {
           // Price will be fetched from blockchain in buyToken if not available here
           initialPrice = undefined;
@@ -690,8 +688,8 @@ export default function Home() {
           const freshData = await getPumpData(token.mint, connection);
           if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
 
-          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
-          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+          const freshPrice = calculatePumpPrice(freshData.vSolInBondingCurve, freshData.vTokensInBondingCurve);
+          const oldPrice = calculatePumpPrice(token.vSolInBondingCurve || 30, token.vTokensInBondingCurve || 1_073_000_000);
           const change = ((freshPrice - oldPrice) / oldPrice) * 100;
 
           if (change < -0.5) {
@@ -709,7 +707,7 @@ export default function Home() {
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
             : undefined;
 
           setLastTradeTime(Date.now());
@@ -729,8 +727,8 @@ export default function Home() {
           const freshData = await getPumpData(token.mint, connection);
           if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
 
-          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
-          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+          const freshPrice = calculatePumpPrice(freshData.vSolInBondingCurve, freshData.vTokensInBondingCurve);
+          const oldPrice = calculatePumpPrice(token.vSolInBondingCurve || 30, token.vTokensInBondingCurve || 1_073_000_000);
           const change = ((freshPrice - oldPrice) / oldPrice) * 100;
 
           if (change < -0.5) {
@@ -743,7 +741,7 @@ export default function Home() {
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
             : undefined;
 
           setLastTradeTime(Date.now());
@@ -779,8 +777,8 @@ export default function Home() {
           const freshData = await getPumpData(token.mint, connection);
           if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
 
-          const freshPrice = (freshData.vSolInBondingCurve / freshData.vTokensInBondingCurve) * 1000000;
-          const oldPrice = ((token.vSolInBondingCurve || 30) / (token.vTokensInBondingCurve || 1073000000000000)) * 1000000;
+        const freshPrice = calculatePumpPrice(freshData.vSolInBondingCurve, freshData.vTokensInBondingCurve);
+        const oldPrice = calculatePumpPrice(token.vSolInBondingCurve || 30, token.vTokensInBondingCurve || 1_073_000_000);
           const change = ((freshPrice - oldPrice) / oldPrice) * 100;
 
           if (change < -0.5) {
@@ -793,7 +791,7 @@ export default function Home() {
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
           const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
             : undefined;
 
           setLastTradeTime(Date.now());
@@ -818,9 +816,7 @@ export default function Home() {
         const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
         const buyPressure = snapshot?.buyPressure ?? 0;
         const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
-        const bondingCurveProgress = token.vTokensInBondingCurve > 0
-          ? Math.max(0, Math.min(100, 100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)))
-          : 0;
+        const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
 
         const launchPulse =
           age <= 75 &&
@@ -946,7 +942,7 @@ export default function Home() {
         token.vTokensInBondingCurve = verifiedTokens;
 
         const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-          ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+          ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
           : undefined;
 
         const exitStrategy = {
@@ -1277,7 +1273,7 @@ export default function Home() {
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-        ? (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000
+        ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
         : undefined;
 
       setLastTradeTime(Date.now());
@@ -1314,7 +1310,7 @@ export default function Home() {
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
         if (token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0) {
-          initialPrice = (token.vSolInBondingCurve / token.vTokensInBondingCurve) * 1000000;
+          initialPrice = calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve);
         } else {
           // Price will be fetched from blockchain in buyToken if not available here
           initialPrice = undefined;

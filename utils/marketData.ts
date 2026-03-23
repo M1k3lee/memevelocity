@@ -1,5 +1,6 @@
 import type { TokenData } from '../types/token';
 import { sanitizeTokenIdentity } from './tokenIdentity';
+import { calculatePumpPrice } from './pumpMath';
 
 export interface MarketSnapshot {
     mint: string;
@@ -45,7 +46,7 @@ function normalizeSolValue(value?: number): number {
 
 function calculatePrice(liquiditySol: number, virtualTokens: number): number {
     if (!liquiditySol || !virtualTokens) return 0;
-    return (liquiditySol / virtualTokens) * 1_000_000;
+    return calculatePumpPrice(liquiditySol, virtualTokens);
 }
 
 function pruneSnapshots(now: number) {

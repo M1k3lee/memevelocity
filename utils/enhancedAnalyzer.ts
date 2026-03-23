@@ -2,6 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getTokenBalance } from './solanaManager';
 import type { TokenData } from '../types/token';
 import { getMarketSnapshot, type MarketSnapshot } from './marketData';
+import { calculateBondingCurveProgress } from './pumpMath';
 
 type ContractSecurity = {
     freezeAuthority: boolean;
@@ -605,9 +606,7 @@ function getFeedPumpData(token: TokenData): PumpSnapshot | null {
         return null;
     }
 
-    const bondingCurveProgress = Math.max(0, Math.min(100,
-        100 - (((token.vTokensInBondingCurve - 206900000) * 100) / 793100000)
-    ));
+    const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
 
     return {
         vTokensInBondingCurve: token.vTokensInBondingCurve,

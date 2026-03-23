@@ -9,6 +9,7 @@ import { getConfiguredWallet, loadRunnerConfig } from './config';
 import { loadState, saveState } from './stateStore';
 import type { TokenData } from '../types/token';
 import type { BotMode, BotState, ManagedExitStrategy, ManagedPosition, RunnerConfig } from './types';
+import { calculatePumpPrice } from '../utils/pumpMath';
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,7 +21,7 @@ function clampPercent(percent: number): number {
 
 function calculatePrice(liquiditySol: number, virtualTokens: number): number {
     if (!liquiditySol || !virtualTokens) return 0;
-    return (liquiditySol / virtualTokens) * 1_000_000;
+    return calculatePumpPrice(liquiditySol, virtualTokens);
 }
 
 function getRugMode(mode: BotMode): 'safe' | 'medium' | 'high' {

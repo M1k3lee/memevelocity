@@ -1,5 +1,6 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
+import { calculateBondingCurveProgress, calculatePumpPrice } from "./pumpMath";
 
 // Official Solana public endpoint for fallback/dev use. Production should use a private RPC.
 const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
@@ -246,9 +247,7 @@ export const getPumpData = async (mintAddress: string, conn: Connection = connec
         const vSolInBondingCurve = Number(account.data.readBigUInt64LE(16)) / LAMPORTS_PER_SOL;
         const tokenTotalSupply = Number(account.data.readBigUInt64LE(24));
 
-        const bondingCurveProgress = Math.max(0, Math.min(100,
-            100 - (((vTokensInBondingCurve - 206900000) * 100) / 793100000)
-        ));
+        const bondingCurveProgress = calculateBondingCurveProgress(vTokensInBondingCurve);
 
         rateLimitCoolDowns.delete(mintAddress);
         return { vTokensInBondingCurve, vSolInBondingCurve, tokenTotalSupply, bondingCurveProgress };
@@ -263,7 +262,7 @@ export const getPumpPrice = async (mintAddress: string, conn: Connection = conne
     const data = await getPumpData(mintAddress, conn);
     if (!data || data.vTokensInBondingCurve === 0) return 0;
     if (data.vSolInBondingCurve < 0.1) return 0;
-    const price = (data.vSolInBondingCurve / data.vTokensInBondingCurve) * 1000000;
+    const price = calculatePumpPrice(data.vSolInBondingCurve, data.vTokensInBondingCurve);
     if (price < 0.000000001) return 0;
     return price;
 };
