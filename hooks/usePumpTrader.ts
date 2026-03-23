@@ -82,6 +82,13 @@ export interface ActiveTrade {
         trailingStopPercent?: number; // e.g., 10% from peak
         momentumExit?: boolean; // Exit when momentum detected (for first buyer)
         minHoldTime?: number; // Minimum seconds before exit (for first buyer)
+        fastKillLoss?: number; // Early max loss allowed before forced exit
+        fastKillSeconds?: number; // Seconds before the fast-kill rule activates
+        givebackPeakTrigger?: number; // Peak gain required before giveback protection
+        givebackFloor?: number; // PnL floor after a peak before we bail
+        givebackSeconds?: number; // Seconds before giveback protection activates
+        stagnationSeconds?: number; // Exit if the trade has gone nowhere by this time
+        stagnationFloor?: number; // Minimum PnL required by stagnationSeconds
     };
     partialSells?: { [percent: number]: boolean }; // Track staged sells (50%, 30%, etc.)
     originalAmount?: number; // Track original position size for partial sells
@@ -700,17 +707,37 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                         if (shouldManageExitsInHook && isFastCompoundTrade) {
                             const peakPnl = highestPrice > buyPrice ? ((highestPrice - buyPrice) / buyPrice) * 100 : pnl;
-                            if (timeOpen >= 6 && pnl <= -4) {
+                            const fastKillSeconds = strategy.fastKillSeconds ?? 6;
+                            const fastKillLoss = Math.abs(strategy.fastKillLoss ?? 4);
+                            const givebackSeconds = strategy.givebackSeconds ?? 10;
+                            const givebackPeakTrigger = strategy.givebackPeakTrigger ?? 4;
+                            const givebackFloor = strategy.givebackFloor ?? 0;
+                            const stagnationSeconds = strategy.stagnationSeconds ?? 0;
+                            const stagnationFloor = strategy.stagnationFloor ?? 0;
+                            if (timeOpen >= fastKillSeconds && pnl <= -fastKillLoss) {
                                 updates.set(trade.mint, { status: "selling" });
                                 sellToken(trade.mint, 100, sellSnapshot);
                                 addLog(`⚡ FAST KILL: ${trade.symbol} hit ${pnl.toFixed(2)}% in the opening window. Exiting.`);
                                 return;
                             }
 
-                            if (timeOpen >= 10 && peakPnl >= 4 && pnl <= 0) {
+                            if (timeOpen >= givebackSeconds && peakPnl >= givebackPeakTrigger && pnl <= givebackFloor) {
                                 updates.set(trade.mint, { status: "selling" });
                                 sellToken(trade.mint, 100, sellSnapshot);
                                 addLog(`⚡ FAST GIVEBACK EXIT: ${trade.symbol} faded from ${peakPnl.toFixed(2)}% to ${pnl.toFixed(2)}%. Exiting.`);
+                                return;
+                            }
+                        }
+
+                        const fastStagnationSeconds = strategy.stagnationSeconds ?? 0;
+                        const fastGivebackPeakTrigger = strategy.givebackPeakTrigger ?? 4;
+                        const fastStagnationFloor = strategy.stagnationFloor ?? 0;
+                        if (shouldManageExitsInHook && isFastCompoundTrade && fastStagnationSeconds > 0 && timeOpen >= fastStagnationSeconds) {
+                            const peakPnl = highestPrice > buyPrice ? ((highestPrice - buyPrice) / buyPrice) * 100 : pnl;
+                            if (peakPnl < fastGivebackPeakTrigger && pnl <= fastStagnationFloor) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100, sellSnapshot);
+                                addLog(`âš¡ FAST STALL EXIT: ${trade.symbol} failed to follow through (${pnl.toFixed(2)}% after ${timeOpen.toFixed(0)}s). Exiting.`);
                                 return;
                             }
                         }
