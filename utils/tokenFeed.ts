@@ -13,10 +13,15 @@ function normalizeSol(value?: number): number {
 }
 
 export function normalizeTokenEvent(data: any, receivedAt: number = Date.now()): TokenData {
+    const txType = data.txType || "buy";
+    const traderPublicKey = data.traderPublicKey || "";
+    const creatorPublicKey = data.creatorPublicKey || data.creator || (txType === 'create' ? traderPublicKey : "");
+
     return {
         mint: data.mint,
-        traderPublicKey: data.traderPublicKey || "",
-        txType: data.txType || "buy",
+        traderPublicKey,
+        creatorPublicKey,
+        txType,
         initialBuy: normalizeSol(data.initialBuy),
         bondingCurveKey: data.bondingCurveKey || "",
         vTokensInBondingCurve: normalizeNumber(data.vTokensInBondingCurve),
@@ -44,6 +49,7 @@ export function mergeTokenData(existing: TokenData | undefined, token: TokenData
         ...existing,
         ...token,
         traderPublicKey: token.traderPublicKey || existing?.traderPublicKey || "",
+        creatorPublicKey: token.creatorPublicKey || existing?.creatorPublicKey || (token.txType === 'create' ? token.traderPublicKey : ""),
         initialBuy: token.initialBuy > 0 ? token.initialBuy : (existing?.initialBuy || 0),
         bondingCurveKey: token.bondingCurveKey || existing?.bondingCurveKey || "",
         vTokensInBondingCurve,

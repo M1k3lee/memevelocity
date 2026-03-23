@@ -1,6 +1,7 @@
 export interface TokenData {
     mint: string;
     traderPublicKey: string;
+    creatorPublicKey?: string;
     txType: "create" | "buy" | "sell";
     initialBuy: number;
     bondingCurveKey: string;

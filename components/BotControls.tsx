@@ -25,7 +25,7 @@ interface BotConfig {
     amount: number;
     takeProfit: number;
     stopLoss: number;
-    mode: "runner" | "sniper" | "degen" | "micro" | "custom" | "safe" | "medium" | "high" | "velocity";
+    mode: "runner" | "sniper" | "degen" | "god" | "micro" | "custom" | "safe" | "medium" | "high" | "velocity";
     isRunning: boolean;
     isDemo: boolean;
     isSimulating: boolean;
@@ -44,7 +44,7 @@ interface BotControlsProps {
 
 export default function BotControls({ onConfigChange, walletConnected, realBalance = 0, config }: BotControlsProps) {
     const [isRunning, setIsRunning] = useState(config?.isRunning ?? false);
-    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "micro" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "micro" | "custom") ?? "runner");
+    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "god" | "micro" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "god" | "micro" | "custom") ?? "runner");
     const [amount, setAmount] = useState(config?.amount ?? 0.01);
     const [takeProfit, setTakeProfit] = useState(config?.takeProfit ?? 20);
     const [stopLoss, setStopLoss] = useState(config?.stopLoss ?? 10);
@@ -74,7 +74,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
     useEffect(() => {
         if (!config) return;
         setIsRunning(config.isRunning ?? false);
-        setMode((config.mode as "runner" | "sniper" | "degen" | "micro" | "custom") ?? "runner");
+        setMode((config.mode as "runner" | "sniper" | "degen" | "god" | "micro" | "custom") ?? "runner");
         setAmount(config.amount ?? 0.01);
         setTakeProfit(config.takeProfit ?? 20);
         setStopLoss(config.stopLoss ?? 10);
@@ -107,13 +107,15 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         });
     }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
-    const setPreset = (preset: "runner" | "sniper" | "degen" | "micro" | "custom") => {
+    const setPreset = (preset: "runner" | "sniper" | "degen" | "god" | "micro" | "custom") => {
         setMode(preset);
         if (preset === "runner") {
             // THE ULTRA PROFITABLE CONFIG (Tier 0-4 Strict)
             setAmount(0.01);
             setTakeProfit(30);
             setStopLoss(10);
+            setMaxConcurrentTrades(5);
+            setDynamicSizing(true);
             setAdvancedConfig({
                 minLiquidity: 10,
                 maxLiquidity: 1000,
@@ -134,6 +136,8 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setAmount(0.005);
             setTakeProfit(50);
             setStopLoss(15);
+            setMaxConcurrentTrades(1);
+            setDynamicSizing(true);
             setAdvancedConfig({
                 minLiquidity: 1,
                 maxLiquidity: 500,
@@ -155,6 +159,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             setTakeProfit(35);
             setStopLoss(14);
             setMaxConcurrentTrades(1);
+            setDynamicSizing(true);
             setAdvancedConfig({
                 minLiquidity: 5,
                 maxLiquidity: 2000,
@@ -169,6 +174,28 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                 requireSocials: false,
                 avoidSnipers: false,
                 slippage: 25
+            });
+        } else if (preset === "god") {
+            // SELECTIVE EARLY RUNNER MODE
+            setAmount(0.008);
+            setTakeProfit(30);
+            setStopLoss(5);
+            setMaxConcurrentTrades(1);
+            setDynamicSizing(true);
+            setAdvancedConfig({
+                minLiquidity: 34,
+                maxLiquidity: 120,
+                minVolume: 1.3,
+                minHolderCount: 12,
+                maxTop10: 24,
+                maxDev: 3,
+                minBondingCurve: 1.2,
+                maxBondingCurve: 14,
+                minVelocity: 0.7,
+                rugCheckStrictness: "strict",
+                requireSocials: false,
+                avoidSnipers: true,
+                slippage: 14
             });
         } else if (preset === "micro") {
             // MICRO WALLET COMPOUNDER
@@ -248,6 +275,13 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     >
                         <div className="font-bold whitespace-nowrap">MICRO</div>
                         <div className="text-[10px] opacity-70">1-Pos | Fast Compound</div>
+                    </button>
+                    <button
+                        onClick={() => setPreset("god")}
+                        className={`p-3 rounded border transition-all ${mode === "god" ? "border-[#f0d36a] bg-[rgba(240,211,106,0.1)] text-[#f7e7a8]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
+                    >
+                        <div className="font-bold whitespace-nowrap">GOD MODE</div>
+                        <div className="text-[10px] opacity-70">Selective | Runner Focus</div>
                     </button>
                     <button
                         onClick={() => setPreset("custom")}

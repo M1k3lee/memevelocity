@@ -8,7 +8,7 @@ import type { BotMode, ManagedExitStrategy, RunnerConfig } from './types';
 loadEnv({ path: path.resolve(process.cwd(), '.env.local'), quiet: true });
 loadEnv({ path: path.resolve(process.cwd(), '.env'), quiet: true });
 
-const SUPPORTED_MODES: BotMode[] = ['runner', 'sniper', 'degen', 'safe', 'medium', 'high', 'velocity', 'first', 'scalp'];
+const SUPPORTED_MODES: BotMode[] = ['runner', 'sniper', 'degen', 'god', 'safe', 'medium', 'high', 'velocity', 'first', 'scalp'];
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     if (value === undefined) return fallback;
@@ -28,6 +28,24 @@ function resolveMode(rawMode: string | undefined): BotMode {
 }
 
 function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
+    if (mode === 'god') {
+        return {
+            minLiquidity: 34,
+            maxLiquidity: 120,
+            minVolume: 1.3,
+            minHolderCount: 12,
+            maxTop10: 24,
+            maxDev: 3,
+            minBondingCurve: 1.2,
+            maxBondingCurve: 14,
+            minVelocity: 0.7,
+            rugCheckStrictness: 'strict',
+            requireSocials: false,
+            avoidSnipers: true,
+            slippage: 14
+        };
+    }
+
     if (mode === 'sniper' || mode === 'high' || mode === 'first' || mode === 'scalp') {
         return {
             minLiquidity: 1,
@@ -82,6 +100,17 @@ function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
 }
 
 function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
+    if (mode === 'god') {
+        return {
+            takeProfit: 30,
+            takeProfit2: 100,
+            stopLoss: 6,
+            maxHoldTime: 480,
+            trailingStop: true,
+            trailingStopPercent: 14
+        };
+    }
+
     if (mode === 'sniper' || mode === 'high' || mode === 'first' || mode === 'scalp') {
         return {
             takeProfit: 50,

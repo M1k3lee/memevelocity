@@ -1,6 +1,6 @@
 import type { AdvancedConfig } from '../utils/enhancedAnalyzer';
 
-export type BotMode = 'runner' | 'sniper' | 'degen' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp';
+export type BotMode = 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp';
 
 export interface ManagedExitStrategy {
     takeProfit: number;

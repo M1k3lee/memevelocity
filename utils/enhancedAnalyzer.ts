@@ -91,7 +91,7 @@ export async function analyzeEnhanced(
     token: TokenData,
     connection: Connection,
     heliusKey?: string,
-    riskMode: 'runner' | 'sniper' | 'degen' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp' = 'runner', // Mapped to new strategy
+    riskMode: 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp' = 'runner', // Mapped to new strategy
     config?: AdvancedConfig
 ): Promise<EnhancedAnalysis> {
     const reasons: string[] = [];
@@ -99,9 +99,12 @@ export async function analyzeEnhanced(
     const strengths: string[] = [];
 
     // Map legacy modes to new strategy intent
-    const isRunnerMode = riskMode === 'runner' || riskMode === 'safe' || riskMode === 'medium'; // Strict Tier compliance
+    const isGodMode = riskMode === 'god';
+    const isRunnerMode = isGodMode || riskMode === 'runner' || riskMode === 'safe' || riskMode === 'medium'; // Strict Tier compliance
     const isSniperMode = riskMode === 'sniper' || riskMode === 'high' || riskMode === 'first'; // Speed, Tier 0 only
     const isDegenMode = riskMode === 'degen' || riskMode === 'velocity'; // Loose checks, momentum focus
+    const tier2Floor = isGodMode ? 75 : 60;
+    const tier4Floor = isGodMode ? 60 : 50;
 
     try {
         const rpcPumpData = await getPumpData(token.mint, connection);
@@ -168,13 +171,13 @@ export async function analyzeEnhanced(
             : await analyzeHolderDistribution(token, connection, heliusKey, bondingCurveProgress);
         const tier2 = calculateTier2(holderMetrics, age);
 
-        if (isRunnerMode && tier2.score < 60) {
+        if (isRunnerMode && tier2.score < tier2Floor) {
             // Strict fail for Runner
             if (config?.rugCheckStrictness !== 'lenient') {
-                reasons.push(`TIER 2 FAIL: Bad distribution. Score ${tier2.score}/60`);
+                reasons.push(`TIER 2 FAIL: Bad distribution. Score ${tier2.score}/${tier2Floor}`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
             } else {
-                warnings.push(`TIER 2 WEAK: Score ${tier2.score}/60`);
+                warnings.push(`TIER 2 WEAK: Score ${tier2.score}/${tier2Floor}`);
             }
         } else if (tier2.score > 0) {
             strengths.push(...tier2.strengths);
@@ -199,9 +202,9 @@ export async function analyzeEnhanced(
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0; // % per minute
         const tier4 = calculateTier4(bondingCurveProgress, curveVelocity, isRunnerMode ? 5 : 0, isRunnerMode ? 15 : 100);
 
-        if (isRunnerMode && tier4.score < 50) {
+        if (isRunnerMode && tier4.score < tier4Floor) {
             if (config?.rugCheckStrictness !== 'lenient') {
-                reasons.push(`TIER 4 FAIL: Bad curve momentum. Score ${tier4.score}/50`);
+                reasons.push(`TIER 4 FAIL: Bad curve momentum. Score ${tier4.score}/${tier4Floor}`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
             }
         }
@@ -268,7 +271,20 @@ export async function analyzeEnhanced(
         let passed = false;
 
         // Custom Passing Logic based on Mode
-        if (isRunnerMode) {
+        if (isGodMode) {
+            passed =
+                tier0.score >= 100 &&
+                tier2.score >= 75 &&
+                tier4.score >= 60 &&
+                bondingCurveProgress >= 1.5 &&
+                observedVolume >= 1.2 &&
+                buyPressure >= 0.58 &&
+                (marketSnapshot?.tradeCount || 0) >= 8 &&
+                (marketSnapshot?.uniqueTraderCount || 0) >= 6 &&
+                holderMetrics.top10Concentration <= 25 &&
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 4);
+            riskLevel = passed ? 'low' : 'high';
+        } else if (isRunnerMode) {
             // Strict: Must pass Tier 0, Tier 1 is boost, Tier 2 >= 60, Tier 4 >= 50
             passed = tier0.score >= 100 && tier2.score >= 60 && tier4.score >= 50 && bondingCurveProgress >= 5;
             riskLevel = passed ? 'low' : 'high';
@@ -654,8 +670,9 @@ async function analyzeHolderDistribution(token: TokenData, conn: Connection, key
         }
 
         let deployerHoldings = -1;
-        if (realStats?.totalSupply && token.traderPublicKey && token.traderPublicKey !== 'SIM') {
-            const creatorBalance = await getTokenBalance(token.traderPublicKey, token.mint, conn);
+        const creatorWallet = token.creatorPublicKey || (token.txType === 'create' ? token.traderPublicKey : '');
+        if (realStats?.totalSupply && creatorWallet && creatorWallet !== 'SIM') {
+            const creatorBalance = await getTokenBalance(creatorWallet, token.mint, conn);
             deployerHoldings = Math.max(0, Math.min(100, (creatorBalance / realStats.totalSupply) * 100));
         }
 

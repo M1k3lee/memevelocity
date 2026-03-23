@@ -48,6 +48,7 @@ function isMicroWalletBalance(balance: number | null | undefined): boolean {
 
 function getLiveExitWarmupSeconds(mode: string | undefined): number {
   if (mode === 'micro') return 6;
+  if (mode === 'god') return 12;
   if (mode === 'degen') return 10;
   return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
 }
@@ -112,6 +113,97 @@ function calculateMicroVelocityScore(params: {
 
   if (priceChangePercent >= 1.5) score += 6;
   else if (priceChangePercent <= -1.5) score -= 8;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function estimateCurveBuyImpactPercent(liquiditySol: number, amountSol: number): number {
+  if (!Number.isFinite(liquiditySol) || liquiditySol <= 0 || !Number.isFinite(amountSol) || amountSol <= 0) {
+    return 100;
+  }
+
+  return (amountSol / liquiditySol) * 100;
+}
+
+function calculateGodModeScore(params: {
+  age: number;
+  observedVolume: number;
+  tradeCount: number;
+  uniqueTraderCount: number;
+  buyPressure: number;
+  bondingCurveProgress: number;
+  netFlow: number;
+  priceChangePercent: number;
+  stressImpactPercent: number;
+  top10Concentration: number;
+  creatorHoldings: number;
+}): number {
+  const {
+    age,
+    observedVolume,
+    tradeCount,
+    uniqueTraderCount,
+    buyPressure,
+    bondingCurveProgress,
+    netFlow,
+    priceChangePercent,
+    stressImpactPercent,
+    top10Concentration,
+    creatorHoldings
+  } = params;
+
+  const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
+  const traderDiversity = uniqueTraderCount / Math.max(1, tradeCount);
+  const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
+  const flowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
+  let score = 28;
+
+  if (age >= 8 && age <= 90) score += 10;
+  else if (age > 120) score -= 10;
+
+  if (observedVolume >= 1.5) score += 16;
+  else if (observedVolume >= 1.0) score += 10;
+  else score -= 14;
+
+  if (capitalEfficiency >= 0.12) score += 14;
+  else if (capitalEfficiency >= 0.09) score += 8;
+  else score -= 12;
+
+  if (buyPressure >= 0.66) score += 12;
+  else if (buyPressure >= 0.58) score += 7;
+  else score -= 12;
+
+  if (uniqueTraderCount >= 8) score += 10;
+  else if (uniqueTraderCount >= 6) score += 5;
+  else score -= 10;
+
+  if (traderDiversity >= 0.5) score += 10;
+  else if (traderDiversity >= 0.42) score += 5;
+  else score -= 8;
+
+  if (curveVelocity >= 0.9) score += 10;
+  else if (curveVelocity >= 0.65) score += 6;
+  else score -= 10;
+
+  if (flowVelocity >= 0.45) score += 8;
+  else if (flowVelocity < 0.2) score -= 8;
+
+  if (priceChangePercent >= 1 && priceChangePercent <= 10) score += 6;
+  else if (priceChangePercent > 14 || priceChangePercent < -2) score -= 10;
+
+  if (stressImpactPercent <= 1.8) score += 8;
+  else if (stressImpactPercent <= 2.4) score += 4;
+  else score -= 14;
+
+  if (top10Concentration > 0) {
+    if (top10Concentration <= 22) score += 10;
+    else if (top10Concentration > 28) score -= 12;
+  }
+
+  if (creatorHoldings >= 0) {
+    if (creatorHoldings <= 4) score += 8;
+    else if (creatorHoldings > 8) score -= 12;
+  }
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -517,6 +609,7 @@ export default function Home() {
     }
 
     const isLiveMicroMode = !config.isDemo && config.mode === 'micro';
+    const isLiveGodMode = !config.isDemo && config.mode === 'god';
     const recentLiveTrades = tradeHistory
       .filter((trade) => trade.status === 'closed' && !trade.isPaper && ((Date.now() - (trade.buyTime || 0)) < 20 * 60 * 1000))
       .slice(0, 4);
@@ -533,9 +626,17 @@ export default function Home() {
       }
     }
     const dynamicMinTimeBetweenTrades =
-      isLiveMicroMode
-        ? (recentLiveLossStreak >= 2 ? 180000 : recentLiveLossStreak >= 1 ? 45000 : 15000)
-        : minTimeBetweenTrades;
+      isLiveGodMode
+        ? (recentLiveLossStreak >= 1 ? 240000 : 60000)
+        : isLiveMicroMode
+          ? (recentLiveLossStreak >= 2 ? 180000 : recentLiveLossStreak >= 1 ? 45000 : 15000)
+          : minTimeBetweenTrades;
+
+    if (isLiveGodMode && (recentLiveLossStreak >= 2 || recentLiveLossSol <= -0.003)) {
+      addLog(`LIVE GOD HALT: ${recentLiveLossStreak} straight live losses (${recentLiveLossSol.toFixed(4)} SOL). Stopping bot for safety.`);
+      setConfig((prev: any) => ({ ...prev, isRunning: false }));
+      return;
+    }
 
     if (isLiveMicroMode && (recentLiveLossStreak >= 3 || recentLiveLossSol <= -0.0035)) {
       addLog(`🛑 LIVE MICRO HALT: ${recentLiveLossStreak} straight live losses (${recentLiveLossSol.toFixed(4)} SOL). Stopping bot for safety.`);
@@ -544,7 +645,7 @@ export default function Home() {
     }
 
     const tokenIdentity = getTokenIdentityKey(token).toLowerCase();
-    if (isLiveMicroMode) {
+    if (isLiveMicroMode || isLiveGodMode) {
       const recentSameIdentityLoss = tradeHistory.find((trade) => {
         if (trade.status !== 'closed' || trade.isPaper) return false;
         const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
@@ -555,7 +656,7 @@ export default function Home() {
         return (sameMint || sameIdentity) && (Date.now() - (trade.buyTime || 0)) < 30 * 60 * 1000;
       });
       if (recentSameIdentityLoss) {
-        addLog(`🚫 LIVE MICRO REJECT: ${token.symbol} matches a recent live loser. Skipping repeat entry.`);
+        addLog(`LIVE ${isLiveGodMode ? 'GOD' : 'MICRO'} REJECT: ${token.symbol} matches a recent live loser. Skipping repeat entry.`);
         return;
       }
     }
@@ -582,10 +683,10 @@ export default function Home() {
       // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
       const timeSinceLastTrade = Date.now() - lastTradeTime;
       if (timeSinceLastTrade < dynamicMinTimeBetweenTrades) {
-        if (isLiveMicroMode && recentLiveLossStreak >= 1) {
+        if ((isLiveMicroMode || isLiveGodMode) && recentLiveLossStreak >= 1) {
           const now = Date.now();
           if ((now - lastRiskPauseLogAt.current) > 15000) {
-            addLog(`⏸ Live micro cooldown: waiting ${Math.ceil((dynamicMinTimeBetweenTrades - timeSinceLastTrade) / 1000)}s after recent live losses before the next entry.`);
+            addLog(`Live ${isLiveGodMode ? 'god' : 'micro'} cooldown: waiting ${Math.ceil((dynamicMinTimeBetweenTrades - timeSinceLastTrade) / 1000)}s after recent live losses before the next entry.`);
             lastRiskPauseLogAt.current = now;
           }
         }
@@ -594,7 +695,7 @@ export default function Home() {
 
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
       const effectiveMaxConcurrentTrades =
-        !config.isDemo && config.mode === 'micro'
+        !config.isDemo && (config.mode === 'micro' || config.mode === 'god')
           ? 1
           : (!config.isDemo && config.mode === 'degen' && realBalance > 0 && realBalance < 0.1
           ? 1
@@ -1227,6 +1328,221 @@ export default function Home() {
       }
     }
 
+    if (config.mode === 'god') {
+      try {
+        const age = (Date.now() - token.timestamp) / 1000;
+        const liquidity = token.vSolInBondingCurve || 30;
+        const liquidityGrowth = liquidity - 30;
+        const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
+        const snapshot = getMarketSnapshot(token.mint);
+        const tradeCount = snapshot?.tradeCount || 0;
+        const buyCount = snapshot?.buyCount || 0;
+        const sellCount = snapshot?.sellCount || 0;
+        const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+        const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
+        const buyPressure = snapshot?.buyPressure ?? 0;
+        const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
+        const priceChangePercent = snapshot?.priceChangePercent || 0;
+        const traderDiversity = tradeCount > 0 ? uniqueTraderCount / tradeCount : 0;
+        const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
+        const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
+        const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
+        const stressBuySizeSol = config.isDemo ? 0.35 : Math.max(0.25, Math.min(0.5, config.amount * 40));
+        const stressImpactPercent = estimateCurveBuyImpactPercent(liquidity, stressBuySizeSol);
+        const antiChaseTriggered =
+          age > 110 ||
+          priceChangePercent >= (config.isDemo ? 16 : 14) ||
+          bondingCurveProgress >= (config.isDemo ? 16 : 12) ||
+          tradeCount >= (config.isDemo ? 30 : 26);
+        const waitingOnSnapshot =
+          age <= 30 &&
+          tradeCount === 0 &&
+          observedVolume <= 0.2 &&
+          liquidityGrowth > 0.3;
+
+        if (age < 6) {
+          scheduleRetry(4000, `GOD wait: ${token.symbol} is still in the opening chaos (${age.toFixed(1)}s old).`);
+          return;
+        }
+
+        if (antiChaseTriggered) {
+          addLog(`GOD Reject: ${token.symbol} is already too extended (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s).`);
+          return;
+        }
+
+        const participationReady =
+          buyCount >= (config.isDemo ? 5 : 6) &&
+          tradeCount >= (config.isDemo ? 7 : 9) &&
+          uniqueTraderCount >= (config.isDemo ? 5 : 6) &&
+          observedVolume >= (config.isDemo ? 0.9 : 1.25) &&
+          buyPressure >= (config.isDemo ? 0.57 : 0.6) &&
+          netFlow >= (config.isDemo ? 0.35 : 0.5) &&
+          traderDiversity >= (config.isDemo ? 0.4 : 0.44);
+        const curveReady =
+          bondingCurveProgress >= (config.isDemo ? 0.9 : 1.2) &&
+          bondingCurveProgress <= (config.isDemo ? 16 : 14) &&
+          curveVelocity >= (config.isDemo ? 0.55 : 0.7) &&
+          momentum >= (config.isDemo ? 0.7 : 0.9) &&
+          priceChangePercent > -0.75;
+        const executionReady =
+          capitalEfficiency >= (config.isDemo ? 0.075 : 0.09) &&
+          stressImpactPercent <= (config.isDemo ? 2.4 : 1.85) &&
+          sellCount <= Math.max(2, Math.floor(tradeCount * 0.42));
+
+        if ((!participationReady || !curveReady || !executionReady) && (age < 105 || waitingOnSnapshot)) {
+          scheduleRetry(
+            5000,
+            `GOD wait: ${token.symbol} needs cleaner runner confirmation (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, eff ${capitalEfficiency.toFixed(3)}, impact ${stressImpactPercent.toFixed(2)}%).`
+          );
+          return;
+        }
+
+        if (!participationReady || !curveReady || !executionReady) {
+          addLog(`GOD Reject: ${token.symbol} failed the runner gate (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, eff ${capitalEfficiency.toFixed(3)}, impact ${stressImpactPercent.toFixed(2)}%).`);
+          return;
+        }
+
+        const godAnalysisConfig = {
+          ...config.advanced,
+          minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 30 : 34),
+          maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? 160 : 120),
+          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 0.9 : 1.25),
+          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 10 : 12),
+          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 30 : 25),
+          maxDev: Math.min(config.advanced?.maxDev ?? 100, 4),
+          minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 0.9 : 1.2),
+          maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? 16 : 14),
+          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? 0.55 : 0.7),
+          rugCheckStrictness: 'strict',
+          requireSocials: false,
+          avoidSnipers: true,
+          slippage: Math.min(config.advanced?.slippage || 14, config.isDemo ? 18 : 14)
+        };
+        const analysis = await analyzeEnhanced(token, connection, config.heliusKey, 'god', godAnalysisConfig);
+
+        if (!analysis.passed) {
+          if (age < 110) {
+            scheduleRetry(7000, `GOD wait: ${token.symbol} still lacks safe runner structure (${analysis.reasons[0] || 'analysis pending'}).`);
+          } else {
+            addLog(`GOD Reject: ${token.symbol} - ${analysis.reasons.join(', ') || 'analysis rejected trade'}`);
+          }
+          return;
+        }
+
+        const creatorHoldings = analysis.metrics.deployerHoldings;
+        const top10Concentration = analysis.metrics.top10Concentration;
+        const godScore = calculateGodModeScore({
+          age,
+          observedVolume,
+          tradeCount,
+          uniqueTraderCount,
+          buyPressure,
+          bondingCurveProgress,
+          netFlow,
+          priceChangePercent,
+          stressImpactPercent,
+          top10Concentration,
+          creatorHoldings
+        });
+        const godScoreFloor = config.isDemo ? 68 : 74;
+
+        if (godScore < godScoreFloor) {
+          if (age < 95) {
+            scheduleRetry(6000, `GOD wait: ${token.symbol} composite score ${godScore}/100 is not there yet.`);
+          } else {
+            addLog(`GOD Reject: ${token.symbol} composite score ${godScore}/100 is below the runner floor.`);
+          }
+          return;
+        }
+
+        addLog(`GOD setup: ${token.symbol} - score ${godScore}/100 | flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | top10 ${top10Concentration.toFixed(1)}% | creator ${creatorHoldings >= 0 ? `${creatorHoldings.toFixed(1)}%` : 'N/A'} | impact ${stressImpactPercent.toFixed(2)}%`);
+
+        const setupPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
+          ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
+          : 0;
+        await new Promise(r => setTimeout(r, config.isDemo ? 800 : 1200));
+        const freshData = await getPumpData(token.mint, connection);
+        const freshSnapshot = getMarketSnapshot(token.mint);
+        const verifiedLiquidity = freshData?.vSolInBondingCurve || liquidity;
+        const verifiedTokens = freshData?.vTokensInBondingCurve || token.vTokensInBondingCurve;
+        const verifiedCurveProgress = Number.isFinite(freshData?.bondingCurveProgress) ? freshData!.bondingCurveProgress : bondingCurveProgress;
+        const verifiedPrice = verifiedLiquidity > 0 && verifiedTokens > 0
+          ? calculatePumpPrice(verifiedLiquidity, verifiedTokens)
+          : setupPrice;
+        const liquidityDeltaPercent = liquidity > 0 ? ((verifiedLiquidity - liquidity) / liquidity) * 100 : 0;
+        const curveDelta = verifiedCurveProgress - bondingCurveProgress;
+        const priceDeltaPercent = setupPrice > 0 && verifiedPrice > 0 ? ((verifiedPrice - setupPrice) / setupPrice) * 100 : 0;
+        const freshBuyPressure = freshSnapshot?.buyPressure ?? buyPressure;
+        const freshUniqueTraders = freshSnapshot?.uniqueTraderCount ?? uniqueTraderCount;
+
+        if (liquidityDeltaPercent < -4 || curveDelta < -0.8 || priceDeltaPercent < -1.8 || freshBuyPressure < 0.57) {
+          addLog(`GOD Reject: ${token.symbol} lost too much confirmation (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure).`);
+          return;
+        }
+
+        if (verifiedLiquidity <= 0 || freshUniqueTraders < uniqueTraderCount) {
+          scheduleRetry(6000, `GOD wait: ${token.symbol} verification snapshot is still settling.`);
+          return;
+        }
+
+        token.vSolInBondingCurve = verifiedLiquidity;
+        token.vTokensInBondingCurve = verifiedTokens;
+
+        const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
+          ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
+          : undefined;
+        const godAmount = Number((config.amount * (godScore >= 86 ? 1 : 0.85)).toFixed(4));
+        const starterAmount = Number((godAmount * 0.65).toFixed(4));
+        const scaleInAmount = Number(Math.max(0, godAmount - starterAmount).toFixed(4));
+        const exitStrategy = {
+          takeProfit: 30,
+          takeProfit2: 95,
+          stopLoss: config.isDemo ? 6 : 5,
+          maxHoldTime: 240,
+          trailingStop: false,
+          momentumExit: false,
+          minHoldTime: 10,
+          fastKillLoss: config.isDemo ? 3.5 : 2.8,
+          fastKillSeconds: 6,
+          givebackPeakTrigger: 7,
+          givebackFloor: 1.5,
+          givebackSeconds: 14,
+          stagnationSeconds: 60,
+          stagnationFloor: 2,
+          tp1SellPercent: 70,
+          tp2SellPercent: 15,
+          postTp1FloorPercent: 4,
+          postTp2FloorPercent: 14,
+          runnerMaxHoldTime: 900,
+          runnerTrailingStopPercent: 18,
+          runnerActivationProfit: 30,
+          runnerTimeExitFloor: 12
+        };
+        const scaleInPlan = scaleInAmount >= 0.001 ? {
+          pendingSol: scaleInAmount,
+          triggerPnlPercent: 8,
+          requiredObservedVolumeSol: Number((observedVolume + (config.isDemo ? 0.7 : 1.2)).toFixed(3)),
+          requiredUniqueTraderCount: uniqueTraderCount + 2,
+          requiredBuyPressure: Number(Math.max(0.62, buyPressure).toFixed(2)),
+          maxWaitSeconds: config.isDemo ? 60 : 45,
+          inFlight: false,
+          completed: false,
+          expired: false
+        } : undefined;
+        const godSlippage = Math.min(config.advanced?.slippage || 14, config.isDemo ? 18 : 14);
+
+        setLastTradeTime(Date.now());
+        if (scaleInPlan) {
+          addLog(`GOD staged entry: ${token.symbol} starter ${starterAmount.toFixed(4)} SOL, add-on ${scaleInAmount.toFixed(4)} SOL only if the runner confirms.`);
+        }
+        await buyToken(token.mint, token.symbol, scaleInPlan ? starterAmount : godAmount, godSlippage, initialPrice, exitStrategy, scaleInPlan ? { scaleInPlan } : undefined);
+        return;
+      } catch (error: any) {
+        addLog(`GOD error for ${token.symbol}: ${error.message}`);
+        return;
+      }
+    }
+
     // === ENHANCED TOKEN ANALYSIS (Safe/Medium/High modes) - Based on Research ===
     try {
       // ENTRY CONFIRMATION: Wait for momentum confirmation before buying
@@ -1339,10 +1655,11 @@ export default function Home() {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
         // Mapping: Maps new modes (runner, sniper, degen) to analyzer logic
-        const riskModeMap: Record<string, 'runner' | 'sniper' | 'degen' | 'safe' | 'medium' | 'high' | 'velocity'> = {
+        const riskModeMap: Record<string, 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity'> = {
           'runner': 'runner',
           'safe': 'runner',
           'medium': 'runner',
+          'god': 'god',
           'sniper': 'sniper',
           'first': 'sniper',
           'degen': 'degen',
@@ -1370,6 +1687,7 @@ export default function Home() {
       let minScore = 30;
       if (config.mode === 'runner' || config.mode === 'safe') minScore = 70;
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
+      else if (config.mode === 'god') minScore = 75;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
       else if (config.mode === 'micro') minScore = 45;
@@ -1567,7 +1885,8 @@ export default function Home() {
       }
       // Custom mode: User has full control, proceed if they've configured it
       // Other modes: Proceed if not in safe mode
-      if (config.mode === 'custom' || config.mode !== 'safe') {
+      const allowFallbackBuy = ['custom', 'degen', 'high', 'velocity', 'scalp', 'sniper', 'first'].includes(config.mode);
+      if (allowFallbackBuy) {
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
         let initialPrice: number | undefined;
