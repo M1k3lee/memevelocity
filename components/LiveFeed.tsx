@@ -198,7 +198,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 setStatus("connected");
                 setLastError("");
                 lastFeedEventAtRef.current = Date.now();
+                subscribedMintsRef.current.clear();
                 ws.send(JSON.stringify({ method: "subscribeNewToken" }));
+
+                const trackedMints = [...new Set(trackedMintsRef.current)];
+                trackedMints.forEach((mint) => subscribeToTokenTrades(mint));
             };
 
             ws.onmessage = async (event) => {
@@ -215,10 +219,12 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             };
             ws.onclose = () => {
                 wsRef.current = null;
+                subscribedMintsRef.current.clear();
                 setStatus("disconnected");
                 scheduleReconnect("Feed disconnected. Retrying...");
             };
             ws.onerror = () => {
+                subscribedMintsRef.current.clear();
                 setStatus("disconnected");
                 scheduleReconnect("Feed connection error. Retrying...");
             };
@@ -249,12 +255,15 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     }, [paused, isSimulating, status]);
 
     const subscribeToTokenTrades = (mint: string) => {
+        if (!trackedMintsRef.current.includes(mint)) {
+            trackedMintsRef.current.push(mint);
+        }
+
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || subscribedMintsRef.current.has(mint)) {
             return;
         }
 
         subscribedMintsRef.current.add(mint);
-        trackedMintsRef.current.push(mint);
         wsRef.current.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] }));
 
         if (trackedMintsRef.current.length > MAX_TRACKED_MINTS) {

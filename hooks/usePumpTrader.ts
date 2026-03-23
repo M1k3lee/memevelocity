@@ -3,9 +3,12 @@ import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { clearTokenBalanceCache, getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
-import { getMarketSnapshot } from '../utils/marketData';
+import { getMarketSnapshot, recordMarketEvent } from '../utils/marketData';
 import { formatTokenPrice } from '../utils/priceFormat';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
+import { recordLatestToken } from '../utils/liveTokenStore';
+import type { TokenData } from '../types/token';
+import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 
@@ -105,6 +108,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
     const wsRef = useRef<WebSocket | null>(null);
     const lastWebsocketRefreshRef = useRef(0);
+    const marketFeedCacheRef = useRef<Map<string, TokenData>>(new Map());
 
     // Initial Load
     useEffect(() => {
@@ -178,6 +182,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const clearLogs = useCallback(() => {
         setLogs([]);
         localStorage.removeItem('pump_logs');
+    }, []);
+
+    const recordTradeFeedEvent = useCallback((payload: any) => {
+        if (!payload?.mint) return;
+
+        const normalized = normalizeTokenEvent(payload, Date.now());
+        const merged = mergeTokenData(marketFeedCacheRef.current.get(normalized.mint), normalized);
+        marketFeedCacheRef.current.set(merged.mint, merged);
+        recordLatestToken(merged);
+        recordMarketEvent(merged);
     }, []);
 
     const withRpcTimeout = useCallback(async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -753,6 +767,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const data = JSON.parse(event.data);
                 if (!data?.mint || (!data.vSolInBondingCurve && !data.price)) return;
 
+                recordTradeFeedEvent(data);
+
                 const now = Date.now();
                 const minRefreshMs = hasFastExitTrade ? 300 : 750;
                 if ((now - lastWebsocketRefreshRef.current) < minRefreshMs) return;
@@ -769,7 +785,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             }
             ws.close();
         };
-    }, [wallet, isDemo, openTradeSubscriptionKey, updatePrices, hasFastExitTrade]);
+    }, [wallet, isDemo, openTradeSubscriptionKey, updatePrices, hasFastExitTrade, recordTradeFeedEvent]);
 
     // Polling Hook (2s Heartbeat)
     useEffect(() => {
