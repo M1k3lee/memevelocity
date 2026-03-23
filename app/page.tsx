@@ -56,6 +56,66 @@ function getBondingCurveProgressFromFeed(token: TokenData): number {
   return calculateBondingCurveProgress(token.vTokensInBondingCurve);
 }
 
+function calculateMicroVelocityScore(params: {
+  age: number;
+  observedVolume: number;
+  tradeCount: number;
+  uniqueTraderCount: number;
+  buyPressure: number;
+  netFlow: number;
+  bondingCurveProgress: number;
+  sellCount: number;
+  priceChangePercent: number;
+}): number {
+  const {
+    age,
+    observedVolume,
+    tradeCount,
+    uniqueTraderCount,
+    buyPressure,
+    netFlow,
+    bondingCurveProgress,
+    sellCount,
+    priceChangePercent
+  } = params;
+
+  const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
+  const traderDiversity = uniqueTraderCount / Math.max(1, tradeCount);
+  const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
+  const netFlowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
+
+  let score = 35;
+
+  if (capitalEfficiency >= 0.12) score += 22;
+  else if (capitalEfficiency >= 0.08) score += 14;
+  else if (capitalEfficiency >= 0.05) score += 6;
+  else score -= 20;
+
+  if (curveVelocity >= 1.2) score += 18;
+  else if (curveVelocity >= 0.8) score += 10;
+  else if (curveVelocity < 0.35) score -= 12;
+
+  if (netFlowVelocity >= 0.75) score += 14;
+  else if (netFlowVelocity >= 0.4) score += 8;
+  else if (netFlowVelocity < 0.18) score -= 10;
+
+  if (buyPressure >= 0.65) score += 10;
+  else if (buyPressure >= 0.55) score += 5;
+  else if (buyPressure < 0.48) score -= 10;
+
+  if (traderDiversity >= 0.5) score += 10;
+  else if (traderDiversity >= 0.4) score += 5;
+  else if (traderDiversity < 0.3) score -= 12;
+
+  if (sellCount <= Math.max(1, tradeCount * 0.25)) score += 6;
+  else if (sellCount > Math.max(2, tradeCount * 0.45)) score -= 8;
+
+  if (priceChangePercent >= 1.5) score += 6;
+  else if (priceChangePercent <= -1.5) score -= 8;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum: number): EnhancedAnalysis {
   const snapshot = getMarketSnapshot(token.mint);
   const liquidity = token.vSolInBondingCurve || 30;
@@ -835,6 +895,27 @@ export default function Home() {
         const healthyNetFlowFloor = isLiveMicroWallet ? 0.18 : 0.3;
         const healthyDiversityFloor = isLiveMicroWallet ? 0.42 : 0.48;
         const priceFadeFloor = isLiveMicroWallet ? -2.5 : -1.5;
+        const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
+        const netFlowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
+        const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
+        const runnerVelocityScore = calculateMicroVelocityScore({
+          age,
+          observedVolume,
+          tradeCount,
+          uniqueTraderCount,
+          buyPressure,
+          netFlow,
+          bondingCurveProgress,
+          sellCount,
+          priceChangePercent
+        });
+        const velocityScoreFloor = isLiveMicroWallet ? 52 : 58;
+        const capitalEfficiencyFloor = isLiveMicroWallet ? 0.055 : 0.07;
+        const velocityReady =
+          runnerVelocityScore >= velocityScoreFloor &&
+          capitalEfficiency >= capitalEfficiencyFloor &&
+          curveVelocity >= (isLiveMicroWallet ? 0.4 : 0.55) &&
+          netFlowVelocity >= (isLiveMicroWallet ? 0.18 : 0.24);
 
         const launchPulse =
           age <= 75 &&
@@ -932,16 +1013,16 @@ export default function Home() {
           return;
         }
 
-        if (!strongFlow && !(tapeConfirmed && supportiveCurve)) {
+        if ((!strongFlow && !(tapeConfirmed && supportiveCurve)) || !velocityReady) {
           if (age < 90 || waitingOnSnapshot) {
-            scheduleRetry(4000, `MICRO wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+            scheduleRetry(4000, `MICRO wait: ${token.symbol} needs stronger runner tape (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
           } else {
-            addLog(`MICRO Reject: ${token.symbol} - Need stronger early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${bondingCurveProgress.toFixed(1)}%).`);
+            addLog(`MICRO Reject: ${token.symbol} - Runner tape too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
           }
           return;
         }
 
-        addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}% | price ${priceChangePercent.toFixed(1)}% | diversity ${(traderDiversity * 100).toFixed(0)}%`);
+        addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}% | price ${priceChangePercent.toFixed(1)}% | diversity ${(traderDiversity * 100).toFixed(0)}% | vel ${runnerVelocityScore} | eff ${capitalEfficiency.toFixed(3)}`);
         const aggressiveSetup =
           (buyPressure >= 0.62 || feedMomentum) &&
           buyCount >= (isLiveMicroWallet ? 3 : 4) &&
@@ -1020,6 +1101,9 @@ export default function Home() {
 
         const microSizeMultiplier = aggressiveSetup ? 1.0 : (strongFlow ? 0.85 : 0.7);
         const microAmount = Number(Math.max(config.amount * 0.6, config.amount * microSizeMultiplier).toFixed(4));
+        const stagedEntryFraction = aggressiveSetup ? 0.55 : 0.4;
+        const starterAmount = Number((microAmount * stagedEntryFraction).toFixed(4));
+        const scaleInAmount = Number(Math.max(0, microAmount - starterAmount).toFixed(4));
         const exitStrategy = {
           takeProfit: Math.min(config.takeProfit, aggressiveSetup ? 10 : 11),
           takeProfit2: aggressiveSetup ? 30 : 24,
@@ -1044,10 +1128,24 @@ export default function Home() {
           runnerActivationProfit: aggressiveSetup ? 20 : 16,
           runnerTimeExitFloor: aggressiveSetup ? 8 : 6
         };
+        const scaleInPlan = scaleInAmount >= 0.001 ? {
+          pendingSol: scaleInAmount,
+          triggerPnlPercent: aggressiveSetup ? 2.2 : 3.0,
+          requiredObservedVolumeSol: Number((observedVolume + (isLiveMicroWallet ? 0.12 : 0.2)).toFixed(3)),
+          requiredUniqueTraderCount: uniqueTraderCount + 1,
+          requiredBuyPressure: Number(Math.max(healthyPressureFloor, buyPressure - 0.02).toFixed(2)),
+          maxWaitSeconds: aggressiveSetup ? 18 : 24,
+          inFlight: false,
+          completed: false,
+          expired: false
+        } : undefined;
         const microSlippage = Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28));
 
         setLastTradeTime(Date.now());
-        await buyToken(token.mint, token.symbol, microAmount, microSlippage, initialPrice, exitStrategy);
+        if (scaleInPlan) {
+          addLog(`MICRO staged entry: ${token.symbol} starting with ${starterAmount.toFixed(4)} SOL, add-on ${scaleInAmount.toFixed(4)} SOL if runner confirmation holds.`);
+        }
+        await buyToken(token.mint, token.symbol, scaleInPlan ? starterAmount : microAmount, microSlippage, initialPrice, exitStrategy, scaleInPlan ? { scaleInPlan } : undefined);
         return;
       } catch (error: any) {
         addLog(`MICRO error for ${token.symbol}: ${error.message}`);
@@ -1509,6 +1607,53 @@ export default function Home() {
       const runnerActive = hasTp1Sell(trade.partialSells);
       const runnerMaxHoldTime = getRunnerMaxHoldTime(exitStrategy, trade.partialSells);
       const profitLockFloor = getProfitLockFloor(exitStrategy, trade.partialSells);
+      const scaleInPlan = trade.scaleInPlan;
+
+      if (scaleInPlan && !scaleInPlan.completed && !scaleInPlan.expired && !scaleInPlan.inFlight) {
+        const scaleSnapshot = getMarketSnapshot(trade.mint);
+        const scaleObservedVolume = scaleSnapshot?.observedVolumeSol || 0;
+        const scaleUniqueTraders = scaleSnapshot?.uniqueTraderCount || 0;
+        const scaleBuyPressure = scaleSnapshot?.buyPressure ?? 0;
+        const scaleTradeCount = scaleSnapshot?.tradeCount || 0;
+        const scaleSellCount = scaleSnapshot?.sellCount || 0;
+        const scaleInConfirmed =
+          currentPnl >= scaleInPlan.triggerPnlPercent &&
+          scaleObservedVolume >= scaleInPlan.requiredObservedVolumeSol &&
+          scaleUniqueTraders >= scaleInPlan.requiredUniqueTraderCount &&
+          scaleBuyPressure >= scaleInPlan.requiredBuyPressure &&
+          scaleTradeCount >= scaleUniqueTraders &&
+          scaleSellCount <= Math.max(2, Math.floor(scaleTradeCount * 0.4));
+
+        if (holdTimeSeconds >= scaleInPlan.maxWaitSeconds) {
+          updateTrade(trade.mint, {
+            scaleInPlan: {
+              ...scaleInPlan,
+              pendingSol: 0,
+              expired: true,
+              inFlight: false
+            }
+          });
+          addLog(`MICRO add-on expired: ${trade.symbol} never confirmed the runner leg in time.`);
+        } else if (scaleInConfirmed && scaleInPlan.pendingSol > 0) {
+          updateTrade(trade.mint, {
+            scaleInPlan: {
+              ...scaleInPlan,
+              inFlight: true
+            }
+          });
+          addLog(`MICRO add-on confirmed: ${trade.symbol} held ${currentPnl.toFixed(1)}% with ${scaleObservedVolume.toFixed(2)} SOL observed. Adding ${scaleInPlan.pendingSol.toFixed(4)} SOL.`);
+          void buyToken(
+            trade.mint,
+            trade.symbol,
+            scaleInPlan.pendingSol,
+            Math.max(config.advanced?.slippage || 25, 30),
+            trade.currentPrice > 0 ? trade.currentPrice : undefined,
+            trade.exitStrategy,
+            { allowTopUp: true }
+          );
+          return;
+        }
+      }
 
       if (trade.buyTime && runnerMaxHoldTime && holdTimeSeconds >= runnerMaxHoldTime) {
         const runnerTimeExitFloor = getRunnerTimeExitFloor(exitStrategy);
@@ -1780,7 +1925,7 @@ export default function Home() {
         }
       }
     });
-  }, [activeTrades, config.isRunning, config.takeProfit, config.stopLoss, config.isDemo, sellToken, addLog, updateTrade]);
+  }, [activeTrades, config.isRunning, config.takeProfit, config.stopLoss, config.isDemo, config.mode, config.advanced?.slippage, buyToken, sellToken, addLog, updateTrade]);
 
   if (!mounted) return <div className="min-h-screen bg-[#050505] text-white" />;
 
