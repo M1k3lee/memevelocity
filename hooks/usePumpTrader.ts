@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { clearTokenBalanceCache, getBalance, getTokenBalance, getPumpPrice, getTokenMetadata, getPumpData } from '../utils/solanaManager';
 import { getMarketSnapshot } from '../utils/marketData';
+import { formatTokenPrice } from '../utils/priceFormat';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
@@ -419,7 +420,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     } : t));
                 }
 
-                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Trade PnL: ${tradingProfit.toFixed(4)} SOL`);
+                addLog(`[DEMO] Sold ${amountPercent}% at ${formatTokenPrice(sellPrice)} SOL. Trade PnL: ${tradingProfit.toFixed(4)} SOL`);
                 if (rentReclaim > 0) {
                     addLog(`[DEMO] Recovered ${rentReclaim.toFixed(4)} SOL token-account rent on close (excluded from PnL%).`);
                 }

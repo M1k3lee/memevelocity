@@ -3,6 +3,7 @@
 import React from 'react';
 import { ArrowUpRight, ArrowDownRight, XCircle, RefreshCw, Search, ExternalLink, Trash2 } from 'lucide-react';
 import { ActiveTrade } from '../hooks/usePumpTrader';
+import { formatTokenPrice } from '../utils/priceFormat';
 
 interface ActiveTradesProps {
     trades: ActiveTrade[];
@@ -144,7 +145,7 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                 <td className="p-3 text-sm text-gray-300">
                                     {!trade.isPaper && (trade.amountTokens || 0) <= 0
                                         ? "Settling..."
-                                        : (trade.buyPrice > 0 ? trade.buyPrice.toFixed(9) : "Pending")}
+                                        : (trade.buyPrice > 0 ? formatTokenPrice(trade.buyPrice) : "Pending")}
                                 </td>
                                 <td className="p-3 text-sm text-gray-300">
                                     {(() => {
@@ -152,7 +153,7 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                         const isSettling = !trade.isPaper && (trade.amountTokens || 0) <= 0;
                                         return (
                                             <div className="flex flex-col">
-                                                <span>{isSettling ? "Settling..." : (trade.currentPrice > 0 ? trade.currentPrice.toFixed(9) : "Updating...")}</span>
+                                                <span>{isSettling ? "Settling..." : (trade.currentPrice > 0 ? formatTokenPrice(trade.currentPrice) : "Updating...")}</span>
                                                 {isStale && (
                                                     <span className="text-orange-500 text-[9px] flex items-center gap-1 animate-pulse">
                                                         ⚠️ STALE ({Math.floor((Date.now() - (trade.lastPriceUpdate || 0)) / 1000)}s)

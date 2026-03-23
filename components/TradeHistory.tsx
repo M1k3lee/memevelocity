@@ -3,6 +3,7 @@
 import React from 'react';
 import { History, ArrowUpRight, ArrowDownRight, ExternalLink } from 'lucide-react';
 import { ActiveTrade } from '../hooks/usePumpTrader';
+import { formatTokenPrice } from '../utils/priceFormat';
 
 interface TradeHistoryProps {
     trades: ActiveTrade[];
@@ -67,8 +68,8 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="p-2 font-mono text-gray-500 text-[10px]">{trade.buyPrice.toFixed(9)}</td>
-                                        <td className="p-2 font-mono text-gray-500 text-[10px]">{trade.currentPrice.toFixed(9)}</td>
+                                        <td className="p-2 font-mono text-gray-500 text-[10px]">{formatTokenPrice(trade.buyPrice)}</td>
+                                        <td className="p-2 font-mono text-gray-500 text-[10px]">{formatTokenPrice(trade.currentPrice)}</td>
                                         <td className="p-2 text-right font-bold">
                                             <span className={`flex items-center justify-end gap-1 ${isPositive ? "text-green-500" : "text-red-500"}`}>
                                                 {trade.pnlPercent >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(1)}%

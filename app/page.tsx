@@ -14,6 +14,7 @@ import { getLatestToken } from '../utils/liveTokenStore';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
+import { formatTokenPrice } from '../utils/priceFormat';
 
 // Dynamic imports for components
 const WalletManager = dynamic(() => import('../components/WalletManager'), { ssr: false });
@@ -1356,7 +1357,7 @@ export default function Home() {
           if (trade.currentPrice && trade.currentPrice > 0) {
             // Use currentPrice as buyPrice if we've been waiting too long
             updateTrade(trade.mint, { buyPrice: trade.currentPrice });
-            addLog(`[${trade.symbol}] Using currentPrice as buyPrice (${trade.currentPrice.toFixed(9)})`);
+            addLog(`[${trade.symbol}] Using currentPrice as buyPrice (${formatTokenPrice(trade.currentPrice)})`);
           } else {
             // Still no price after 5 seconds, skip this cycle
             return;
