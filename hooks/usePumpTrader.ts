@@ -356,17 +356,17 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
                 const rawRevenue = soldTokenAmount * effectiveSellPrice;
-                const revenue = rawRevenue * 0.97; // 3% friction
+                const revenue = rawRevenue * 0.97; // 3% friction on the token sale itself
                 const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
-                const netProfit = (revenue + rentReclaim) - costBasis;
-                const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
+                const tradingProfit = revenue - costBasis;
+                const realizedPnlPercent = costBasis > 0 ? (tradingProfit / costBasis) * 100 : 0;
 
-                setDemoBalance(prev => prev + costBasis + netProfit);
+                setDemoBalance(prev => prev + costBasis + tradingProfit + rentReclaim);
 
                 setStats(prev => ({
-                    totalProfit: prev.totalProfit + netProfit,
-                    wins: netProfit > 0 ? prev.wins + 1 : prev.wins,
-                    losses: netProfit <= 0 ? prev.losses + 1 : prev.losses
+                    totalProfit: prev.totalProfit + tradingProfit,
+                    wins: tradingProfit > 0 ? prev.wins + 1 : prev.wins,
+                    losses: tradingProfit <= 0 ? prev.losses + 1 : prev.losses
                 }));
 
                 const closedTrade: ActiveTrade = {
@@ -374,7 +374,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     status: "closed" as const,
                     currentPrice: effectiveSellPrice,
                     pnlPercent: realizedPnlPercent,
-                    realizedPnlSol: netProfit,
+                    realizedPnlSol: tradingProfit,
                     isPaper: true
                 };
 
@@ -397,7 +397,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     } : t));
                 }
 
-                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Net: ${netProfit.toFixed(4)} SOL`);
+                addLog(`[DEMO] Sold ${amountPercent}% at ${sellPrice.toFixed(9)} SOL. Trade PnL: ${tradingProfit.toFixed(4)} SOL`);
+                if (rentReclaim > 0) {
+                    addLog(`[DEMO] Recovered ${rentReclaim.toFixed(4)} SOL token-account rent on close (excluded from PnL%).`);
+                }
                 processingMintsRef.current.delete(mint);
                 return;
             }
