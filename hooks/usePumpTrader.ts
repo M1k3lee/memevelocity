@@ -583,7 +583,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     // --- PRICE CALCULATION ENGINE ---
 
     const updatePrices = useCallback(async () => {
-        const openTrades = activeTrades.filter(t => t.status === "open");
+        const openTrades = activeTradesRef.current.filter(t => t.status === "open");
         if (openTrades.length === 0) return;
 
         const tradesToPoll = isDemo ? openTrades : openTrades.slice(0, 10);
@@ -732,7 +732,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         if (updates.size > 0) {
             setActiveTrades(prev => prev.map(t => updates.has(t.mint) ? { ...t, ...updates.get(t.mint) } : t));
         }
-    }, [activeTrades, connection, isDemo, addLog, sellToken]);
+    }, [connection, isDemo, addLog, sellToken]);
 
     const openTradeMints = activeTrades
         .filter(t => t.status === "open")
