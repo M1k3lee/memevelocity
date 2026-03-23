@@ -476,9 +476,10 @@ export default function Home() {
   const analyzingMints = useRef<Set<string>>(new Set());
   const analysisCooldowns = useRef<Map<string, number>>(new Map());
   const [lastTradeTime, setLastTradeTime] = useState<number>(0);
-  const minTimeBetweenTrades = 500; // Reduced to 500ms to catch rapid pumps (was 2s)
+  const minTimeBetweenTrades = 500;
   const pendingRetries = useRef<Set<string>>(new Set());
   const lastCapacityLogAt = useRef(0);
+  const lastRiskPauseLogAt = useRef(0);
   const normalAnalysisCooldownMs = 25000;
   const retryAnalysisCooldownMs = 8000;
 
@@ -515,6 +516,33 @@ export default function Home() {
       addLog(`🔄 Re-analyzing ${token.symbol} (Wait period over)...`);
     }
 
+    const isLiveMicroMode = !config.isDemo && config.mode === 'micro';
+    const recentLiveTrades = tradeHistory
+      .filter((trade) => trade.status === 'closed' && !trade.isPaper && ((Date.now() - (trade.buyTime || 0)) < 20 * 60 * 1000))
+      .slice(0, 4);
+    let recentLiveLossStreak = 0;
+    let recentLiveLossSol = 0;
+    for (const trade of recentLiveTrades) {
+      const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
+      const realizedProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+      if (realizedProfit < 0) {
+        recentLiveLossStreak += 1;
+        recentLiveLossSol += realizedProfit;
+      } else {
+        break;
+      }
+    }
+    const dynamicMinTimeBetweenTrades =
+      isLiveMicroMode
+        ? (recentLiveLossStreak >= 2 ? 180000 : recentLiveLossStreak >= 1 ? 45000 : 15000)
+        : minTimeBetweenTrades;
+
+    if (isLiveMicroMode && (recentLiveLossStreak >= 3 || recentLiveLossSol <= -0.0035)) {
+      addLog(`🛑 LIVE MICRO HALT: ${recentLiveLossStreak} straight live losses (${recentLiveLossSol.toFixed(4)} SOL). Stopping bot for safety.`);
+      setConfig((prev: any) => ({ ...prev, isRunning: false }));
+      return;
+    }
+
     // 1. DEDUPLICATION (Return if already handled)
     if (processedMints.current.has(token.mint) && !isRetrying) {
       return;
@@ -536,13 +564,24 @@ export default function Home() {
     try {
       // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
       const timeSinceLastTrade = Date.now() - lastTradeTime;
-      if (timeSinceLastTrade < minTimeBetweenTrades) return;
+      if (timeSinceLastTrade < dynamicMinTimeBetweenTrades) {
+        if (isLiveMicroMode && recentLiveLossStreak >= 1) {
+          const now = Date.now();
+          if ((now - lastRiskPauseLogAt.current) > 15000) {
+            addLog(`⏸ Live micro cooldown: waiting ${Math.ceil((dynamicMinTimeBetweenTrades - timeSinceLastTrade) / 1000)}s after recent live losses before the next entry.`);
+            lastRiskPauseLogAt.current = now;
+          }
+        }
+        return;
+      }
 
       const openTradesCount = activeTrades.filter(t => t.status === "open").length;
       const effectiveMaxConcurrentTrades =
-        !config.isDemo && (config.mode === 'degen' || config.mode === 'micro') && realBalance > 0 && realBalance < 0.1
+        !config.isDemo && config.mode === 'micro'
           ? 1
-          : (config.maxConcurrentTrades || 1);
+          : (!config.isDemo && config.mode === 'degen' && realBalance > 0 && realBalance < 0.1
+          ? 1
+          : (config.maxConcurrentTrades || 1));
       if (openTradesCount >= effectiveMaxConcurrentTrades) {
         const now = Date.now();
         if ((now - lastCapacityLogAt.current) > 15000) {
@@ -879,6 +918,7 @@ export default function Home() {
         const liquidityGrowth = liquidity - 30;
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
         const liveWalletBalance = balanceRef.current;
+        const isLiveMicro = !config.isDemo;
         const isLiveMicroWallet = !config.isDemo && isMicroWalletBalance(liveWalletBalance);
         const snapshot = getMarketSnapshot(token.mint);
         const tradeCount = snapshot?.tradeCount || 0;
@@ -891,10 +931,10 @@ export default function Home() {
         const priceChangePercent = snapshot?.priceChangePercent || 0;
         const traderDiversity = tradeCount > 0 ? uniqueTraderCount / tradeCount : 0;
         const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
-        const healthyPressureFloor = isLiveMicroWallet ? 0.54 : 0.57;
-        const healthyNetFlowFloor = isLiveMicroWallet ? 0.18 : 0.3;
-        const healthyDiversityFloor = isLiveMicroWallet ? 0.42 : 0.48;
-        const priceFadeFloor = isLiveMicroWallet ? -2.5 : -1.5;
+        const healthyPressureFloor = isLiveMicro ? 0.6 : (isLiveMicroWallet ? 0.54 : 0.57);
+        const healthyNetFlowFloor = isLiveMicro ? 0.32 : (isLiveMicroWallet ? 0.18 : 0.3);
+        const healthyDiversityFloor = isLiveMicro ? 0.5 : (isLiveMicroWallet ? 0.42 : 0.48);
+        const priceFadeFloor = isLiveMicro ? 0.25 : (isLiveMicroWallet ? -2.5 : -1.5);
         const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
         const netFlowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
@@ -909,13 +949,13 @@ export default function Home() {
           sellCount,
           priceChangePercent
         });
-        const velocityScoreFloor = isLiveMicroWallet ? 52 : 58;
-        const capitalEfficiencyFloor = isLiveMicroWallet ? 0.055 : 0.07;
+        const velocityScoreFloor = isLiveMicro ? 66 : (isLiveMicroWallet ? 52 : 58);
+        const capitalEfficiencyFloor = isLiveMicro ? 0.085 : (isLiveMicroWallet ? 0.055 : 0.07);
         const velocityReady =
           runnerVelocityScore >= velocityScoreFloor &&
           capitalEfficiency >= capitalEfficiencyFloor &&
-          curveVelocity >= (isLiveMicroWallet ? 0.4 : 0.55) &&
-          netFlowVelocity >= (isLiveMicroWallet ? 0.18 : 0.24);
+          curveVelocity >= (isLiveMicro ? 0.7 : (isLiveMicroWallet ? 0.4 : 0.55)) &&
+          netFlowVelocity >= (isLiveMicro ? 0.3 : (isLiveMicroWallet ? 0.18 : 0.24));
 
         const launchPulse =
           age <= 75 &&
@@ -1078,11 +1118,11 @@ export default function Home() {
             ? ((verifiedPrice - setupPrice) / setupPrice) * 100
             : 0;
 
-          if (liquidityDeltaPercent < (isLiveMicroWallet ? -15 : -12) || curveDelta < (isLiveMicroWallet ? -4 : -3) || priceDeltaPercent < (isLiveMicroWallet ? -4.5 : -3.5)) {
+          if (liquidityDeltaPercent < (isLiveMicro ? -8 : (isLiveMicroWallet ? -15 : -12)) || curveDelta < (isLiveMicro ? -2 : (isLiveMicroWallet ? -4 : -3)) || priceDeltaPercent < (isLiveMicro ? -2.25 : (isLiveMicroWallet ? -4.5 : -3.5))) {
             addLog(`MICRO Reject: ${token.symbol} lost momentum during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price).`);
             return;
           }
-          if (liquidityDeltaPercent < (isLiveMicroWallet ? -6 : -4) || curveDelta < (isLiveMicroWallet ? -1.5 : -1) || priceDeltaPercent < (isLiveMicroWallet ? -2 : -1.25)) {
+          if (liquidityDeltaPercent < (isLiveMicro ? -3 : (isLiveMicroWallet ? -6 : -4)) || curveDelta < (isLiveMicro ? -0.75 : (isLiveMicroWallet ? -1.5 : -1)) || priceDeltaPercent < (isLiveMicro ? -1.0 : (isLiveMicroWallet ? -2 : -1.25))) {
             scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price).`);
             return;
           }
@@ -1099,47 +1139,49 @@ export default function Home() {
           ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
           : undefined;
 
-        const microSizeMultiplier = aggressiveSetup ? 1.0 : (strongFlow ? 0.85 : 0.7);
-        const microAmount = Number(Math.max(config.amount * 0.6, config.amount * microSizeMultiplier).toFixed(4));
-        const stagedEntryFraction = aggressiveSetup ? 0.55 : 0.4;
+        const microSizeMultiplier = isLiveMicro
+          ? (aggressiveSetup ? 0.7 : 0.55)
+          : (aggressiveSetup ? 1.0 : (strongFlow ? 0.85 : 0.7));
+        const microAmount = Number(Math.max(config.amount * (isLiveMicro ? 0.45 : 0.6), config.amount * microSizeMultiplier).toFixed(4));
+        const stagedEntryFraction = isLiveMicro ? (aggressiveSetup ? 0.45 : 0.35) : (aggressiveSetup ? 0.55 : 0.4);
         const starterAmount = Number((microAmount * stagedEntryFraction).toFixed(4));
         const scaleInAmount = Number(Math.max(0, microAmount - starterAmount).toFixed(4));
         const exitStrategy = {
-          takeProfit: Math.min(config.takeProfit, aggressiveSetup ? 10 : 11),
-          takeProfit2: aggressiveSetup ? 30 : 24,
-          stopLoss: Math.min(config.stopLoss, aggressiveSetup ? 4 : 4.5),
-          maxHoldTime: aggressiveSetup ? 35 : 45,
+          takeProfit: Math.min(config.takeProfit, isLiveMicro ? (aggressiveSetup ? 8 : 9) : (aggressiveSetup ? 10 : 11)),
+          takeProfit2: isLiveMicro ? (aggressiveSetup ? 22 : 18) : (aggressiveSetup ? 30 : 24),
+          stopLoss: Math.min(config.stopLoss, isLiveMicro ? (aggressiveSetup ? 2.4 : 2.8) : (aggressiveSetup ? 4 : 4.5)),
+          maxHoldTime: isLiveMicro ? (aggressiveSetup ? 22 : 28) : (aggressiveSetup ? 35 : 45),
           trailingStop: false,
           momentumExit: true,
-          minHoldTime: 6,
-          fastKillLoss: aggressiveSetup ? 2.5 : 3,
-          fastKillSeconds: aggressiveSetup ? 3 : 4,
-          givebackPeakTrigger: aggressiveSetup ? 2.5 : 3.5,
-          givebackFloor: aggressiveSetup ? -0.5 : 0,
-          givebackSeconds: aggressiveSetup ? 7 : 9,
-          stagnationSeconds: aggressiveSetup ? 12 : 15,
-          stagnationFloor: aggressiveSetup ? 1 : 1.5,
-          tp1SellPercent: 80,
+          minHoldTime: isLiveMicro ? 4 : 6,
+          fastKillLoss: isLiveMicro ? (aggressiveSetup ? 1.6 : 2.0) : (aggressiveSetup ? 2.5 : 3),
+          fastKillSeconds: isLiveMicro ? (aggressiveSetup ? 2 : 3) : (aggressiveSetup ? 3 : 4),
+          givebackPeakTrigger: isLiveMicro ? (aggressiveSetup ? 1.8 : 2.5) : (aggressiveSetup ? 2.5 : 3.5),
+          givebackFloor: isLiveMicro ? 0.4 : (aggressiveSetup ? -0.5 : 0),
+          givebackSeconds: isLiveMicro ? (aggressiveSetup ? 4 : 6) : (aggressiveSetup ? 7 : 9),
+          stagnationSeconds: isLiveMicro ? (aggressiveSetup ? 8 : 10) : (aggressiveSetup ? 12 : 15),
+          stagnationFloor: isLiveMicro ? (aggressiveSetup ? 0.6 : 0.9) : (aggressiveSetup ? 1 : 1.5),
+          tp1SellPercent: isLiveMicro ? 85 : 80,
           tp2SellPercent: 10,
-          postTp1FloorPercent: 0,
-          postTp2FloorPercent: aggressiveSetup ? 6 : 4,
-          runnerMaxHoldTime: aggressiveSetup ? 300 : 240,
-          runnerTrailingStopPercent: aggressiveSetup ? 16 : 14,
-          runnerActivationProfit: aggressiveSetup ? 20 : 16,
-          runnerTimeExitFloor: aggressiveSetup ? 8 : 6
+          postTp1FloorPercent: isLiveMicro ? 0.5 : 0,
+          postTp2FloorPercent: isLiveMicro ? (aggressiveSetup ? 4 : 3) : (aggressiveSetup ? 6 : 4),
+          runnerMaxHoldTime: isLiveMicro ? (aggressiveSetup ? 120 : 90) : (aggressiveSetup ? 300 : 240),
+          runnerTrailingStopPercent: isLiveMicro ? (aggressiveSetup ? 12 : 10) : (aggressiveSetup ? 16 : 14),
+          runnerActivationProfit: isLiveMicro ? (aggressiveSetup ? 12 : 10) : (aggressiveSetup ? 20 : 16),
+          runnerTimeExitFloor: isLiveMicro ? (aggressiveSetup ? 4 : 3) : (aggressiveSetup ? 8 : 6)
         };
-        const scaleInPlan = scaleInAmount >= 0.001 ? {
+        const scaleInPlan = scaleInAmount >= 0.001 && (!isLiveMicro || aggressiveSetup) ? {
           pendingSol: scaleInAmount,
-          triggerPnlPercent: aggressiveSetup ? 2.2 : 3.0,
-          requiredObservedVolumeSol: Number((observedVolume + (isLiveMicroWallet ? 0.12 : 0.2)).toFixed(3)),
+          triggerPnlPercent: isLiveMicro ? (aggressiveSetup ? 3.5 : 4.5) : (aggressiveSetup ? 2.2 : 3.0),
+          requiredObservedVolumeSol: Number((observedVolume + (isLiveMicro ? 0.35 : (isLiveMicroWallet ? 0.12 : 0.2))).toFixed(3)),
           requiredUniqueTraderCount: uniqueTraderCount + 1,
-          requiredBuyPressure: Number(Math.max(healthyPressureFloor, buyPressure - 0.02).toFixed(2)),
-          maxWaitSeconds: aggressiveSetup ? 18 : 24,
+          requiredBuyPressure: Number(Math.max(healthyPressureFloor, buyPressure + (isLiveMicro ? 0.01 : -0.02)).toFixed(2)),
+          maxWaitSeconds: isLiveMicro ? (aggressiveSetup ? 10 : 12) : (aggressiveSetup ? 18 : 24),
           inFlight: false,
           completed: false,
           expired: false
         } : undefined;
-        const microSlippage = Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28));
+        const microSlippage = Math.max(config.advanced?.slippage || 25, isLiveMicro ? (aggressiveSetup ? 28 : 26) : (aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28)));
 
         setLastTradeTime(Date.now());
         if (scaleInPlan) {
