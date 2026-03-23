@@ -12,7 +12,7 @@ import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyze
 import { getMarketSnapshot } from '../utils/marketData';
 import { getLatestToken } from '../utils/liveTokenStore';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
-import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
+import { getTokenIdentityKey, hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
 import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
@@ -543,6 +543,23 @@ export default function Home() {
       return;
     }
 
+    const tokenIdentity = getTokenIdentityKey(token).toLowerCase();
+    if (isLiveMicroMode) {
+      const recentSameIdentityLoss = tradeHistory.find((trade) => {
+        if (trade.status !== 'closed' || trade.isPaper) return false;
+        const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
+        const realizedProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+        if (realizedProfit >= 0) return false;
+        const sameMint = trade.mint === token.mint;
+        const sameIdentity = tokenIdentity && getTokenIdentityKey({ symbol: trade.symbol, name: trade.symbol } as any).toLowerCase() === tokenIdentity;
+        return (sameMint || sameIdentity) && (Date.now() - (trade.buyTime || 0)) < 30 * 60 * 1000;
+      });
+      if (recentSameIdentityLoss) {
+        addLog(`🚫 LIVE MICRO REJECT: ${token.symbol} matches a recent live loser. Skipping repeat entry.`);
+        return;
+      }
+    }
+
     // 1. DEDUPLICATION (Return if already handled)
     if (processedMints.current.has(token.mint) && !isRetrying) {
       return;
@@ -956,6 +973,14 @@ export default function Home() {
           capitalEfficiency >= capitalEfficiencyFloor &&
           curveVelocity >= (isLiveMicro ? 0.7 : (isLiveMicroWallet ? 0.4 : 0.55)) &&
           netFlowVelocity >= (isLiveMicro ? 0.3 : (isLiveMicroWallet ? 0.18 : 0.24));
+        const antiChaseTriggered =
+          isLiveMicro &&
+          (
+            priceChangePercent >= 9 ||
+            bondingCurveProgress >= 3.5 ||
+            age > 85 ||
+            tradeCount >= 18
+          );
 
         const launchPulse =
           age <= 75 &&
@@ -1043,6 +1068,11 @@ export default function Home() {
           tradeCount === 0 &&
           observedVolume <= (isLiveMicroWallet ? 0.15 : 0.2) &&
           liquidityGrowth > 0.25;
+
+        if (antiChaseTriggered) {
+          addLog(`MICRO Reject: ${token.symbol} already looks extended for live entry (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s).`);
+          return;
+        }
 
         if (earlyReversal) {
           if (age < 75) {
@@ -1181,7 +1211,9 @@ export default function Home() {
           completed: false,
           expired: false
         } : undefined;
-        const microSlippage = Math.max(config.advanced?.slippage || 25, isLiveMicro ? (aggressiveSetup ? 28 : 26) : (aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28)));
+        const microSlippage = isLiveMicro
+          ? Math.min(config.advanced?.slippage || 18, aggressiveSetup ? 18 : 16)
+          : Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28));
 
         setLastTradeTime(Date.now());
         if (scaleInPlan) {
@@ -1688,7 +1720,7 @@ export default function Home() {
             trade.mint,
             trade.symbol,
             scaleInPlan.pendingSol,
-            Math.max(config.advanced?.slippage || 25, 30),
+            !config.isDemo ? Math.min(config.advanced?.slippage || 18, 18) : Math.max(config.advanced?.slippage || 25, 30),
             trade.currentPrice > 0 ? trade.currentPrice : undefined,
             trade.exitStrategy,
             { allowTopUp: true }

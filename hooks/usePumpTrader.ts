@@ -522,6 +522,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const amountToSell = balance * (amountPercent / 100);
             const tradeAmountPaid = effectiveTrade.amountSolPaid || 0.03;
+            const isLiveMicroTrade = !effectiveTrade.isPaper && !!effectiveTrade.exitStrategy?.maxHoldTime && effectiveTrade.exitStrategy.maxHoldTime <= 45;
 
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
 
@@ -535,7 +536,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     mint,
                     amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: 25,
+                    slippage: isLiveMicroTrade ? 18 : 25,
                     priorityFee,
                     pool: "auto"
                 });
@@ -546,7 +547,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     mint,
                     amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: 50,
+                    slippage: isLiveMicroTrade ? 28 : 50,
                     priorityFee: 0.003,
                     pool: "auto"
                 });
@@ -941,6 +942,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         };
         const existingTrade = activeTradesRef.current.find(t => t.mint === mint && t.status !== "closed");
         const isTopUp = !!tradeOptions?.allowTopUp && !!existingTrade;
+        const isLiveMicroTrade = !isDemo && !!activeExitStrategy?.maxHoldTime && activeExitStrategy.maxHoldTime <= 45;
 
         if (isDemo) {
             if (demoBalance < amountSol) {
@@ -1079,16 +1081,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         normalizedMsg.includes("service unavailable") ||
                         normalizedMsg.includes("temporarily unavailable") ||
                         normalizedMsg.includes("failed to send");
-                    const shouldRetryBuy = shouldRetrySlippage || shouldRetryTransport;
+                    const shouldRetryBuy = isLiveMicroTrade ? shouldRetryTransport : (shouldRetrySlippage || shouldRetryTransport);
 
                     if (!shouldRetryBuy || attempt === 2) {
                         break;
                     }
 
-                    currentSlippage = Math.min(
-                        Math.max(currentSlippage + (shouldRetrySlippage ? 15 : 10), 45),
-                        65
-                    );
+                    currentSlippage = isLiveMicroTrade
+                        ? Math.min(currentSlippage + 2, 20)
+                        : Math.min(
+                            Math.max(currentSlippage + (shouldRetrySlippage ? 15 : 10), 45),
+                            65
+                        );
                     priorityFee = Math.min(0.0045, priorityFee + (shouldRetrySlippage ? 0.0007 : 0.0009));
                     addLog(
                         shouldRetrySlippage
