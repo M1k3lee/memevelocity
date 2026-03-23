@@ -27,6 +27,7 @@ const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
 const MICRO_WALLET_MAX_SOL = 0.05;
+const BOT_CONFIG_STORAGE_KEY = 'pump_bot_config';
 
 function isMicroWalletBalance(balance: number | null | undefined): boolean {
   return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 && balance <= MICRO_WALLET_MAX_SOL;
@@ -257,7 +258,7 @@ export default function Home() {
   // Initialize config with Helius key from localStorage if available (client-side only)
   const [config, setConfig] = useState<any>(() => {
     const savedKey = typeof window !== 'undefined' ? localStorage.getItem('helius_api_key') : '';
-    return {
+    const defaultConfig = {
       isRunning: false,
       mode: 'runner',
       amount: 0.01,
@@ -269,6 +270,27 @@ export default function Home() {
       maxConcurrentTrades: 5,
       dynamicSizing: true
     };
+
+    if (typeof window === 'undefined') {
+      return defaultConfig;
+    }
+
+    try {
+      const savedConfigRaw = localStorage.getItem(BOT_CONFIG_STORAGE_KEY);
+      if (!savedConfigRaw) {
+        return defaultConfig;
+      }
+
+      const savedConfig = JSON.parse(savedConfigRaw);
+      return {
+        ...defaultConfig,
+        ...savedConfig,
+        isRunning: false,
+        heliusKey: savedKey || ''
+      };
+    } catch {
+      return defaultConfig;
+    }
   });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wallet' | 'settings'>('dashboard');
   const [realBalance, setRealBalance] = useState(-1); // -1 = Loading/Waiting for RPC
@@ -333,6 +355,13 @@ export default function Home() {
     }
   }, [config.heliusKey, mounted]);
 
+  useEffect(() => {
+    if (!mounted) return;
+
+    const { heliusKey: _heliusKey, isRunning: _isRunning, ...persistedConfig } = config;
+    localStorage.setItem(BOT_CONFIG_STORAGE_KEY, JSON.stringify(persistedConfig));
+  }, [config, mounted]);
+
   const {
     activeTrades,
     tradeHistory,
@@ -359,6 +388,20 @@ export default function Home() {
     setProfitProtectionPercentage,
     clearVault
   } = usePumpTrader(wallet?.keypair, connection, config.heliusKey);
+  const displayPaperMode = !!config.isDemo;
+  const displayedActiveTrades = activeTrades.filter((trade) => displayPaperMode ? !!trade.isPaper : !trade.isPaper);
+  const displayedTradeHistory = tradeHistory.filter((trade) => trade.status === "closed" && (displayPaperMode ? !!trade.isPaper : !trade.isPaper));
+  const displayedStats = displayedTradeHistory.reduce((acc: { totalProfit: number; wins: number; losses: number; }, trade) => {
+    const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
+    const realizedProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+    acc.totalProfit += realizedProfit;
+    if (realizedProfit > 0) {
+      acc.wins += 1;
+    } else {
+      acc.losses += 1;
+    }
+    return acc;
+  }, { totalProfit: 0, wins: 0, losses: 0 });
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const analyzingMints = useRef<Set<string>>(new Set());
   const analysisCooldowns = useRef<Map<string, number>>(new Map());
@@ -1641,17 +1684,20 @@ export default function Home() {
           </button>
         </nav>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className={`w-2 h-2 rounded-full ${config.isRunning ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-            {config.isRunning ? "RUNNING" : "STOPPED"}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className={`w-2 h-2 rounded-full ${config.isRunning ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+              {config.isRunning ? "RUNNING" : "STOPPED"}
+            </div>
+            <div className="h-4 w-[1px] bg-[#333]"></div>
+            {config.isDemo && (
+              <span className="text-xs font-bold text-blue-400 bg-blue-500/10 px-2 py-1 rounded">DEMO MODE</span>
+            )}
+            {!config.isDemo && wallet && (
+              <span className="text-xs font-bold text-red-400 bg-red-500/10 px-2 py-1 rounded">LIVE WALLET MODE</span>
+            )}
           </div>
-          <div className="h-4 w-[1px] bg-[#333]"></div>
-          {config.isDemo && (
-            <span className="text-xs font-bold text-blue-400 bg-blue-500/10 px-2 py-1 rounded">DEMO MODE</span>
-          )}
-        </div>
-      </header>
+        </header>
 
       {/* Main Content Area */}
       <div className="pt-24 px-6 pb-20 max-w-[1600px] mx-auto">
@@ -1662,7 +1708,7 @@ export default function Home() {
             realBalance={realBalance}
             demoBalance={demoBalance}
             isDemo={config.isDemo}
-            stats={stats}
+            stats={displayedStats}
             heliusKey={config.heliusKey}
           />
         )}
@@ -1704,8 +1750,8 @@ export default function Home() {
           {/* Main Center Area (Stats & Active Trades) */}
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
-              <ActiveTrades trades={activeTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} onCleanup={cleanupWaste} isCleaning={isCleaning} />
-              <TradeHistory trades={tradeHistory} />
+              <ActiveTrades trades={displayedActiveTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} onCleanup={cleanupWaste} isCleaning={isCleaning} />
+              <TradeHistory trades={displayedTradeHistory} />
             </div>
           </div>
 

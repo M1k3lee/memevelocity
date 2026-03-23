@@ -200,6 +200,12 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             alert("Please connect a wallet first.");
             return;
         }
+        if (!isRunning && !isDemo) {
+            const confirmed = window.confirm("Start LIVE trading with real SOL from the connected wallet?");
+            if (!confirmed) {
+                return;
+            }
+        }
         setIsRunning(!isRunning);
     };
 
@@ -259,7 +265,21 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                     <span className="text-xs text-gray-400">Fake balance trade (Zero Risk)</span>
                 </div>
                 <button
-                    onClick={() => setIsDemo(!isDemo)}
+                    onClick={() => {
+                        const nextIsDemo = !isDemo;
+
+                        if (!nextIsDemo) {
+                            const confirmed = window.confirm("Paper trading will be turned off. The bot will stop, and the next start will use your real wallet.");
+                            if (!confirmed) {
+                                return;
+                            }
+                        }
+
+                        if (isRunning) {
+                            setIsRunning(false);
+                        }
+                        setIsDemo(nextIsDemo);
+                    }}
                     className={`text-xs px-3 py-1 rounded transition-colors ${isDemo ? 'bg-blue-600 text-white' : 'bg-[#333] text-gray-400'}`}
                 >
                     {isDemo ? "Active" : "Disabled"}
