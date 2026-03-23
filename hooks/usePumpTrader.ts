@@ -381,6 +381,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
                 const tradingProfit = revenue - costBasis;
                 const realizedPnlPercent = costBasis > 0 ? (tradingProfit / costBasis) * 100 : 0;
+                const displayExitPrice = soldTokenAmount > 0 ? (revenue / soldTokenAmount) : effectiveSellPrice;
 
                 setDemoBalance(prev => prev + costBasis + tradingProfit + rentReclaim);
 
@@ -393,7 +394,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const closedTrade: ActiveTrade = {
                     ...effectiveTrade,
                     status: "closed" as const,
-                    currentPrice: effectiveSellPrice,
+                    currentPrice: displayExitPrice,
                     pnlPercent: realizedPnlPercent,
                     realizedPnlSol: tradingProfit,
                     isPaper: true

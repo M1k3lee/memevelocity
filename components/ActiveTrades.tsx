@@ -172,14 +172,18 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                         // Calculate PnL in real-time as fallback
                                         let displayPnlPercent = trade.pnlPercent;
                                         let displayPnlSol = 0;
+                                        let exitPreviewPercent: number | null = null;
+                                        let exitPreviewSol: number | null = null;
 
                                         if (trade.buyPrice > 0 && trade.currentPrice > 0) {
-                                            const effectiveCurrentPrice = trade.isPaper
-                                                ? trade.currentPrice * 0.97
-                                                : trade.currentPrice;
-                                            displayPnlPercent = ((effectiveCurrentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-                                            // For paper trades, mirror the 3% exit friction used on close so active PnL matches history.
-                                            displayPnlSol = (effectiveCurrentPrice - trade.buyPrice) * trade.amountTokens;
+                                            displayPnlPercent = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
+                                            displayPnlSol = (trade.currentPrice - trade.buyPrice) * trade.amountTokens;
+
+                                            if (trade.isPaper) {
+                                                const netExitPrice = trade.currentPrice * 0.97;
+                                                exitPreviewPercent = ((netExitPrice - trade.buyPrice) / trade.buyPrice) * 100;
+                                                exitPreviewSol = (netExitPrice - trade.buyPrice) * trade.amountTokens;
+                                            }
                                         }
 
                                         if (trade.buyPrice === 0 && trade.currentPrice > 0) {
@@ -197,6 +201,11 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                                 <span className={`text-[10px] ${displayPnlSol >= 0 ? "text-green-400/70" : "text-red-400/70"}`}>
                                                     {displayPnlSol >= 0 ? "+" : ""}{displayPnlSol.toFixed(4)} SOL
                                                 </span>
+                                                {trade.isPaper && exitPreviewPercent !== null && exitPreviewSol !== null && Math.abs(exitPreviewPercent - displayPnlPercent) >= 0.01 && (
+                                                    <span className={`text-[9px] ${exitPreviewSol >= 0 ? "text-green-400/50" : "text-red-400/50"}`}>
+                                                        If closed now: {exitPreviewPercent >= 0 ? "+" : ""}{exitPreviewPercent.toFixed(2)}%
+                                                    </span>
+                                                )}
                                             </div>
                                         );
                                     })()}
