@@ -10,6 +10,16 @@ import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 import { calculatePumpPrice } from '../utils/pumpMath';
+import { getPaperEntryPrice, getPaperExitPrice, PAPER_TOKEN_ACCOUNT_RENT_SOL } from '../utils/paperTrading';
+import {
+    getProfitLockFloor,
+    getRunnerActivationProfit,
+    getRunnerMaxHoldTime,
+    getRunnerTimeExitFloor,
+    getRunnerTrailingStopPercent,
+    hasTp1Sell,
+    ManagedExitStrategy
+} from '../utils/tradeExit';
 
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 
@@ -89,8 +99,16 @@ export interface ActiveTrade {
         givebackSeconds?: number; // Seconds before giveback protection activates
         stagnationSeconds?: number; // Exit if the trade has gone nowhere by this time
         stagnationFloor?: number; // Minimum PnL required by stagnationSeconds
+        tp1SellPercent?: number; // How much to unload on the first scale-out
+        tp2SellPercent?: number; // Optional second scale-out amount
+        postTp1FloorPercent?: number; // Minimum PnL allowed after TP1 is hit
+        postTp2FloorPercent?: number; // Minimum PnL allowed after TP2 is hit
+        runnerMaxHoldTime?: number; // Extended hold for the remaining moonbag
+        runnerTrailingStopPercent?: number; // Peak-to-current drop allowed on the runner
+        runnerActivationProfit?: number; // Profit required before runner trailing activates
+        runnerTimeExitFloor?: number; // Minimum PnL after runner hold time expires
     };
-    partialSells?: { [percent: number]: boolean }; // Track staged sells (50%, 30%, etc.)
+    partialSells?: Record<string, boolean>; // Track staged sells (tp1, tp2, etc.)
     originalAmount?: number; // Track original position size for partial sells
     lastLiquidity?: number; // Track liquidity for rug detection
     isPaper?: boolean; // New: Tracks if this was a demo/paper trade
@@ -417,8 +435,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
 
                 const rawRevenue = soldTokenAmount * effectiveSellPrice;
-                const revenue = rawRevenue * 0.97; // 3% friction on the token sale itself
-                const rentReclaim = amountPercent >= 99 ? 0.00204 : 0;
+                const revenue = getPaperExitPrice(rawRevenue);
+                const rentReclaim = amountPercent >= 99 ? PAPER_TOKEN_ACCOUNT_RENT_SOL : 0;
                 const tradingProfit = revenue - costBasis;
                 const realizedPnlPercent = costBasis > 0 ? (tradingProfit / costBasis) * 100 : 0;
                 const displayExitPrice = soldTokenAmount > 0 ? (revenue / soldTokenAmount) : effectiveSellPrice;
@@ -682,9 +700,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                             lastLiquidity: nextLiquidity
                         };
                         const strategy = trade.exitStrategy || { takeProfit: 30, stopLoss: 15, maxHoldTime: 600, trailingStop: false };
+                        const strategyConfig = strategy as ManagedExitStrategy;
                         const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
                         const liveExitWarmupSeconds = getLiveExitWarmupSeconds(trade);
                         const isFastCompoundTrade = !!strategy.maxHoldTime && strategy.maxHoldTime <= 90;
+                        const runnerActive = hasTp1Sell(trade.partialSells);
                         const shouldManageExitsInHook =
                             !isDemo &&
                             !trade.isPaper &&
@@ -705,7 +725,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         // --- NEW: STRATEGIC EXIT LOGIC (TP/SL/TIME) ---
                         // Ensure strategy exists (backwards compatibility)
 
-                        if (shouldManageExitsInHook && isFastCompoundTrade) {
+                        if (shouldManageExitsInHook && isFastCompoundTrade && !runnerActive) {
                             const peakPnl = highestPrice > buyPrice ? ((highestPrice - buyPrice) / buyPrice) * 100 : pnl;
                             const fastKillSeconds = strategy.fastKillSeconds ?? 6;
                             const fastKillLoss = Math.abs(strategy.fastKillLoss ?? 4);
@@ -732,12 +752,33 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         const fastStagnationSeconds = strategy.stagnationSeconds ?? 0;
                         const fastGivebackPeakTrigger = strategy.givebackPeakTrigger ?? 4;
                         const fastStagnationFloor = strategy.stagnationFloor ?? 0;
-                        if (shouldManageExitsInHook && isFastCompoundTrade && fastStagnationSeconds > 0 && timeOpen >= fastStagnationSeconds) {
+                        if (shouldManageExitsInHook && isFastCompoundTrade && !runnerActive && fastStagnationSeconds > 0 && timeOpen >= fastStagnationSeconds) {
                             const peakPnl = highestPrice > buyPrice ? ((highestPrice - buyPrice) / buyPrice) * 100 : pnl;
                             if (peakPnl < fastGivebackPeakTrigger && pnl <= fastStagnationFloor) {
                                 updates.set(trade.mint, { status: "selling" });
                                 sellToken(trade.mint, 100, sellSnapshot);
                                 addLog(`âš¡ FAST STALL EXIT: ${trade.symbol} failed to follow through (${pnl.toFixed(2)}% after ${timeOpen.toFixed(0)}s). Exiting.`);
+                                return;
+                            }
+                        }
+
+                        const profitLockFloor = getProfitLockFloor(strategyConfig, trade.partialSells);
+                        if (shouldManageExitsInHook && profitLockFloor !== null && pnl <= profitLockFloor) {
+                            updates.set(trade.mint, { status: "selling" });
+                            sellToken(trade.mint, 100, sellSnapshot);
+                            addLog(`🛡️ PROFIT LOCK: ${trade.symbol} slipped to ${pnl.toFixed(2)}%. Lock floor was ${profitLockFloor.toFixed(2)}%. Exiting.`);
+                            return;
+                        }
+
+                        const runnerTrailingStopPercent = getRunnerTrailingStopPercent(strategyConfig, trade.partialSells);
+                        if (shouldManageExitsInHook && runnerTrailingStopPercent !== null && trade.highestPrice && trade.highestPrice > trade.buyPrice) {
+                            const peakPnl = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
+                            const currentDropFromPeak = ((trade.highestPrice - trade.currentPrice) / trade.highestPrice) * 100;
+                            const runnerActivationProfit = getRunnerActivationProfit(strategyConfig);
+                            if (peakPnl >= runnerActivationProfit && currentDropFromPeak >= runnerTrailingStopPercent) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100, sellSnapshot);
+                                addLog(`📉 RUNNER TRAIL: ${trade.symbol} gave back ${currentDropFromPeak.toFixed(2)}% from a ${peakPnl.toFixed(2)}% peak. Exiting moonbag.`);
                                 return;
                             }
                         }
@@ -753,7 +794,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         // 2. TIME LIMIT / STAGNATION (For GOD MODE / SNIPER)
                         // If holding > maxHoldTime (e.g. 10m) and profit is negligible (<5%), EXIT.
                         // Don't hold dead bags.
-                        if (shouldManageExitsInHook && strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {
+                        const runnerMaxHoldTime = getRunnerMaxHoldTime(strategyConfig, trade.partialSells);
+                        if (shouldManageExitsInHook && runnerMaxHoldTime && timeOpen > runnerMaxHoldTime) {
+                            const runnerTimeExitFloor = getRunnerTimeExitFloor(strategyConfig);
+                            if (pnl < runnerTimeExitFloor) {
+                                updates.set(trade.mint, { status: "selling" });
+                                sellToken(trade.mint, 100, sellSnapshot);
+                                addLog(`⏳ RUNNER TIME EXIT: ${trade.symbol} stalled at ${pnl.toFixed(2)}% after ${timeOpen.toFixed(0)}s. Exiting remainder.`);
+                                return;
+                            }
+                        } else if (shouldManageExitsInHook && strategy.maxHoldTime && timeOpen > strategy.maxHoldTime) {
                             // If we are in deep profit, maybe hold? But if stagnant, sell.
                             // If we are losing, definitely sell.
                             if (pnl < 10) {
@@ -892,8 +942,14 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 return;
             }
 
-            buyPrice *= 1.015;
-            const tradeableSol = (amountSol * 0.99) - 0.00204;
+            buyPrice = getPaperEntryPrice(buyPrice);
+            const tradeableSol = amountSol - PAPER_TOKEN_ACCOUNT_RENT_SOL;
+            if (tradeableSol <= 0) {
+                addLog(`[DEMO] ❌ ${symbol} position too small after rent allowance. Skipping.`);
+                setDemoBalance(prev => prev + amountSol);
+                processingMintsRef.current.delete(mint);
+                return;
+            }
             const amountTokens = tradeableSol / buyPrice;
 
             const newTrade: ActiveTrade = {

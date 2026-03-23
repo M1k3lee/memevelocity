@@ -4,6 +4,7 @@ import React from 'react';
 import { ArrowUpRight, ArrowDownRight, XCircle, RefreshCw, Search, ExternalLink, Trash2 } from 'lucide-react';
 import { ActiveTrade } from '../hooks/usePumpTrader';
 import { formatTokenPrice } from '../utils/priceFormat';
+import { getPaperExitPrice } from '../utils/paperTrading';
 
 interface ActiveTradesProps {
     trades: ActiveTrade[];
@@ -181,7 +182,7 @@ export default function ActiveTrades({ trades, onSell, onSync, onRecover, onClea
                                             displayPnlSol = (trade.currentPrice - trade.buyPrice) * trade.amountTokens;
 
                                             if (trade.isPaper) {
-                                                const netExitPrice = trade.currentPrice * 0.97;
+                                                const netExitPrice = getPaperExitPrice(trade.currentPrice);
                                                 exitPreviewPercent = ((netExitPrice - trade.buyPrice) / trade.buyPrice) * 100;
                                                 exitPreviewSol = (netExitPrice - trade.buyPrice) * trade.amountTokens;
                                             }

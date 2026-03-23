@@ -16,6 +16,17 @@ import { hasUsableTokenIdentity } from '../utils/tokenIdentity';
 import { getIdentityQuarantine } from '../utils/rugDetector';
 import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
+import {
+  getProfitLockFloor,
+  getRunnerActivationProfit,
+  getRunnerMaxHoldTime,
+  getRunnerTimeExitFloor,
+  getRunnerTrailingStopPercent,
+  getTp1SellPercent,
+  getTp2SellPercent,
+  hasTp1Sell,
+  hasTp2Sell
+} from '../utils/tradeExit';
 
 // Dynamic imports for components
 const WalletManager = dynamic(() => import('../components/WalletManager'), { ssr: false });
@@ -1010,10 +1021,10 @@ export default function Home() {
         const microSizeMultiplier = aggressiveSetup ? 1.0 : (strongFlow ? 0.85 : 0.7);
         const microAmount = Number(Math.max(config.amount * 0.6, config.amount * microSizeMultiplier).toFixed(4));
         const exitStrategy = {
-          takeProfit: Math.min(config.takeProfit, aggressiveSetup ? 9 : 10),
-          takeProfit2: aggressiveSetup ? 18 : 20,
+          takeProfit: Math.min(config.takeProfit, aggressiveSetup ? 10 : 11),
+          takeProfit2: aggressiveSetup ? 30 : 24,
           stopLoss: Math.min(config.stopLoss, aggressiveSetup ? 4 : 4.5),
-          maxHoldTime: aggressiveSetup ? 30 : 40,
+          maxHoldTime: aggressiveSetup ? 35 : 45,
           trailingStop: false,
           momentumExit: true,
           minHoldTime: 6,
@@ -1023,7 +1034,15 @@ export default function Home() {
           givebackFloor: aggressiveSetup ? -0.5 : 0,
           givebackSeconds: aggressiveSetup ? 7 : 9,
           stagnationSeconds: aggressiveSetup ? 12 : 15,
-          stagnationFloor: aggressiveSetup ? 1 : 1.5
+          stagnationFloor: aggressiveSetup ? 1 : 1.5,
+          tp1SellPercent: 80,
+          tp2SellPercent: 10,
+          postTp1FloorPercent: 0,
+          postTp2FloorPercent: aggressiveSetup ? 6 : 4,
+          runnerMaxHoldTime: aggressiveSetup ? 300 : 240,
+          runnerTrailingStopPercent: aggressiveSetup ? 16 : 14,
+          runnerActivationProfit: aggressiveSetup ? 20 : 16,
+          runnerTimeExitFloor: aggressiveSetup ? 8 : 6
         };
         const microSlippage = Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28));
 
@@ -1476,8 +1495,32 @@ export default function Home() {
         return;
       }
 
+      if (!trade.partialSells) {
+        updateTrade(trade.mint, { partialSells: {} });
+        return;
+      }
+
+      const currentPnl = trade.buyPrice > 0 && trade.currentPrice > 0
+        ? ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100
+        : trade.pnlPercent;
+      const peakPnl = trade.highestPrice && trade.highestPrice > trade.buyPrice
+        ? ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100
+        : currentPnl;
+      const runnerActive = hasTp1Sell(trade.partialSells);
+      const runnerMaxHoldTime = getRunnerMaxHoldTime(exitStrategy, trade.partialSells);
+      const profitLockFloor = getProfitLockFloor(exitStrategy, trade.partialSells);
+
+      if (trade.buyTime && runnerMaxHoldTime && holdTimeSeconds >= runnerMaxHoldTime) {
+        const runnerTimeExitFloor = getRunnerTimeExitFloor(exitStrategy);
+        if (currentPnl < runnerTimeExitFloor) {
+          addLog(`⏳ RUNNER TIME EXIT: ${trade.symbol} stalled at ${currentPnl.toFixed(1)}% after ${Math.floor(holdTimeSeconds)}s. Selling remainder...`);
+          sellToken(trade.mint, 100);
+          return;
+        }
+      }
+
       // Time-based exit (for speed trading and first buyer)
-      if (trade.buyTime && exitStrategy.maxHoldTime < Infinity) {
+      if (trade.buyTime && exitStrategy.maxHoldTime < Infinity && !runnerActive) {
         const holdTime = holdTimeSeconds; // seconds
         const minHoldTime = exitStrategy.minHoldTime || 0;
 
@@ -1503,12 +1546,7 @@ export default function Home() {
       const givebackFloor = exitStrategy.givebackFloor || 0;
       const stagnationSeconds = exitStrategy.stagnationSeconds || 0;
       const stagnationFloor = exitStrategy.stagnationFloor || 0;
-      if (isFastCompoundTrade && trade.buyPrice > 0 && trade.currentPrice > 0) {
-        const currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-        const peakPnl = trade.highestPrice && trade.highestPrice > trade.buyPrice
-          ? ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100
-          : currentPnl;
-
+      if (isFastCompoundTrade && !runnerActive && trade.buyPrice > 0 && trade.currentPrice > 0) {
         if (holdTimeSeconds >= fastKillSeconds && currentPnl <= -fastKillLoss) {
           addLog(`⚡ FAST KILL: ${trade.symbol} hit ${currentPnl.toFixed(1)}% inside the opening window. Exiting.`);
           sellToken(trade.mint, 100);
@@ -1522,11 +1560,7 @@ export default function Home() {
         }
       }
 
-      if (isFastCompoundTrade && trade.buyPrice > 0 && trade.currentPrice > 0 && stagnationSeconds > 0) {
-        const currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-        const peakPnl = trade.highestPrice && trade.highestPrice > trade.buyPrice
-          ? ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100
-          : currentPnl;
+      if (isFastCompoundTrade && !runnerActive && trade.buyPrice > 0 && trade.currentPrice > 0 && stagnationSeconds > 0) {
         if (holdTimeSeconds >= stagnationSeconds && peakPnl < givebackPeakTrigger && currentPnl <= stagnationFloor) {
           addLog(`âš¡ FAST STALL EXIT: ${trade.symbol} failed to follow through (${currentPnl.toFixed(1)}% after ${holdTimeSeconds.toFixed(0)}s). Exiting.`);
           sellToken(trade.mint, 100);
@@ -1560,12 +1594,26 @@ export default function Home() {
         }
       }
 
+      if (profitLockFloor !== null && currentPnl <= profitLockFloor) {
+        addLog(`🛡️ PROFIT LOCK: ${trade.symbol} slipped to ${currentPnl.toFixed(1)}%. Lock floor was ${profitLockFloor.toFixed(1)}%. Exiting.`);
+        sellToken(trade.mint, 100);
+        return;
+      }
+
+      const runnerTrailingStopPercent = getRunnerTrailingStopPercent(exitStrategy, trade.partialSells);
+      if (runnerTrailingStopPercent !== null && trade.highestPrice && trade.highestPrice > trade.buyPrice) {
+        const currentDropFromPeak = ((trade.highestPrice - trade.currentPrice) / trade.highestPrice) * 100;
+        const runnerActivationProfit = getRunnerActivationProfit(exitStrategy);
+        if (peakPnl >= runnerActivationProfit && currentDropFromPeak >= runnerTrailingStopPercent) {
+          addLog(`📉 RUNNER TRAIL: ${trade.symbol} gave back ${currentDropFromPeak.toFixed(1)}% from a ${peakPnl.toFixed(1)}% peak. Exiting moonbag.`);
+          sellToken(trade.mint, 100);
+          return;
+        }
+      }
+
       // Profit Protection: If we're in profit but price starts dropping, exit quickly
       // This prevents giving back profits on meme tokens
-      if (trade.buyPrice > 0 && trade.currentPrice > 0 && trade.highestPrice) {
-        const currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-        const peakPnl = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
-
+      if (!runnerActive && trade.buyPrice > 0 && trade.currentPrice > 0 && trade.highestPrice) {
         // If we were up 10%+ but now down to 5% or less, exit to protect profits
         if (peakPnl >= 10 && currentPnl <= 5 && currentPnl > 0) {
           addLog(`💰 PROFIT PROTECTION: ${trade.symbol} dropped from ${peakPnl.toFixed(1)}% to ${currentPnl.toFixed(1)}%. Securing profits...`);
@@ -1583,8 +1631,8 @@ export default function Home() {
 
       // ADAPTIVE TRAILING STOP: Tightens as profit increases
       // More profit = tighter stop to protect gains
-      if (trade.highestPrice && trade.highestPrice > trade.buyPrice && trade.buyPrice > 0) {
-        const peakGain = ((trade.highestPrice - trade.buyPrice) / trade.buyPrice) * 100;
+      if (!runnerActive && trade.highestPrice && trade.highestPrice > trade.buyPrice && trade.buyPrice > 0) {
+        const peakGain = peakPnl;
         const currentDropFromPeak = ((trade.highestPrice - trade.currentPrice) / trade.highestPrice) * 100;
 
         // Adaptive trailing stop: Tighter stops as profit increases
@@ -1645,25 +1693,16 @@ export default function Home() {
       // Staged Profit Taking (Research: 50% at 2x, 30% at 5x, hold 20%)
       const takeProfit = exitStrategy.takeProfit || config.takeProfit;
       const takeProfit2 = exitStrategy.takeProfit2;
-
-      // Initialize partial sells tracking if not exists
-      if (!trade.partialSells) {
-        updateTrade(trade.mint, { partialSells: {} });
-        return; // Wait for next cycle
-      }
-
-      // Calculate current PnL to ensure accuracy
-      let currentPnl = trade.pnlPercent;
-      if (trade.buyPrice > 0 && trade.currentPrice > 0) {
-        currentPnl = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-      }
+      const tp1SellPercent = getTp1SellPercent(exitStrategy);
+      const tp2SellPercent = getTp2SellPercent(exitStrategy);
 
       // First profit target (2x = 100%) - Sell 50%
-      if (currentPnl >= takeProfit && !trade.partialSells[50]) {
+      if (currentPnl >= takeProfit && !hasTp1Sell(trade.partialSells)) {
         addLog(`🎯 STAGED TP1: ${trade.symbol} hit ${currentPnl.toFixed(1)}% (target: ${takeProfit}%). Selling 50%...`);
-        sellToken(trade.mint, 50);
+        addLog(`Moonbag mode: scaling ${trade.symbol} out by ${tp1SellPercent}% at TP1.`);
+        sellToken(trade.mint, tp1SellPercent);
         // Mark 50% as sold
-        updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 50: true } });
+        updateTrade(trade.mint, { partialSells: { ...trade.partialSells, tp1: true, [String(tp1SellPercent)]: true } });
         return;
       }
 
@@ -1678,11 +1717,12 @@ export default function Home() {
       }
 
       // Second profit target (5x = 400%) - Sell 30% more (total 80% sold, 20% held)
-      if (takeProfit2 && currentPnl >= takeProfit2 && !trade.partialSells[80]) {
+      if (takeProfit2 && currentPnl >= takeProfit2 && !hasTp2Sell(trade.partialSells)) {
         addLog(`🚀 STAGED TP2: ${trade.symbol} hit ${currentPnl.toFixed(1)}% (target: ${takeProfit2}%). Selling 30% more (20% held for lottery)...`);
-        sellToken(trade.mint, 30);
+        addLog(`Moonbag mode: scaling ${trade.symbol} out by ${tp2SellPercent}% at TP2 and tightening the runner floor.`);
+        sellToken(trade.mint, tp2SellPercent);
         // Mark 80% as sold
-        updateTrade(trade.mint, { partialSells: { ...trade.partialSells, 80: true } });
+        updateTrade(trade.mint, { partialSells: { ...trade.partialSells, tp1: true, tp2: true, [String(tp2SellPercent)]: true } });
         return;
       }
 
