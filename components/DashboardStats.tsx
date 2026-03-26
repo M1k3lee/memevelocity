@@ -9,6 +9,8 @@ interface DashboardStatsProps {
     isDemo: boolean;
     stats: {
         totalProfit: number;
+        walletDelta?: number;
+        rentRecovered?: number;
         wins: number;
         losses: number;
     };
@@ -20,6 +22,9 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
     const winRate = (stats.wins + stats.losses) > 0
         ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1)
         : 0;
+    const walletDelta = stats.walletDelta ?? stats.totalProfit;
+    const rentRecovered = stats.rentRecovered ?? 0;
+    const hasWalletDeltaGap = Math.abs(walletDelta - stats.totalProfit) >= 0.00005;
 
     const hasHelius = heliusKey && heliusKey.length > 20;
 
@@ -54,7 +59,11 @@ export default function DashboardStats({ realBalance, demoBalance, isDemo, stats
                     </span>
                     <span className="text-sm text-gray-500 ml-1">SOL</span>
                 </div>
-                <div className="text-[10px] text-gray-500 mt-1">Wallet balance remains the source of truth.</div>
+                <div className="text-[10px] text-gray-500 mt-1">
+                    {hasWalletDeltaGap
+                        ? `Wallet delta ${walletDelta > 0 ? "+" : ""}${walletDelta.toFixed(3)} SOL${rentRecovered > 0 ? ` incl. ${rentRecovered.toFixed(3)} SOL rent` : ""}.`
+                        : "Wallet balance remains the source of truth."}
+                </div>
             </div>
 
             {/* Win Rate Card */}

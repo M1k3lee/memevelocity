@@ -42,6 +42,9 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                             {history.map((trade, i) => {
                                 const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
                                 const solProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+                                const walletDelta = trade.realizedWalletDeltaSol ?? solProfit;
+                                const rentRecovered = trade.rentRecoveredSol ?? 0;
+                                const hasWalletDeltaGap = Math.abs(walletDelta - solProfit) >= 0.00005;
                                 const isPositive = solProfit >= 0;
                                 return (
                                     <tr key={`${trade.mint}-${i}`} className="border-b border-[#222]/30 hover:bg-[#151515] transition-colors">
@@ -76,9 +79,14 @@ export default function TradeHistory({ trades }: TradeHistoryProps) {
                                             </span>
                                         </td>
                                         <td className="p-2 text-right font-mono">
-                                            <span className={`${isPositive ? "text-green-400/70" : "text-red-400/70"} text-[10px]`}>
+                                            <div className={`${isPositive ? "text-green-400/70" : "text-red-400/70"} text-[10px]`}>
                                                 {isPositive ? "+" : ""}{solProfit.toFixed(4)} SOL
-                                            </span>
+                                            </div>
+                                            {hasWalletDeltaGap && (
+                                                <div className="text-[9px] text-gray-500">
+                                                    Wallet {walletDelta > 0 ? "+" : ""}{walletDelta.toFixed(4)} SOL{rentRecovered > 0 ? ` incl. ${rentRecovered.toFixed(4)} rent` : ""}
+                                                </div>
+                                            )}
                                         </td>
                                     </tr>
                                 );

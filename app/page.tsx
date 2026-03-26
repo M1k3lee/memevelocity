@@ -17,6 +17,7 @@ import { getIdentityQuarantine } from '../utils/rugDetector';
 import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
 import { getTokenAgeSeconds } from '../utils/tokenTiming';
+import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
 import {
   getProfitLockFloor,
   getRunnerActivationProfit,
@@ -52,6 +53,15 @@ function getLiveExitWarmupSeconds(mode: string | undefined): number {
   if (mode === 'god') return 12;
   if (mode === 'degen') return 10;
   return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
+}
+
+function getPaperExitWarmupSeconds(trade: { exitStrategy?: { maxHoldTime?: number } }): number {
+  const maxHoldTime = trade.exitStrategy?.maxHoldTime;
+  if (maxHoldTime && maxHoldTime <= 30) return 2;
+  if (maxHoldTime && maxHoldTime <= 45) return 3;
+  if (maxHoldTime && maxHoldTime <= 90) return 4;
+  if (maxHoldTime && maxHoldTime <= 120) return 6;
+  return PAPER_TRADE_EXIT_WARMUP_SECONDS;
 }
 
 function getBondingCurveProgressFromFeed(token: TokenData): number {
@@ -554,17 +564,21 @@ export default function Home() {
   const displayPaperMode = !!config.isDemo;
   const displayedActiveTrades = activeTrades.filter((trade) => displayPaperMode ? !!trade.isPaper : !trade.isPaper);
   const displayedTradeHistory = tradeHistory.filter((trade) => trade.status === "closed" && (displayPaperMode ? !!trade.isPaper : !trade.isPaper));
-  const displayedStats = displayedTradeHistory.reduce((acc: { totalProfit: number; wins: number; losses: number; }, trade) => {
+  const displayedStats = displayedTradeHistory.reduce((acc: { totalProfit: number; walletDelta: number; rentRecovered: number; wins: number; losses: number; }, trade) => {
     const originalCost = trade.originalAmount || trade.amountSolPaid || 0;
     const realizedProfit = trade.realizedPnlSol ?? ((trade.pnlPercent / 100) * originalCost);
+    const realizedWalletDelta = trade.realizedWalletDeltaSol ?? realizedProfit;
+    const rentRecovered = trade.rentRecoveredSol || 0;
     acc.totalProfit += realizedProfit;
+    acc.walletDelta += realizedWalletDelta;
+    acc.rentRecovered += rentRecovered;
     if (realizedProfit > 0) {
       acc.wins += 1;
-    } else {
+    } else if (realizedProfit < 0) {
       acc.losses += 1;
     }
     return acc;
-  }, { totalProfit: 0, wins: 0, losses: 0 });
+  }, { totalProfit: 0, walletDelta: 0, rentRecovered: 0, wins: 0, losses: 0 });
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const analyzingMints = useRef<Set<string>>(new Set());
   const analysisCooldowns = useRef<Map<string, number>>(new Map());
@@ -1807,6 +1821,19 @@ export default function Home() {
         return;
       }
 
+      const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'sniper', 'first', 'degen', 'high', 'velocity', 'scalp']);
+      if (guardEligibleModes.has(config.mode)) {
+        const guardDecision = evaluateLiveEntryGuard(config.mode as any, token, analysis, config.amount);
+        if (guardDecision.status === 'wait') {
+          scheduleRetry(5000, `⏳ ${token.symbol} guard: ${guardDecision.reason || 'waiting for cleaner confirmation'}`);
+          return;
+        }
+        if (guardDecision.status === 'reject') {
+          addLog(`🚫 Guard Reject: ${token.symbol} - ${guardDecision.reason || 'live entry guard failed'}`);
+          return;
+        }
+      }
+
       // Log enhanced analysis results
       addLog(`✅ APPROVED: ${token.symbol} - Score: ${analysis.score}/100 (${analysis.riskLevel} risk)`);
       addLog(`   📊 Bonding Curve: ${analysis.bondingCurveProgress.toFixed(1)}% | Market Cap: ${analysis.marketCap.toFixed(1)} SOL`);
@@ -1966,7 +1993,8 @@ export default function Home() {
       };
 
       const holdTimeSeconds = trade.buyTime ? (Date.now() - trade.buyTime) / 1000 : 0;
-      const paperTradeWarmupActive = (config.isDemo || trade.isPaper) && holdTimeSeconds < PAPER_TRADE_EXIT_WARMUP_SECONDS;
+      const paperTradeWarmupSeconds = getPaperExitWarmupSeconds(trade);
+      const paperTradeWarmupActive = (config.isDemo || trade.isPaper) && holdTimeSeconds < paperTradeWarmupSeconds;
       if (paperTradeWarmupActive) {
         return;
       }

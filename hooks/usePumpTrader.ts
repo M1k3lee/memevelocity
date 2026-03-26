@@ -77,6 +77,8 @@ export interface ActiveTrade {
     currentPrice: number;
     pnlPercent: number;
     realizedPnlSol?: number;
+    realizedWalletDeltaSol?: number;
+    rentRecoveredSol?: number;
     status: "open" | "selling" | "closed";
     txId?: string;
     lastPriceUpdate?: number;
@@ -457,10 +459,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const revenue = getPaperExitPrice(rawRevenue);
                 const rentReclaim = amountPercent >= 99 ? PAPER_TOKEN_ACCOUNT_RENT_SOL : 0;
                 const tradingProfit = revenue - costBasis;
+                const walletDelta = tradingProfit + rentReclaim;
                 const realizedPnlPercent = costBasis > 0 ? (tradingProfit / costBasis) * 100 : 0;
                 const displayExitPrice = soldTokenAmount > 0 ? (revenue / soldTokenAmount) : effectiveSellPrice;
 
-                setDemoBalance(prev => prev + costBasis + tradingProfit + rentReclaim);
+                setDemoBalance(prev => prev + costBasis + walletDelta);
 
                 setStats(prev => ({
                     totalProfit: prev.totalProfit + tradingProfit,
@@ -474,6 +477,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     currentPrice: displayExitPrice,
                     pnlPercent: realizedPnlPercent,
                     realizedPnlSol: tradingProfit,
+                    realizedWalletDeltaSol: walletDelta,
+                    rentRecoveredSol: rentReclaim,
                     isPaper: true
                 };
 
@@ -583,6 +588,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const costBasis = tradeAmountPaid * (amountPercent / 100);
             const netProfit = tradeRevenue - costBasis;
+            const walletDelta = netProfit + reclaimedRent;
             const realizedPnlPercent = costBasis > 0 ? (netProfit / costBasis) * 100 : 0;
 
             if (profitProtectionEnabled && netProfit > 0) {
@@ -605,6 +611,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     currentPrice: effectiveTrade.currentPrice,
                     pnlPercent: finalPnlPercent,
                     realizedPnlSol: netProfit,
+                    realizedWalletDeltaSol: walletDelta,
+                    rentRecoveredSol: reclaimedRent,
                     txId: signature
                 };
                 setTradeHistory(prev => {
@@ -723,16 +731,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         const strategyConfig = strategy as ManagedExitStrategy;
                         const timeOpen = (Date.now() - (trade.buyTime || Date.now())) / 1000; // seconds
                         const liveExitWarmupSeconds = getLiveExitWarmupSeconds(trade);
-                        const isFastCompoundTrade = !!strategy.maxHoldTime && strategy.maxHoldTime <= 90;
+                        const isFastCompoundTrade = !!trade.exitStrategy?.maxHoldTime && trade.exitStrategy.maxHoldTime <= 90;
                         const runnerActive = hasTp1Sell(trade.partialSells);
-                        const shouldManageExitsInHook =
+                        // Live exit decisions are centralized in app/page.tsx to avoid duplicate sell signals.
+                        const shouldManageExitsInHook = false;
+                        const shouldManageEmergencyExitsInHook =
                             !isDemo &&
                             !trade.isPaper &&
                             (trade.amountTokens || 0) > 0 &&
                             timeOpen >= liveExitWarmupSeconds;
 
                         const prevLiq = trade.lastLiquidity || 0;
-                        if (shouldManageExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
+                        if (shouldManageEmergencyExitsInHook && prevLiq > 0 && trade.lastPriceUpdate) {
                             const rugDropThreshold = isFastCompoundTrade ? 0.1 : 0.2;
                             if (currentLiquidity > 0 && prevLiq > 5 && (prevLiq - currentLiquidity) / prevLiq > rugDropThreshold) {
                                 updates.set(trade.mint, { status: "selling", lastLiquidity: currentLiquidity });
