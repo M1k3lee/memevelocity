@@ -1298,7 +1298,7 @@ export default function Home() {
           stopLoss: Math.min(config.stopLoss, isLiveMicro ? (aggressiveSetup ? 2.4 : 2.8) : (aggressiveSetup ? 4 : 4.5)),
           maxHoldTime: isLiveMicro ? (aggressiveSetup ? 22 : 28) : (aggressiveSetup ? 35 : 45),
           trailingStop: false,
-          momentumExit: true,
+          momentumExit: false,
           minHoldTime: isLiveMicro ? 4 : 6,
           fastKillLoss: isLiveMicro ? (aggressiveSetup ? 1.6 : 2.0) : (aggressiveSetup ? 2.5 : 3),
           fastKillSeconds: isLiveMicro ? (aggressiveSetup ? 2 : 3) : (aggressiveSetup ? 3 : 4),

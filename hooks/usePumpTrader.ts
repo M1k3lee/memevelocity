@@ -426,6 +426,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         const effectiveTrade = snapshot ? { ...trade, ...snapshot } : trade;
 
         processingMintsRef.current.add(mint);
+        setActiveTrades(prev => prev.map(t => t.mint === mint && t.status === "open" ? { ...t, status: "selling" } : t));
         addLog(`Attempting to SELL ${amountPercent}% of ${effectiveTrade.symbol}...`);
 
         try {
