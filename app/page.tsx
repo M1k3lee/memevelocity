@@ -16,6 +16,7 @@ import { getTokenIdentityKey, hasUsableTokenIdentity } from '../utils/tokenIdent
 import { getIdentityQuarantine } from '../utils/rugDetector';
 import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
+import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import {
   getProfitLockFloor,
   getRunnerActivationProfit,
@@ -898,7 +899,7 @@ export default function Home() {
     // BUT: Still respect rug detection - don't buy obvious scams!
     if (config.mode === 'high') {
       try {
-        const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
+        const age = getTokenAgeSeconds(token);
         const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
 
         // Calculate momentum (liquidity growth rate)
@@ -985,7 +986,7 @@ export default function Home() {
     // === VELOCITY MODE: MOMENTUM FAST TRACK ===
     if (config.mode === 'velocity') {
       try {
-        const age = (Date.now() - token.timestamp) / 1000;
+        const age = getTokenAgeSeconds(token);
         const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
 
@@ -1031,7 +1032,7 @@ export default function Home() {
 
     if (config.mode === 'micro') {
       try {
-        const age = (Date.now() - token.timestamp) / 1000;
+        const age = getTokenAgeSeconds(token);
         const liquidity = token.vSolInBondingCurve || 30;
         const liquidityGrowth = liquidity - 30;
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
@@ -1330,7 +1331,7 @@ export default function Home() {
 
     if (config.mode === 'god') {
       try {
-        const age = (Date.now() - token.timestamp) / 1000;
+        const age = getTokenAgeSeconds(token);
         const liquidity = token.vSolInBondingCurve || 30;
         const liquidityGrowth = liquidity - 30;
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
@@ -1547,7 +1548,7 @@ export default function Home() {
     try {
       // ENTRY CONFIRMATION: Wait for momentum confirmation before buying
       // This prevents buying into dead tokens
-      const age = (Date.now() - token.timestamp) / 1000;
+      const age = getTokenAgeSeconds(token);
       const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
       const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
 

@@ -3,6 +3,7 @@ import { getPumpData, getTokenMetadata, getHolderStats, getHolderCount, getToken
 import type { TokenData } from '../types/token';
 import { getMarketSnapshot, type MarketSnapshot } from './marketData';
 import { calculateBondingCurveProgress } from './pumpMath';
+import { getTokenAgeSeconds, getTokenLaunchTimestamp } from './tokenTiming';
 
 type ContractSecurity = {
     freezeAuthority: boolean;
@@ -118,7 +119,7 @@ export async function analyzeEnhanced(
             warnings.push('RPC market snapshot unavailable - using launch feed data');
         }
 
-        const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
+        const age = getTokenAgeSeconds(token);
         const liquidity = pumpData.vSolInBondingCurve;
         const marketSnapshot = getMarketSnapshot(token.mint);
         const observedVolume = marketSnapshot?.observedVolumeSol || 0;
@@ -157,7 +158,7 @@ export async function analyzeEnhanced(
         strengths.push(...tier0.strengths);
 
         // === TIER 1: LAUNCH TIMING ===
-        const tier1 = calculateTier1(token.timestamp);
+        const tier1 = calculateTier1(getTokenLaunchTimestamp(token));
         if (isRunnerMode && tier1.score < 16) {
             // We can be lenient here if other scores are exceptional, but note it
             warnings.push(`TIER 1 WEAK: Bad launch time (${tier1.score} pts)`);

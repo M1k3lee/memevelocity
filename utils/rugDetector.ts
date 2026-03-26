@@ -1,5 +1,6 @@
 import type { TokenData } from '../types/token';
 import { getTokenIdentityKey, sanitizeTokenIdentity } from './tokenIdentity';
+import { getTokenAgeSeconds } from './tokenTiming';
 
 /**
  * Advanced Rug Detection System
@@ -75,7 +76,7 @@ export function detectRug(
     const identityText = identity.toLowerCase();
     const displayIdentity = sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(token.name) || 'metadata pending';
     const identityLabel = sanitizeTokenIdentity(token.symbol) ? 'Symbol' : 'Name';
-    const age = (Date.now() - token.timestamp) / 1000;
+    const age = getTokenAgeSeconds(token);
     const liquidity = token.vSolInBondingCurve || 30;
     const liquidityGrowth = liquidity - 30;
 

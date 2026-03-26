@@ -2,6 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getPumpData, getTokenMetadata, getHolderCount, getHolderStats, getTokenBalance } from './solanaManager';
 import type { TokenData } from '../types/token';
 import { getMarketSnapshot } from './marketData';
+import { getTokenAgeSeconds } from './tokenTiming';
 
 export interface TokenAnalysis {
     score: number; // 0-100, higher is better
@@ -263,7 +264,7 @@ async function calculateMetrics(
     connection: Connection,
     heliusKey?: string
 ): Promise<TokenMetrics> {
-    const age = (Date.now() - token.timestamp) / 1000;
+    const age = getTokenAgeSeconds(token);
     const liquidity = pumpData.vSolInBondingCurve;
     
     // Calculate liquidity growth (compare to initial 30 SOL)
@@ -337,7 +338,7 @@ export function quickRugCheck(token: TokenData): { passed: boolean; reason?: str
     }
 
     // Check 3: Token too new (less than 30 seconds)
-    const age = (Date.now() - token.timestamp) / 1000;
+    const age = getTokenAgeSeconds(token);
     if (age < 30) {
         return { passed: false, reason: 'Token too new' };
     }

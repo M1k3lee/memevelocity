@@ -1,6 +1,7 @@
 import { Connection } from '@solana/web3.js';
 import { getPumpData } from './solanaManager';
 import type { TokenData } from '../types/token';
+import { getTokenAgeSeconds } from './tokenTiming';
 
 export interface SpeedTradeSignal {
     shouldBuy: boolean;
@@ -43,7 +44,7 @@ export async function analyzeSpeedTrade(
             };
         }
 
-        const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
+        const age = getTokenAgeSeconds(token);
         const liquidity = currentData.vSolInBondingCurve;
         const initialLiquidity = 30; // Pump.fun starts at 30 SOL
         const liquidityGrowth = liquidity - initialLiquidity;
@@ -232,7 +233,7 @@ export async function analyzeSpeedTrade(
  * Quick pre-filter for speed trading (ultra-fast rejection)
  */
 export function quickSpeedCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const age = (Date.now() - token.timestamp) / 1000;
+    const age = getTokenAgeSeconds(token);
     
     // Too old for speed trading
     if (age > 600) {

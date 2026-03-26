@@ -30,7 +30,9 @@ export function normalizeTokenEvent(data: any, receivedAt: number = Date.now()):
         name: sanitizeTokenIdentity(data.name),
         symbol: sanitizeTokenIdentity(data.symbol),
         uri: data.uri || "",
-        timestamp: receivedAt
+        timestamp: receivedAt,
+        createdAt: txType === 'create' ? receivedAt : undefined,
+        lastSeenAt: receivedAt
     };
 }
 
@@ -44,6 +46,8 @@ export function mergeTokenData(existing: TokenData | undefined, token: TokenData
     const marketCapSol = token.marketCapSol > 0
         ? token.marketCapSol
         : (existing?.marketCapSol || vSolInBondingCurve);
+    const createdAt = existing?.createdAt || existing?.timestamp || token.createdAt || token.timestamp;
+    const lastSeenAt = token.lastSeenAt || token.timestamp || existing?.lastSeenAt || createdAt;
 
     return {
         ...existing,
@@ -58,6 +62,8 @@ export function mergeTokenData(existing: TokenData | undefined, token: TokenData
         name: sanitizeTokenIdentity(token.name) || sanitizeTokenIdentity(existing?.name) || "",
         symbol: sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(existing?.symbol) || "",
         uri: token.uri || existing?.uri || "",
-        timestamp: token.timestamp
+        timestamp: createdAt,
+        createdAt,
+        lastSeenAt
     };
 }

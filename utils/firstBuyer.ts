@@ -1,6 +1,7 @@
 import { Connection } from '@solana/web3.js';
 import { getPumpData } from './solanaManager';
 import type { TokenData } from '../types/token';
+import { getTokenAgeSeconds } from './tokenTiming';
 
 export interface FirstBuyerSignal {
     shouldBuy: boolean;
@@ -46,7 +47,7 @@ export async function analyzeFirstBuyer(
             };
         }
 
-        const age = (Date.now() - token.timestamp) / 1000; // Age in seconds
+        const age = getTokenAgeSeconds(token);
         const liquidity = currentData.vSolInBondingCurve;
         const initialLiquidity = 30; // Pump.fun starts at 30 SOL
         const liquidityGrowth = liquidity - initialLiquidity;
@@ -258,7 +259,7 @@ export async function analyzeFirstBuyer(
  * Quick check for first buyer mode (ultra-fast rejection)
  */
 export function quickFirstBuyerCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const age = (Date.now() - token.timestamp) / 1000;
+    const age = getTokenAgeSeconds(token);
     
     // Too old
     if (age > 15) {

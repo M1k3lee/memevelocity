@@ -1,6 +1,7 @@
 import type { TokenData } from '../types/token';
 import { sanitizeTokenIdentity } from './tokenIdentity';
 import { calculatePumpPrice } from './pumpMath';
+import { getTokenLastSeenTimestamp, getTokenLaunchTimestamp } from './tokenTiming';
 
 export interface MarketSnapshot {
     mint: string;
@@ -65,7 +66,7 @@ function pruneSnapshots(now: number) {
 }
 
 export function recordMarketEvent(token: TokenData): MarketSnapshot {
-    const now = token.timestamp || Date.now();
+    const now = getTokenLastSeenTimestamp(token);
     pruneSnapshots(now);
 
     const liquiditySol = normalizeSolValue(token.vSolInBondingCurve);
@@ -91,7 +92,7 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
         mint: token.mint,
         symbol: sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(existing?.symbol) || '',
         name: sanitizeTokenIdentity(token.name) || sanitizeTokenIdentity(existing?.name) || '',
-        createdAt: existing?.createdAt || token.timestamp || now,
+        createdAt: existing?.createdAt || getTokenLaunchTimestamp(token),
         firstSeenAt: existing?.firstSeenAt || now,
         lastSeenAt: now,
         currentLiquiditySol: liquiditySol,

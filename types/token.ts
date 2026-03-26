@@ -12,4 +12,6 @@ export interface TokenData {
     symbol: string;
     uri: string;
     timestamp: number;
+    createdAt?: number;
+    lastSeenAt?: number;
 }

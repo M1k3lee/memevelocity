@@ -1,17 +1,8 @@
 import type { AdvancedConfig } from '../utils/enhancedAnalyzer';
+import type { ManagedExitStrategy } from '../utils/tradeExit';
 
 export type BotMode = 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp';
-
-export interface ManagedExitStrategy {
-    takeProfit: number;
-    takeProfit2?: number;
-    stopLoss: number;
-    maxHoldTime: number;
-    trailingStop: boolean;
-    trailingStopPercent?: number;
-    momentumExit?: boolean;
-    minHoldTime?: number;
-}
+export type { ManagedExitStrategy } from '../utils/tradeExit';
 
 export interface ManagedPosition {
     mint: string;

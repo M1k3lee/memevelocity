@@ -8,6 +8,7 @@ import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 import { getTokenDisplayName, getTokenDisplaySymbol, hasUsableTokenIdentity } from '../utils/tokenIdentity';
+import { getTokenLastSeenTimestamp } from '../utils/tokenTiming';
 
 function hasUsableIdentity(token: TokenData): boolean {
     return hasUsableTokenIdentity(token.symbol) && hasUsableTokenIdentity(token.name);
@@ -29,7 +30,7 @@ const JunkItem = memo(({ token, reason }: { token: TokenData, reason: string }) 
                 </div>
             </div>
             <div className="text-right flex flex-col items-end">
-                <span className="text-[10px] font-mono text-red-900/50">{new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="text-[10px] font-mono text-red-900/50">{new Date(getTokenLastSeenTimestamp(token)).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
                 <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-red-500/30 hover:text-red-500"><ExternalLink size={10} /></a>
             </div>
         </div>
@@ -54,7 +55,7 @@ const StreamItem = memo(({ token, rugCheck }: { token: TokenData, rugCheck: any 
                 </div>
                 <div className="text-right">
                     <span className="text-[10px] font-mono text-gray-500 block mb-1">
-                        {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {new Date(getTokenLastSeenTimestamp(token)).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </span>
                     <a href={`https://pump.fun/${token.mint}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-blue-500/70 hover:text-blue-400">
                         Explorer <ExternalLink size={10} />
@@ -99,7 +100,7 @@ const GemItem = memo(({ token }: { token: TokenData }) => {
                     </div>
                 </div>
                 <div className="text-right text-[10px] font-mono text-green-300/50">
-                    {new Date(token.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    {new Date(getTokenLastSeenTimestamp(token)).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </div>
             </div>
             <div className="grid grid-cols-2 gap-3 mb-4 relative z-10">

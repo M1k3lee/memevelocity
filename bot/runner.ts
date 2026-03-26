@@ -4,12 +4,23 @@ import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal
 import { detectRug } from '../utils/rugDetector';
 import { analyzeEnhanced } from '../utils/enhancedAnalyzer';
 import { clearMarketSnapshot, getMarketSnapshot, recordMarketEvent } from '../utils/marketData';
+import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 import { getConfiguredWallet, loadRunnerConfig } from './config';
 import { loadState, saveState } from './stateStore';
 import type { TokenData } from '../types/token';
 import type { BotMode, BotState, ManagedExitStrategy, ManagedPosition, RunnerConfig } from './types';
 import { calculatePumpPrice } from '../utils/pumpMath';
+import {
+    getProfitLockFloor,
+    getRunnerActivationProfit,
+    getRunnerMaxHoldTime,
+    getRunnerTimeExitFloor,
+    getRunnerTrailingStopPercent,
+    getTp1SellPercent,
+    getTp2SellPercent,
+    hasTp1Sell
+} from '../utils/tradeExit';
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,6 +57,7 @@ class PumpFunRunner {
     private lastTradeTime = 0;
     private shuttingDown = false;
     private saveChain: Promise<void> = Promise.resolve();
+    private lastRiskPauseLogAt = 0;
 
     constructor(private readonly config: RunnerConfig, private readonly state: BotState) {
         this.connection = createConnection(this.config.heliusKey);
@@ -197,6 +209,15 @@ class PumpFunRunner {
         if (this.state.openPositions.some((position) => position.mint === token.mint)) return;
         if ((Date.now() - this.lastTradeTime) < this.config.minTimeBetweenTradesMs) return;
 
+        const entryPauseReason = this.getEntryPauseReason();
+        if (entryPauseReason) {
+            if ((Date.now() - this.lastRiskPauseLogAt) > 30_000) {
+                this.log(`Entry paused: ${entryPauseReason}`);
+                this.lastRiskPauseLogAt = Date.now();
+            }
+            return;
+        }
+
         this.analysisCooldowns.set(token.mint, Date.now());
         this.analyzingMints.add(token.mint);
 
@@ -219,6 +240,23 @@ class PumpFunRunner {
 
             const amountSol = await this.getTradeSize(analysis.score);
             if (amountSol <= 0) return;
+
+            const entryDecision = evaluateLiveEntryGuard(this.config.mode, token, analysis, amountSol);
+            if (entryDecision.status !== 'pass') {
+                if (token.txType === 'create') {
+                    const decisionLabel = entryDecision.status === 'wait' ? 'Waiting on' : 'Skipped';
+                    this.log(`${decisionLabel} ${token.symbol}: ${entryDecision.reason || 'entry confirmation not met'}`);
+                }
+                return;
+            }
+
+            const confirmationFailure = await this.confirmEntryWindow(token);
+            if (confirmationFailure) {
+                if (token.txType === 'create') {
+                    this.log(`Skipped ${token.symbol}: ${confirmationFailure}`);
+                }
+                return;
+            }
 
             const exitStrategy = this.buildExitStrategy(token, analysis.score);
             await this.executeBuy(token, amountSol, exitStrategy, analysis.score, analysis.riskLevel, analysis.reasons);
@@ -251,28 +289,140 @@ class PumpFunRunner {
         return Number(Math.min(amount, maxSpendable).toFixed(4));
     }
 
+    private getEntryPauseReason(): string | null {
+        if (this.config.dryRun) {
+            return null;
+        }
+
+        const isSelectiveMode =
+            this.config.mode === 'god' ||
+            this.config.mode === 'runner' ||
+            this.config.mode === 'safe' ||
+            this.config.mode === 'medium';
+        const pauseWindowMs = isSelectiveMode ? 15 * 60 * 1000 : 8 * 60 * 1000;
+        const recentClosed = this.state.closedPositions
+            .filter((position) => position.txId && position.closeTime && (Date.now() - (position.closeTime || 0)) < pauseWindowMs)
+            .slice(0, 3);
+
+        let lossStreak = 0;
+        let cumulativeLoss = 0;
+        for (const position of recentClosed) {
+            if (position.realizedProfitSol < 0) {
+                lossStreak += 1;
+                cumulativeLoss += position.realizedProfitSol;
+            } else {
+                break;
+            }
+        }
+
+        if (lossStreak === 0) {
+            return null;
+        }
+
+        const thresholdLoss = isSelectiveMode
+            ? Math.max(0.003, this.config.amountSol * 0.35)
+            : Math.max(0.0035, this.config.amountSol * 0.5);
+        const trippedBreaker = isSelectiveMode
+            ? (lossStreak >= 2 || cumulativeLoss <= -thresholdLoss)
+            : (lossStreak >= 3 || cumulativeLoss <= -thresholdLoss);
+        if (!trippedBreaker) {
+            return null;
+        }
+
+        const latestLossTime = recentClosed[0]?.closeTime || 0;
+        const remainingMs = pauseWindowMs - (Date.now() - latestLossTime);
+        if (remainingMs <= 0) {
+            return null;
+        }
+
+        return `circuit breaker active for ${Math.ceil(remainingMs / 60000)}m after ${lossStreak} straight live losses (${cumulativeLoss.toFixed(4)} SOL)`;
+    }
+
+    private async confirmEntryWindow(token: TokenData): Promise<string | null> {
+        const setupSnapshot = getMarketSnapshot(token.mint);
+        const setupPumpData = await getPumpData(token.mint, this.connection);
+        const setupLiquidity = setupPumpData?.vSolInBondingCurve || token.vSolInBondingCurve || 0;
+        const setupVirtualTokens = setupPumpData?.vTokensInBondingCurve || token.vTokensInBondingCurve || 0;
+        const setupCurve = setupPumpData?.bondingCurveProgress || 0;
+        const setupPrice = calculatePrice(setupLiquidity, setupVirtualTokens);
+
+        await delay(this.config.mode === 'god' || this.config.mode === 'runner' ? 1200 : 800);
+
+        const freshPumpData = await getPumpData(token.mint, this.connection);
+        const freshSnapshot = getMarketSnapshot(token.mint);
+        const freshLiquidity = freshPumpData?.vSolInBondingCurve || setupLiquidity;
+        const freshVirtualTokens = freshPumpData?.vTokensInBondingCurve || setupVirtualTokens;
+        const freshCurve = freshPumpData?.bondingCurveProgress || setupCurve;
+        const freshPrice = calculatePrice(freshLiquidity, freshVirtualTokens);
+        const freshBuyPressure = freshSnapshot?.buyPressure ?? setupSnapshot?.buyPressure ?? 0;
+        const freshNetFlow = freshSnapshot?.netFlowSol ?? setupSnapshot?.netFlowSol ?? 0;
+        const tradeCount = freshSnapshot?.tradeCount ?? setupSnapshot?.tradeCount ?? 0;
+
+        if (freshLiquidity <= 0 || freshVirtualTokens <= 0) {
+            return 'verification snapshot was unavailable';
+        }
+
+        const isSelectiveMode =
+            this.config.mode === 'god' ||
+            this.config.mode === 'runner' ||
+            this.config.mode === 'safe' ||
+            this.config.mode === 'medium';
+        const liquidityDeltaPercent = setupLiquidity > 0 ? ((freshLiquidity - setupLiquidity) / setupLiquidity) * 100 : 0;
+        const curveDelta = freshCurve - setupCurve;
+        const priceDeltaPercent = setupPrice > 0 && freshPrice > 0 ? ((freshPrice - setupPrice) / setupPrice) * 100 : 0;
+        const minBuyPressure = isSelectiveMode ? 0.57 : 0.52;
+        const maxLiquidityDrop = isSelectiveMode ? -4 : -6;
+        const maxCurveRollback = isSelectiveMode ? -0.8 : -1.2;
+        const maxPriceFade = isSelectiveMode ? -1.8 : -2.5;
+
+        if (
+            liquidityDeltaPercent < maxLiquidityDrop ||
+            curveDelta < maxCurveRollback ||
+            priceDeltaPercent < maxPriceFade ||
+            freshBuyPressure < minBuyPressure
+        ) {
+            return `confirmation faded (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure)`;
+        }
+
+        if (tradeCount >= 3 && freshNetFlow < 0) {
+            return `flow turned negative during confirmation (${freshNetFlow.toFixed(2)} SOL)`;
+        }
+
+        return null;
+    }
+
     private buildExitStrategy(token: TokenData, score: number): ManagedExitStrategy {
         const snapshot = getMarketSnapshot(token.mint);
         const exit: ManagedExitStrategy = { ...this.config.defaultExit };
 
         if (snapshot?.buyPressure && snapshot.buyPressure > 0.8) {
-            exit.takeProfit = Math.max(exit.takeProfit, exit.takeProfit + 10);
+            exit.takeProfit += 5;
             if (exit.takeProfit2) {
-                exit.takeProfit2 += 25;
+                exit.takeProfit2 += 15;
             }
-            exit.trailingStopPercent = Math.max(6, (exit.trailingStopPercent || 10) - 2);
+            if (exit.postTp1FloorPercent !== undefined) {
+                exit.postTp1FloorPercent += 1;
+            }
+            if (exit.postTp2FloorPercent !== undefined) {
+                exit.postTp2FloorPercent += 2;
+            }
+            if (exit.runnerTrailingStopPercent !== undefined) {
+                exit.runnerTrailingStopPercent = Math.max(8, exit.runnerTrailingStopPercent - 2);
+            }
         }
 
         if (score >= 90) {
-            exit.maxHoldTime = Math.round(exit.maxHoldTime * 1.25);
+            exit.maxHoldTime = Math.round(exit.maxHoldTime * 1.15);
             if (exit.takeProfit2) {
-                exit.takeProfit2 += 50;
+                exit.takeProfit2 += 20;
+            }
+            if (exit.runnerMaxHoldTime) {
+                exit.runnerMaxHoldTime = Math.round(exit.runnerMaxHoldTime * 1.15);
             }
         }
 
         if (this.config.mode === 'sniper' || this.config.mode === 'first' || this.config.mode === 'scalp') {
-            exit.takeProfit2 = undefined;
-            exit.maxHoldTime = Math.min(exit.maxHoldTime, 180);
+            exit.maxHoldTime = Math.min(exit.maxHoldTime, 90);
         }
 
         return exit;
@@ -489,13 +639,17 @@ class PumpFunRunner {
                 lastPriceUpdate: Date.now(),
                 lastLiquidity: pumpData.vSolInBondingCurve
             };
+            const strategy = nextPosition.exitStrategy;
+            const runnerActive = hasTp1Sell(nextPosition.partialSells);
+            const isFastTrade = !!strategy.maxHoldTime && strategy.maxHoldTime <= 90;
 
             this.replaceOpenPosition(nextPosition);
 
             if (position.lastLiquidity && position.lastLiquidity > 5) {
                 const liquidityDrop = (position.lastLiquidity - pumpData.vSolInBondingCurve) / position.lastLiquidity;
-                if (liquidityDrop > 0.2) {
-                    await this.executeSell(mint, 100, 'liquidity drop >20%');
+                const rugDropThreshold = isFastTrade ? 0.1 : 0.2;
+                if (liquidityDrop > rugDropThreshold) {
+                    await this.executeSell(mint, 100, `liquidity drop >${Math.round(rugDropThreshold * 100)}%`);
                     return;
                 }
             }
@@ -513,31 +667,94 @@ class PumpFunRunner {
             const dropFromPeak = nextPosition.highestPrice > 0
                 ? ((nextPosition.highestPrice - nextPosition.currentPrice) / nextPosition.highestPrice) * 100
                 : 0;
+            const fastKillSeconds = strategy.fastKillSeconds ?? 6;
+            const fastKillLoss = Math.abs(strategy.fastKillLoss ?? 4);
+            const givebackSeconds = strategy.givebackSeconds ?? 10;
+            const givebackPeakTrigger = strategy.givebackPeakTrigger ?? 4;
+            const givebackFloor = strategy.givebackFloor ?? 0;
+            const stagnationSeconds = strategy.stagnationSeconds ?? 0;
+            const stagnationFloor = strategy.stagnationFloor ?? 0;
+            const profitLockFloor = getProfitLockFloor(strategy, nextPosition.partialSells);
+            const runnerTrailingStopPercent = getRunnerTrailingStopPercent(strategy, nextPosition.partialSells);
+            const runnerMaxHoldTime = getRunnerMaxHoldTime(strategy, nextPosition.partialSells);
 
-            if (holdTime >= nextPosition.exitStrategy.maxHoldTime) {
-                await this.executeSell(mint, 100, `time limit ${nextPosition.exitStrategy.maxHoldTime}s`);
+            if (isFastTrade && !runnerActive && holdTime >= fastKillSeconds && pnl <= -fastKillLoss) {
+                await this.executeSell(mint, 100, `fast kill ${pnl.toFixed(2)}%`);
                 return;
             }
 
-            if (pnl <= -Math.abs(nextPosition.exitStrategy.stopLoss)) {
+            if (isFastTrade && !runnerActive && holdTime >= givebackSeconds && peakGain >= givebackPeakTrigger && pnl <= givebackFloor) {
+                await this.executeSell(mint, 100, `fast giveback from ${peakGain.toFixed(2)}%`);
+                return;
+            }
+
+            if (isFastTrade && !runnerActive && stagnationSeconds > 0 && holdTime >= stagnationSeconds && peakGain < givebackPeakTrigger && pnl <= stagnationFloor) {
+                await this.executeSell(mint, 100, `fast stall ${pnl.toFixed(2)}% after ${holdTime.toFixed(0)}s`);
+                return;
+            }
+
+            if (profitLockFloor !== null && pnl <= profitLockFloor) {
+                await this.executeSell(mint, 100, `profit lock ${pnl.toFixed(2)}%`);
+                return;
+            }
+
+            if (runnerTrailingStopPercent !== null && peakGain >= getRunnerActivationProfit(strategy) && dropFromPeak >= runnerTrailingStopPercent) {
+                await this.executeSell(mint, 100, `runner trail ${dropFromPeak.toFixed(2)}%`);
+                return;
+            }
+
+            if (pnl <= -Math.abs(strategy.stopLoss)) {
                 await this.executeSell(mint, 100, `stop loss ${pnl.toFixed(2)}%`);
                 return;
             }
 
-            const hasStagedExit = !!nextPosition.exitStrategy.takeProfit2 || nextPosition.exitStrategy.trailingStop;
-            if (pnl >= nextPosition.exitStrategy.takeProfit && !nextPosition.partialSells.tp1) {
-                const percent = hasStagedExit ? 50 : 100;
-                await this.executeSell(mint, percent, `take profit ${pnl.toFixed(2)}%`);
+            if (runnerMaxHoldTime && holdTime >= runnerMaxHoldTime) {
+                const runnerTimeExitFloor = getRunnerTimeExitFloor(strategy);
+                if (pnl < runnerTimeExitFloor) {
+                    await this.executeSell(mint, 100, `runner time exit ${pnl.toFixed(2)}%`);
+                    return;
+                }
+            } else if (!runnerActive && holdTime >= strategy.maxHoldTime) {
+                await this.executeSell(mint, 100, `time limit ${strategy.maxHoldTime}s`);
                 return;
             }
 
-            if (nextPosition.exitStrategy.takeProfit2 && pnl >= nextPosition.exitStrategy.takeProfit2 && !nextPosition.partialSells.tp2) {
-                await this.executeSell(mint, 30, `take profit 2 ${pnl.toFixed(2)}%`);
+            const hasStagedExit = !!strategy.takeProfit2 || runnerTrailingStopPercent !== null || profitLockFloor !== null;
+            if (pnl >= strategy.takeProfit && !nextPosition.partialSells.tp1) {
+                const percent = hasStagedExit ? getTp1SellPercent(strategy) : 100;
+                await this.executeSell(mint, percent, `take profit ${pnl.toFixed(2)}%`, hasStagedExit ? 'tp1' : undefined);
                 return;
             }
 
-            if (nextPosition.exitStrategy.trailingStop && peakGain >= 10) {
-                const trailingStopPercent = nextPosition.exitStrategy.trailingStopPercent || 10;
+            if (strategy.takeProfit2 && pnl >= strategy.takeProfit2 && !nextPosition.partialSells.tp2) {
+                await this.executeSell(mint, getTp2SellPercent(strategy), `take profit 2 ${pnl.toFixed(2)}%`, 'tp2');
+                return;
+            }
+
+            if (!runnerActive && peakGain >= 20 && pnl > 0 && pnl <= 10) {
+                await this.executeSell(mint, 100, `profit protection ${pnl.toFixed(2)}%`);
+                return;
+            }
+
+            if (!runnerActive && peakGain >= 10 && pnl > 0 && pnl <= 5) {
+                await this.executeSell(mint, 100, `profit protection ${pnl.toFixed(2)}%`);
+                return;
+            }
+
+            if (!runnerActive && peakGain >= 10) {
+                let adaptiveTrailPercent = 15;
+                if (peakGain >= 50) adaptiveTrailPercent = 8;
+                else if (peakGain >= 30) adaptiveTrailPercent = 10;
+                else if (peakGain >= 15) adaptiveTrailPercent = 12;
+
+                if (dropFromPeak >= adaptiveTrailPercent) {
+                    await this.executeSell(mint, 100, `adaptive trail ${dropFromPeak.toFixed(2)}%`);
+                    return;
+                }
+            }
+
+            if (strategy.trailingStop && peakGain >= 10) {
+                const trailingStopPercent = strategy.trailingStopPercent || 10;
                 if (dropFromPeak >= trailingStopPercent) {
                     await this.executeSell(mint, 100, `trailing stop ${dropFromPeak.toFixed(2)}%`);
                     return;
@@ -550,7 +767,7 @@ class PumpFunRunner {
         }
     }
 
-    private async executeSell(mint: string, amountPercent: number, reason: string): Promise<void> {
+    private async executeSell(mint: string, amountPercent: number, reason: string, stage?: 'tp1' | 'tp2'): Promise<void> {
         const position = this.state.openPositions.find((item) => item.mint === mint);
         if (!position || this.processingMints.has(mint)) return;
 
@@ -559,7 +776,7 @@ class PumpFunRunner {
 
         try {
             if (this.config.dryRun) {
-                await this.applyDryRunSell(position, normalizedPercent, reason);
+                await this.applyDryRunSell(position, normalizedPercent, reason, stage);
                 return;
             }
 
@@ -632,8 +849,7 @@ class PumpFunRunner {
                 totalRevenueSol: position.totalRevenueSol + revenue,
                 partialSells: {
                     ...position.partialSells,
-                    ...(normalizedPercent === 50 ? { tp1: true } : {}),
-                    ...(normalizedPercent === 30 ? { tp2: true } : {})
+                    ...(stage ? { [stage]: true } : {})
                 },
                 closeReason: reason,
                 closeTime: actualRemaining > 0.000001 && remainingFraction > 0.000001 ? undefined : Date.now()
@@ -656,7 +872,7 @@ class PumpFunRunner {
         }
     }
 
-    private async applyDryRunSell(position: ManagedPosition, amountPercent: number, reason: string): Promise<void> {
+    private async applyDryRunSell(position: ManagedPosition, amountPercent: number, reason: string, stage?: 'tp1' | 'tp2'): Promise<void> {
         const sellFraction = amountPercent / 100;
         const soldTokenAmount = position.amountTokens * sellFraction;
         const revenue = soldTokenAmount * position.currentPrice * 0.97;
@@ -675,8 +891,7 @@ class PumpFunRunner {
             totalRevenueSol: position.totalRevenueSol + revenue,
             partialSells: {
                 ...position.partialSells,
-                ...(amountPercent === 50 ? { tp1: true } : {}),
-                ...(amountPercent === 30 ? { tp2: true } : {})
+                ...(stage ? { [stage]: true } : {})
             },
             closeReason: reason,
             closeTime: remainingFraction > 0.000001 ? undefined : Date.now()

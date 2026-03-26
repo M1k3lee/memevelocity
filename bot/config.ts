@@ -103,42 +103,99 @@ function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
     if (mode === 'god') {
         return {
             takeProfit: 30,
-            takeProfit2: 100,
-            stopLoss: 6,
-            maxHoldTime: 480,
-            trailingStop: true,
-            trailingStopPercent: 14
+            takeProfit2: 95,
+            stopLoss: 5,
+            maxHoldTime: 240,
+            trailingStop: false,
+            fastKillLoss: 2.8,
+            fastKillSeconds: 6,
+            givebackPeakTrigger: 7,
+            givebackFloor: 1.5,
+            givebackSeconds: 14,
+            stagnationSeconds: 60,
+            stagnationFloor: 2,
+            tp1SellPercent: 70,
+            tp2SellPercent: 15,
+            postTp1FloorPercent: 4,
+            postTp2FloorPercent: 14,
+            runnerMaxHoldTime: 900,
+            runnerTrailingStopPercent: 18,
+            runnerActivationProfit: 30,
+            runnerTimeExitFloor: 12
         };
     }
 
     if (mode === 'sniper' || mode === 'high' || mode === 'first' || mode === 'scalp') {
         return {
-            takeProfit: 50,
-            stopLoss: 15,
-            maxHoldTime: 180,
-            trailingStop: true,
-            trailingStopPercent: 12
+            takeProfit: 35,
+            takeProfit2: 70,
+            stopLoss: 10,
+            maxHoldTime: 90,
+            trailingStop: false,
+            fastKillLoss: 3.5,
+            fastKillSeconds: 6,
+            givebackPeakTrigger: 5,
+            givebackFloor: 0.5,
+            givebackSeconds: 12,
+            stagnationSeconds: 35,
+            stagnationFloor: -2,
+            tp1SellPercent: 70,
+            tp2SellPercent: 15,
+            postTp1FloorPercent: 1.5,
+            postTp2FloorPercent: 5,
+            runnerMaxHoldTime: 180,
+            runnerTrailingStopPercent: 12,
+            runnerActivationProfit: 20,
+            runnerTimeExitFloor: 4
         };
     }
 
     if (mode === 'degen' || mode === 'velocity') {
         return {
-            takeProfit: 100,
-            takeProfit2: 200,
-            stopLoss: 25,
-            maxHoldTime: 300,
-            trailingStop: true,
-            trailingStopPercent: 15
+            takeProfit: 35,
+            takeProfit2: 80,
+            stopLoss: 14,
+            maxHoldTime: 120,
+            trailingStop: false,
+            fastKillLoss: 4.5,
+            fastKillSeconds: 8,
+            givebackPeakTrigger: 8,
+            givebackFloor: 2,
+            givebackSeconds: 20,
+            stagnationSeconds: 60,
+            stagnationFloor: -1,
+            tp1SellPercent: 60,
+            tp2SellPercent: 20,
+            postTp1FloorPercent: 3,
+            postTp2FloorPercent: 10,
+            runnerMaxHoldTime: 360,
+            runnerTrailingStopPercent: 16,
+            runnerActivationProfit: 25,
+            runnerTimeExitFloor: 8
         };
     }
 
     return {
         takeProfit: 30,
-        takeProfit2: 120,
-        stopLoss: 10,
-        maxHoldTime: 600,
-        trailingStop: true,
-        trailingStopPercent: 10
+        takeProfit2: 95,
+        stopLoss: 8,
+        maxHoldTime: 240,
+        trailingStop: false,
+        fastKillLoss: 4,
+        fastKillSeconds: 10,
+        givebackPeakTrigger: 10,
+        givebackFloor: 3,
+        givebackSeconds: 20,
+        stagnationSeconds: 75,
+        stagnationFloor: 0,
+        tp1SellPercent: 65,
+        tp2SellPercent: 20,
+        postTp1FloorPercent: 4,
+        postTp2FloorPercent: 12,
+        runnerMaxHoldTime: 900,
+        runnerTrailingStopPercent: 18,
+        runnerActivationProfit: 28,
+        runnerTimeExitFloor: 10
     };
 }
 
