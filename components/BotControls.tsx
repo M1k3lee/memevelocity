@@ -124,7 +124,7 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
 
             <div className="mb-4">
                 <label className="text-gray-400 text-sm mb-2 block">Risk Profile</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                     {STRATEGY_PROFILE_DEFINITIONS.map(profile => {
                         const selected = mode === profile.id;
                         const activeClasses =
@@ -142,10 +142,10 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
                             <button
                                 key={profile.id}
                                 onClick={() => setPreset(profile.id)}
-                                className={`p-3 rounded border transition-all text-left ${selected ? activeClasses : 'border-[#333] hover:border-[#555] text-gray-400'}`}
+                                className={`min-h-[92px] p-3 rounded border transition-all text-left flex flex-col justify-start ${selected ? activeClasses : 'border-[#333] hover:border-[#555] text-gray-400'}`}
                             >
-                                <div className="font-bold whitespace-nowrap">{profile.label}</div>
-                                <div className="text-[10px] opacity-70">{profile.subtitle}</div>
+                                <div className="font-bold text-[13px] leading-tight break-words">{profile.label}</div>
+                                <div className="mt-1 text-[10px] leading-snug opacity-70 break-words">{profile.subtitle}</div>
                             </button>
                         );
                     })}
