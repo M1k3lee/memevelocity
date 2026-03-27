@@ -2326,18 +2326,8 @@ export default function Home() {
         return;
       }
 
-      // Paper Trading: Quick exit on small profits to test system more frequently
-      // Exit at 5% profit if held for more than 30 seconds (for testing)
       if (config.isDemo && trade.buyTime && trade.buyPrice > 0 && trade.currentPrice > 0) {
         const holdTime = holdTimeSeconds;
-        const quickProfit = ((trade.currentPrice - trade.buyPrice) / trade.buyPrice) * 100;
-
-        // If we're up 5%+ and held for 30+ seconds, take profit (paper trading optimization)
-        if (quickProfit >= 5 && holdTime >= 30 && currentPnl < takeProfit) {
-          addLog(`📊 PAPER TRADING QUICK EXIT: ${trade.symbol} up ${quickProfit.toFixed(1)}% after ${Math.floor(holdTime)}s. Taking profit...`);
-          sellToken(trade.mint, 100);
-          return;
-        }
 
         // Exit stale positions in paper trading (no movement for 2 minutes)
         if (holdTime >= 120 && Math.abs(currentPnl) < 2) {
