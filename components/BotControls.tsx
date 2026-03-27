@@ -4,28 +4,21 @@ import React, { useState, useEffect } from 'react';
 import { Play, Square, Settings, AlertTriangle, AlertCircle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAdaptiveFeeReserve } from '../utils/tradeSizing';
-
-export interface AdvancedConfig {
-    minLiquidity: number;       // SOL
-    maxLiquidity: number;       // SOL
-    minVolume: number;          // SOL (24h)
-    minHolderCount: number;
-    maxTop10: number;           // %
-    maxDev: number;             // %
-    minBondingCurve: number;    // %
-    maxBondingCurve: number;    // %
-    minVelocity: number;        // SOL/min
-    rugCheckStrictness: "lenient" | "standard" | "strict";
-    requireSocials: boolean;
-    avoidSnipers: boolean;
-    slippage: number;
-}
+import {
+    getStrategyPresetConfig,
+    normalizeStrategyProfile,
+    STRATEGY_PROFILE_DEFINITIONS,
+    type InternalMode,
+    type StrategyAdvancedConfig,
+    type VisibleStrategyMode
+} from '../utils/strategyProfiles';
+export type AdvancedConfig = StrategyAdvancedConfig;
 
 interface BotConfig {
     amount: number;
     takeProfit: number;
     stopLoss: number;
-    mode: "runner" | "sniper" | "degen" | "god" | "micro" | "custom" | "safe" | "medium" | "high" | "velocity";
+    mode: InternalMode;
     isRunning: boolean;
     isDemo: boolean;
     isSimulating: boolean;
@@ -43,48 +36,36 @@ interface BotControlsProps {
 }
 
 export default function BotControls({ onConfigChange, walletConnected, realBalance = 0, config }: BotControlsProps) {
+    const initialProfile = normalizeStrategyProfile(config?.mode);
+    const initialPreset = getStrategyPresetConfig(initialProfile);
     const [isRunning, setIsRunning] = useState(config?.isRunning ?? false);
-    const [mode, setMode] = useState<"runner" | "sniper" | "degen" | "god" | "micro" | "custom">((config?.mode as "runner" | "sniper" | "degen" | "god" | "micro" | "custom") ?? "runner");
-    const [amount, setAmount] = useState(config?.amount ?? 0.01);
-    const [takeProfit, setTakeProfit] = useState(config?.takeProfit ?? 20);
-    const [stopLoss, setStopLoss] = useState(config?.stopLoss ?? 10);
+    const [mode, setMode] = useState<VisibleStrategyMode>(initialProfile);
+    const [amount, setAmount] = useState(config?.amount ?? initialPreset.amount);
+    const [takeProfit, setTakeProfit] = useState(config?.takeProfit ?? initialPreset.takeProfit);
+    const [stopLoss, setStopLoss] = useState(config?.stopLoss ?? initialPreset.stopLoss);
     const [isDemo, setIsDemo] = useState(config?.isDemo ?? false);
     const [isSimulating, setIsSimulating] = useState(config?.isSimulating ?? false);
-    const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(config?.maxConcurrentTrades ?? 1);
-    const [dynamicSizing, setDynamicSizing] = useState(config?.dynamicSizing ?? true);
+    const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(config?.maxConcurrentTrades ?? initialPreset.maxConcurrentTrades);
+    const [dynamicSizing, setDynamicSizing] = useState(config?.dynamicSizing ?? initialPreset.dynamicSizing);
     const [activeTab, setActiveTab] = useState<'basic' | 'advanced'>('basic');
-    const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>(config?.advanced ?? {
-        minLiquidity: 10,
-        maxLiquidity: 1000,
-        minVolume: 5,
-        minHolderCount: 20,
-        maxTop10: 40,
-        maxDev: 5,
-        minBondingCurve: 5,
-        maxBondingCurve: 20,
-        minVelocity: 0.5,
-        rugCheckStrictness: "strict",
-        requireSocials: true,
-        avoidSnipers: true,
-        slippage: 20
-    });
+    const [advancedConfig, setAdvancedConfig] = useState<AdvancedConfig>(config?.advanced ?? initialPreset.advanced);
     const liveReserve = getAdaptiveFeeReserve(realBalance);
     const baseTradeFitsBalance = isDemo || (amount + liveReserve) <= (realBalance || 0);
 
     useEffect(() => {
         if (!config) return;
         setIsRunning(config.isRunning ?? false);
-        setMode((config.mode as "runner" | "sniper" | "degen" | "god" | "micro" | "custom") ?? "runner");
-        setAmount(config.amount ?? 0.01);
-        setTakeProfit(config.takeProfit ?? 20);
-        setStopLoss(config.stopLoss ?? 10);
+        const normalizedMode = normalizeStrategyProfile(config.mode);
+        const preset = getStrategyPresetConfig(normalizedMode);
+        setMode(normalizedMode);
+        setAmount(config.amount ?? preset.amount);
+        setTakeProfit(config.takeProfit ?? preset.takeProfit);
+        setStopLoss(config.stopLoss ?? preset.stopLoss);
         setIsDemo(config.isDemo ?? false);
         setIsSimulating(config.isSimulating ?? false);
-        setMaxConcurrentTrades(config.maxConcurrentTrades ?? 1);
-        setDynamicSizing(config.dynamicSizing ?? true);
-        if (config.advanced) {
-            setAdvancedConfig(config.advanced);
-        }
+        setMaxConcurrentTrades(config.maxConcurrentTrades ?? preset.maxConcurrentTrades);
+        setDynamicSizing(config.dynamicSizing ?? preset.dynamicSizing);
+        setAdvancedConfig(config.advanced ?? preset.advanced);
     }, [config]);
 
     // Update parent whenever config changes
@@ -107,119 +88,15 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
         });
     }, [amount, takeProfit, stopLoss, mode, isRunning, isDemo, isSimulating, maxConcurrentTrades, dynamicSizing, advancedConfig]);
 
-    const setPreset = (preset: "runner" | "sniper" | "degen" | "god" | "micro" | "custom") => {
-        setMode(preset);
-        if (preset === "runner") {
-            // THE ULTRA PROFITABLE CONFIG (Tier 0-4 Strict)
-            setAmount(0.01);
-            setTakeProfit(30);
-            setStopLoss(10);
-            setMaxConcurrentTrades(5);
-            setDynamicSizing(true);
-            setAdvancedConfig({
-                minLiquidity: 10,
-                maxLiquidity: 1000,
-                minVolume: 5,
-                minHolderCount: 20, // Tier 2 requirement
-                maxTop10: 40,
-                maxDev: 5,
-                minBondingCurve: 5, // Tier 4 (5-15% sweet spot)
-                maxBondingCurve: 20,
-                minVelocity: 0.5,
-                rugCheckStrictness: "strict",
-                requireSocials: true, // Tier 3 requirement
-                avoidSnipers: true,
-                slippage: 20
-            });
-        } else if (preset === "sniper") {
-            // FIRST BUYER / SPEED (Tier 0 Only)
-            setAmount(0.005);
-            setTakeProfit(50);
-            setStopLoss(15);
-            setMaxConcurrentTrades(1);
-            setDynamicSizing(true);
-            setAdvancedConfig({
-                minLiquidity: 1,
-                maxLiquidity: 500,
-                minVolume: 0,
-                minHolderCount: 0,
-                maxTop10: 90,
-                maxDev: 50,
-                minBondingCurve: 0,
-                maxBondingCurve: 10,
-                minVelocity: 0,
-                rugCheckStrictness: "lenient",
-                requireSocials: false,
-                avoidSnipers: false,
-                slippage: 30
-            });
-        } else if (preset === "degen") {
-            // MOMENTUM / HIGH RISK
-            setAmount(0.01);
-            setTakeProfit(35);
-            setStopLoss(14);
-            setMaxConcurrentTrades(1);
-            setDynamicSizing(true);
-            setAdvancedConfig({
-                minLiquidity: 5,
-                maxLiquidity: 2000,
-                minVolume: 2,
-                minHolderCount: 6,
-                maxTop10: 60,
-                maxDev: 15,
-                minBondingCurve: 1,
-                maxBondingCurve: 60,
-                minVelocity: 0, // Final degen pass logic still enforces momentum or high liquidity
-                rugCheckStrictness: "standard",
-                requireSocials: false,
-                avoidSnipers: false,
-                slippage: 25
-            });
-        } else if (preset === "god") {
-            // SELECTIVE EARLY RUNNER MODE
-            setAmount(0.008);
-            setTakeProfit(30);
-            setStopLoss(5);
-            setMaxConcurrentTrades(1);
-            setDynamicSizing(true);
-            setAdvancedConfig({
-                minLiquidity: 34,
-                maxLiquidity: 120,
-                minVolume: 1.3,
-                minHolderCount: 12,
-                maxTop10: 24,
-                maxDev: 3,
-                minBondingCurve: 1.2,
-                maxBondingCurve: 14,
-                minVelocity: 0.7,
-                rugCheckStrictness: "strict",
-                requireSocials: false,
-                avoidSnipers: true,
-                slippage: 14
-            });
-        } else if (preset === "micro") {
-            // MICRO WALLET COMPOUNDER
-            setAmount(0.008);
-            setTakeProfit(12);
-            setStopLoss(6);
-            setMaxConcurrentTrades(1);
-            setDynamicSizing(false);
-            setAdvancedConfig({
-                minLiquidity: 8,
-                maxLiquidity: 200,
-                minVolume: 1.0,
-                minHolderCount: 6,
-                maxTop10: 55,
-                maxDev: 12,
-                minBondingCurve: 1,
-                maxBondingCurve: 18,
-                minVelocity: 0.3,
-                rugCheckStrictness: "standard",
-                requireSocials: false,
-                avoidSnipers: true,
-                slippage: 45
-            });
-        }
+    const setPreset = (preset: VisibleStrategyMode) => {
+        const profileConfig = getStrategyPresetConfig(preset);
+        setMode(profileConfig.mode);
+        setAmount(profileConfig.amount);
+        setTakeProfit(profileConfig.takeProfit);
+        setStopLoss(profileConfig.stopLoss);
+        setMaxConcurrentTrades(profileConfig.maxConcurrentTrades);
+        setDynamicSizing(profileConfig.dynamicSizing);
+        setAdvancedConfig(profileConfig.advanced);
     };
 
     const toggleRun = () => {
@@ -246,50 +123,40 @@ export default function BotControls({ onConfigChange, walletConnected, realBalan
             </div>
 
             <div className="mb-4">
-                <label className="text-gray-400 text-sm mb-2 block">Trading Strategy</label>
+                <label className="text-gray-400 text-sm mb-2 block">Risk Profile</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    <button
-                        onClick={() => setPreset("runner")}
-                        className={`p-3 rounded border transition-all ${mode === "runner" ? "border-[var(--success)] bg-[rgba(20,241,149,0.1)] text-[var(--success)]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">🏃 RUNNER</div>
-                        <div className="text-[10px] opacity-70">Tier 0-4 | High Profitability</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("sniper")}
-                        className={`p-3 rounded border transition-all ${mode === "sniper" ? "border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">🎯 SNIPER</div>
-                        <div className="text-[10px] opacity-70">Tier 0 Only | Speed Focus</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("degen")}
-                        className={`p-3 rounded border transition-all ${mode === "degen" ? "border-[#ffcc00] bg-[rgba(255,204,0,0.1)] text-[#ffcc00]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">🎰 DEGEN</div>
-                        <div className="text-[10px] opacity-70">Momentum | High Risk</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("micro")}
-                        className={`p-3 rounded border transition-all ${mode === "micro" ? "border-[#ff7a00] bg-[rgba(255,122,0,0.1)] text-[#ff9a3d]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">MICRO</div>
-                        <div className="text-[10px] opacity-70">1-Pos | Fast Compound</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("god")}
-                        className={`p-3 rounded border transition-all ${mode === "god" ? "border-[#f0d36a] bg-[rgba(240,211,106,0.1)] text-[#f7e7a8]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold whitespace-nowrap">GOD MODE</div>
-                        <div className="text-[10px] opacity-70">Selective | Runner Focus</div>
-                    </button>
-                    <button
-                        onClick={() => setPreset("custom")}
-                        className={`p-3 rounded border transition-all ${mode === "custom" ? "border-[#888] bg-[rgba(136,136,136,0.1)] text-[#888]" : "border-[#333] hover:border-[#555] text-gray-400"}`}
-                    >
-                        <div className="font-bold">Custom</div>
-                        <div className="text-[10px] opacity-70">Manual control</div>
-                    </button>
+                    {STRATEGY_PROFILE_DEFINITIONS.map(profile => {
+                        const selected = mode === profile.id;
+                        const activeClasses =
+                            profile.id === 'god'
+                                ? 'border-[#f0d36a] bg-[rgba(240,211,106,0.1)] text-[#f7e7a8]'
+                                : profile.id === 'micro'
+                                    ? 'border-[#ff7a00] bg-[rgba(255,122,0,0.1)] text-[#ff9a3d]'
+                                    : profile.id === 'degen'
+                                        ? 'border-[#ffcc00] bg-[rgba(255,204,0,0.1)] text-[#ffcc00]'
+                                        : profile.id === 'sniper'
+                                            ? 'border-[#00d4ff] bg-[rgba(0,212,255,0.1)] text-[#00d4ff]'
+                                            : 'border-[#888] bg-[rgba(136,136,136,0.1)] text-[#ccc]';
+
+                        return (
+                            <button
+                                key={profile.id}
+                                onClick={() => setPreset(profile.id)}
+                                className={`p-3 rounded border transition-all text-left ${selected ? activeClasses : 'border-[#333] hover:border-[#555] text-gray-400'}`}
+                            >
+                                <div className="font-bold whitespace-nowrap">{profile.label}</div>
+                                <div className="text-[10px] opacity-70">{profile.subtitle}</div>
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="mt-3 rounded border border-[#333] bg-[#161616] p-3">
+                    <p className="text-xs font-bold text-white mb-1">
+                        {STRATEGY_PROFILE_DEFINITIONS.find(profile => profile.id === mode)?.label}
+                    </p>
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                        {STRATEGY_PROFILE_DEFINITIONS.find(profile => profile.id === mode)?.description}
+                    </p>
                 </div>
             </div>
 

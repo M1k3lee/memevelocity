@@ -441,14 +441,14 @@ export default function Home() {
     const savedKey = typeof window !== 'undefined' ? localStorage.getItem('helius_api_key') : '';
     const defaultConfig = {
       isRunning: false,
-      mode: 'runner',
-      amount: 0.01,
+      mode: 'god',
+      amount: 0.008,
       takeProfit: 30,
-      stopLoss: 10,
+      stopLoss: 5,
       isDemo: false,
       isSimulating: false,
       heliusKey: savedKey || '',
-      maxConcurrentTrades: 5,
+      maxConcurrentTrades: 1,
       dynamicSizing: true
     };
 
@@ -1947,9 +1947,9 @@ export default function Home() {
         addLog(`Fallback: Skipping ${token.symbol} - Dev Buy too low`);
         return;
       }
-      // Custom mode: User has full control, proceed if they've configured it
-      // Other modes: Proceed if not in safe mode
-      const allowFallbackBuy = ['custom', 'degen', 'high', 'velocity', 'scalp', 'sniper', 'first'].includes(config.mode);
+      // Never auto-buy live capital on analyzer failure.
+      // Keep the fallback path only for custom paper testing.
+      const allowFallbackBuy = config.mode === 'custom' && config.isDemo;
       if (allowFallbackBuy) {
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -1972,6 +1972,8 @@ export default function Home() {
         };
 
         await buyToken(token.mint, token.symbol, config.amount, dynamicSlippage, initialPrice, exitStrategy);
+      } else {
+        addLog(`🚫 Fallback blocked: ${token.symbol} analysis failed, so no trade was placed.`);
       }
     }
     } catch (outerError: any) {

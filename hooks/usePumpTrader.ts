@@ -10,7 +10,15 @@ import { recordLatestToken } from '../utils/liveTokenStore';
 import type { TokenData } from '../types/token';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
 import { calculatePumpPrice } from '../utils/pumpMath';
-import { getPaperEntryPrice, getPaperExitPrice, PAPER_TOKEN_ACCOUNT_RENT_SOL } from '../utils/paperTrading';
+import {
+    estimatePaperBuyExecution,
+    estimatePaperSellExecution,
+    PAPER_TOKEN_ACCOUNT_RENT_SOL
+} from '../utils/paperTrading';
+import {
+    getLiveBuyExecutionPlan,
+    getLiveSellExecutionPlan
+} from '../utils/executionModel';
 import {
     getProfitLockFloor,
     getRunnerActivationProfit,
@@ -455,14 +463,18 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
                 const isStale = effectiveTrade.lastPriceUpdate && (Date.now() - effectiveTrade.lastPriceUpdate > 120000);
                 const effectiveSellPrice = isStale ? 0 : sellPrice;
-
-                const rawRevenue = soldTokenAmount * effectiveSellPrice;
-                const revenue = getPaperExitPrice(rawRevenue);
+                const sellExecution = estimatePaperSellExecution({
+                    observedPrice: effectiveSellPrice,
+                    amountSolPaid: effectiveTrade.amountSolPaid || 0,
+                    amountTokens: soldTokenAmount,
+                    exitStrategy: effectiveTrade.exitStrategy
+                });
+                const revenue = sellExecution.netProceedsSol;
                 const rentReclaim = amountPercent >= 99 ? PAPER_TOKEN_ACCOUNT_RENT_SOL : 0;
                 const tradingProfit = revenue - costBasis;
                 const walletDelta = tradingProfit + rentReclaim;
                 const realizedPnlPercent = costBasis > 0 ? (tradingProfit / costBasis) * 100 : 0;
-                const displayExitPrice = soldTokenAmount > 0 ? (revenue / soldTokenAmount) : effectiveSellPrice;
+                const displayExitPrice = soldTokenAmount > 0 ? (revenue / soldTokenAmount) : sellExecution.fillPrice;
 
                 setDemoBalance(prev => prev + costBasis + walletDelta);
 
@@ -496,13 +508,13 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                         status: "open",
                         amountTokens: (t.amountTokens || 0) * remainingFraction,
                         amountSolPaid: (t.amountSolPaid || 0) * remainingFraction,
-                        currentPrice: effectiveSellPrice,
+                        currentPrice: displayExitPrice,
                         realizedPnlSol: undefined,
-                        pnlPercent: t.buyPrice > 0 ? ((effectiveSellPrice - t.buyPrice) / t.buyPrice) * 100 : 0
+                        pnlPercent: t.buyPrice > 0 ? ((displayExitPrice - t.buyPrice) / t.buyPrice) * 100 : 0
                     } : t));
                 }
 
-                addLog(`[DEMO] Sold ${amountPercent}% at ${formatTokenPrice(sellPrice)} SOL. Trade PnL: ${tradingProfit.toFixed(4)} SOL`);
+                addLog(`[DEMO] Sold ${amountPercent}% at ${formatTokenPrice(displayExitPrice)} SOL. Trade PnL: ${tradingProfit.toFixed(4)} SOL`);
                 if (rentReclaim > 0) {
                     addLog(`[DEMO] Recovered ${rentReclaim.toFixed(4)} SOL token-account rent on close (excluded from PnL%).`);
                 }
@@ -528,11 +540,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
 
             const amountToSell = balance * (amountPercent / 100);
             const tradeAmountPaid = effectiveTrade.amountSolPaid || 0.03;
-            const isLiveMicroTrade = !effectiveTrade.isPaper && !!effectiveTrade.exitStrategy?.maxHoldTime && effectiveTrade.exitStrategy.maxHoldTime <= 45;
+            const sellExecutionPlan = getLiveSellExecutionPlan(tradeAmountPaid, effectiveTrade.exitStrategy);
 
             setActiveTrades(prev => prev.map(t => t.mint === mint ? { ...t, status: "selling" } : t));
-
-            const priorityFee = tradeAmountPaid <= 0.05 ? 0.0003 : Math.max(0.0005, Math.min(0.002, tradeAmountPaid * 0.02));
 
             let transactionBuffer;
             try {
@@ -542,8 +552,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     mint,
                     amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: isLiveMicroTrade ? 18 : 25,
-                    priorityFee,
+                    slippage: sellExecutionPlan.primarySlippagePercent,
+                    priorityFee: sellExecutionPlan.priorityFeeSol,
                     pool: "auto"
                 });
             } catch (err: any) {
@@ -553,8 +563,8 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     mint,
                     amount: amountToSell,
                     denominatedInSol: "false",
-                    slippage: isLiveMicroTrade ? 28 : 50,
-                    priorityFee: 0.003,
+                    slippage: sellExecutionPlan.fallbackSlippagePercent,
+                    priorityFee: sellExecutionPlan.fallbackPriorityFeeSol,
                     pool: "auto"
                 });
             }
@@ -953,34 +963,42 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         };
         const existingTrade = activeTradesRef.current.find(t => t.mint === mint && t.status !== "closed");
         const isTopUp = !!tradeOptions?.allowTopUp && !!existingTrade;
-        const isLiveMicroTrade = !isDemo && !!activeExitStrategy?.maxHoldTime && activeExitStrategy.maxHoldTime <= 45;
+        const buyExecutionPlan = getLiveBuyExecutionPlan(amountSol, slippage, activeExitStrategy);
+        const isLiveMicroTrade = !isDemo && buyExecutionPlan.fastTrade;
 
         if (isDemo) {
-            if (demoBalance < amountSol) {
+            const demoBuyExecution = estimatePaperBuyExecution({
+                observedPrice: initialPrice || await getPumpPrice(mint, connection),
+                amountSol,
+                requestedSlippagePercent: slippage,
+                exitStrategy: activeExitStrategy
+            });
+            const requiredDemoBalance = amountSol + demoBuyExecution.networkFeeSol;
+
+            if (demoBalance < requiredDemoBalance) {
                 addLog("[DEMO] Insufficient funds for trade.");
                 processingMintsRef.current.delete(mint);
                 return;
             }
-            if (demoBalance < amountSol * 2) {
+            if (demoBalance < requiredDemoBalance * 2) {
                 addLog("[DEMO] ⚠️ Low demo balance - stopping.");
                 processingMintsRef.current.delete(mint);
                 return;
             }
 
-            setDemoBalance(prev => prev - amountSol);
-            let buyPrice = initialPrice || await getPumpPrice(mint, connection);
+            setDemoBalance(prev => prev - requiredDemoBalance);
+            let buyPrice = demoBuyExecution.fillPrice;
             if (buyPrice === 0) {
                 addLog(`[DEMO] ❌ No valid price for ${symbol}. Skipping.`);
-                setDemoBalance(prev => prev + amountSol);
+                setDemoBalance(prev => prev + requiredDemoBalance);
                 processingMintsRef.current.delete(mint);
                 return;
             }
 
-            buyPrice = getPaperEntryPrice(buyPrice);
             const tradeableSol = amountSol - PAPER_TOKEN_ACCOUNT_RENT_SOL;
             if (tradeableSol <= 0) {
                 addLog(`[DEMO] ❌ ${symbol} position too small after rent allowance. Skipping.`);
-                setDemoBalance(prev => prev + amountSol);
+                setDemoBalance(prev => prev + requiredDemoBalance);
                 processingMintsRef.current.delete(mint);
                 return;
             }
@@ -996,7 +1014,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 setActiveTrades(prev => prev.map(t => t.mint === mint ? {
                     ...t,
                     amountTokens: combinedTokens,
-                    amountSolPaid: (t.amountSolPaid || 0) + amountSol,
+                    amountSolPaid: (t.amountSolPaid || 0) + amountSol + demoBuyExecution.networkFeeSol,
                     originalAmount: (t.originalAmount || 0) + amountSol,
                     buyPrice: mergedBuyPrice,
                     currentPrice: t.currentPrice > 0 ? t.currentPrice : buyPrice,
@@ -1017,7 +1035,7 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             }
 
             const newTrade: ActiveTrade = {
-                mint, symbol, buyPrice, amountTokens, amountSolPaid: amountSol,
+                mint, symbol, buyPrice, amountTokens, amountSolPaid: amountSol + demoBuyExecution.networkFeeSol,
                 currentPrice: buyPrice, pnlPercent: 0, status: "open",
                 txId: `DEMO-${Date.now()}`, buyTime: Date.now(), exitStrategy: activeExitStrategy, originalAmount: amountSol,
                 highestPrice: buyPrice, lastPriceUpdate: Date.now(), lastPriceChangeTime: Date.now(), partialSells: {}, scaleInPlan: tradeOptions?.scaleInPlan, isPaper: true
@@ -1050,8 +1068,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 addLog(`Micro wallet auto-size: ${symbol} reduced from ${amountSol.toFixed(4)} to ${effectiveAmountSol.toFixed(4)} SOL to keep ${sizing.reserveSol.toFixed(4)} SOL in reserve.`);
             }
 
-            let currentSlippage = slippage;
-            let priorityFee = effectiveAmountSol <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, effectiveAmountSol * 0.05));
+            const liveBuyExecutionPlan = getLiveBuyExecutionPlan(effectiveAmountSol, slippage, activeExitStrategy);
+            let currentSlippage = liveBuyExecutionPlan.initialSlippagePercent;
+            let priorityFee = liveBuyExecutionPlan.initialPriorityFeeSol;
             const buildBuyTransaction = async (targetSlippage: number, targetPriorityFee: number) => {
                 return getTradeTransaction({
                     publicKey: wallet.publicKey.toBase58(),
@@ -1099,12 +1118,22 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     }
 
                     currentSlippage = isLiveMicroTrade
-                        ? Math.min(currentSlippage + 2, 20)
+                        ? Math.min(currentSlippage + liveBuyExecutionPlan.transportRetryIncrementPercent, liveBuyExecutionPlan.maxRetrySlippagePercent)
                         : Math.min(
-                            Math.max(currentSlippage + (shouldRetrySlippage ? 15 : 10), 45),
-                            65
+                            Math.max(
+                                currentSlippage + (shouldRetrySlippage
+                                    ? liveBuyExecutionPlan.slippageRetryIncrementPercent
+                                    : liveBuyExecutionPlan.transportRetryIncrementPercent),
+                                45
+                            ),
+                            liveBuyExecutionPlan.maxRetrySlippagePercent
                         );
-                    priorityFee = Math.min(0.0045, priorityFee + (shouldRetrySlippage ? 0.0007 : 0.0009));
+                    priorityFee = Math.min(
+                        liveBuyExecutionPlan.maxPriorityFeeSol,
+                        priorityFee + (shouldRetrySlippage
+                            ? liveBuyExecutionPlan.slippageRetryPriorityIncrementSol
+                            : liveBuyExecutionPlan.transportRetryPriorityIncrementSol)
+                    );
                     addLog(
                         shouldRetrySlippage
                             ? `Buy retry ${attempt + 1}/2: ${symbol} moved too fast. Retrying with ${currentSlippage}% slippage.`

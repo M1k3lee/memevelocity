@@ -11,6 +11,14 @@ export interface EntryGuardDecision {
     score?: number;
 }
 
+function calculateTraderDiversity(uniqueTraderCount: number, tradeCount: number): number {
+    if (!Number.isFinite(uniqueTraderCount) || !Number.isFinite(tradeCount) || uniqueTraderCount <= 0 || tradeCount <= 0) {
+        return 0;
+    }
+
+    return Math.min(1, uniqueTraderCount / Math.max(1, tradeCount));
+}
+
 function estimateCurveBuyImpactPercent(liquiditySol: number, amountSol: number): number {
     if (!Number.isFinite(liquiditySol) || liquiditySol <= 0 || !Number.isFinite(amountSol) || amountSol <= 0) {
         return 100;
@@ -47,7 +55,7 @@ function calculateRunnerSetupScore(params: {
     } = params;
 
     const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
-    const traderDiversity = uniqueTraderCount / Math.max(1, tradeCount);
+    const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
     const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
     const flowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
     let score = 28;
