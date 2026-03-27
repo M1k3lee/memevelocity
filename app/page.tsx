@@ -1141,6 +1141,17 @@ export default function Home() {
             netFlow <= Math.max(0.05, reclaimNetFlowFloor * 0.35) ||
             priceChangePercent <= -4
           );
+        const pristineLaunch =
+          age < minAgeSeconds &&
+          tradeCount === 0 &&
+          buyCount === 0 &&
+          sellCount === 0 &&
+          uniqueTraderCount <= 1 &&
+          observedVolume <= (isLiveMicroWallet ? 0.08 : 0.12);
+
+        if (pristineLaunch) {
+          return;
+        }
 
         if (needsMoreAge || sampleTooThin) {
           scheduleRetry(5000, `MICRO wait: ${token.symbol} needs more history before reclaim entry (${tradeCount} trades, ${uniqueTraderCount} wallets, ${age.toFixed(0)}s age).`);
