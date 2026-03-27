@@ -68,6 +68,14 @@ function getBondingCurveProgressFromFeed(token: TokenData): number {
   return calculateBondingCurveProgress(token.vTokensInBondingCurve);
 }
 
+function calculateTraderDiversity(uniqueTraderCount: number, tradeCount: number): number {
+  if (!Number.isFinite(uniqueTraderCount) || !Number.isFinite(tradeCount) || uniqueTraderCount <= 0 || tradeCount <= 0) {
+    return 0;
+  }
+
+  return Math.min(1, uniqueTraderCount / Math.max(1, tradeCount));
+}
+
 function calculateMicroVelocityScore(params: {
   age: number;
   observedVolume: number;
@@ -92,7 +100,7 @@ function calculateMicroVelocityScore(params: {
   } = params;
 
   const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
-  const traderDiversity = uniqueTraderCount / Math.max(1, tradeCount);
+  const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
   const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
   const netFlowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
 
@@ -164,7 +172,7 @@ function calculateGodModeScore(params: {
   } = params;
 
   const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
-  const traderDiversity = uniqueTraderCount / Math.max(1, tradeCount);
+  const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
   const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
   const flowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
   let score = 28;
@@ -1062,12 +1070,11 @@ export default function Home() {
         const buyPressure = snapshot?.buyPressure ?? 0;
         const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
         const priceChangePercent = snapshot?.priceChangePercent || 0;
-        const traderDiversity = tradeCount > 0 ? uniqueTraderCount / tradeCount : 0;
+        const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
         const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
-        const healthyPressureFloor = isLiveMicro ? 0.6 : (isLiveMicroWallet ? 0.54 : 0.57);
-        const healthyNetFlowFloor = isLiveMicro ? 0.32 : (isLiveMicroWallet ? 0.18 : 0.3);
-        const healthyDiversityFloor = isLiveMicro ? 0.5 : (isLiveMicroWallet ? 0.42 : 0.48);
-        const priceFadeFloor = isLiveMicro ? 0.25 : (isLiveMicroWallet ? -2.5 : -1.5);
+        const observedSeconds = snapshot
+          ? Math.max(0, (snapshot.lastSeenAt - snapshot.firstSeenAt) / 1000)
+          : age;
         const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
         const netFlowVelocity = age > 0 ? (netFlow / age) * 60 : 0;
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
@@ -1082,165 +1089,139 @@ export default function Home() {
           sellCount,
           priceChangePercent
         });
-        const velocityScoreFloor = isLiveMicro ? 66 : (isLiveMicroWallet ? 52 : 58);
-        const capitalEfficiencyFloor = isLiveMicro ? 0.085 : (isLiveMicroWallet ? 0.055 : 0.07);
+        const velocityScoreFloor = isLiveMicro ? 64 : (isLiveMicroWallet ? 50 : 56);
+        const capitalEfficiencyFloor = isLiveMicro ? 0.07 : (isLiveMicroWallet ? 0.045 : 0.06);
+        const capitalEfficiencyCeiling = isLiveMicro ? 0.9 : (isLiveMicroWallet ? 1.15 : 1.0);
+        const minAgeSeconds = isLiveMicro ? 26 : (isLiveMicroWallet ? 18 : 22);
+        const minObservedSeconds = isLiveMicro ? 18 : (isLiveMicroWallet ? 12 : 15);
+        const minTradeCount = isLiveMicro ? 10 : (isLiveMicroWallet ? 6 : 8);
+        const minUniqueTraders = isLiveMicro ? 7 : (isLiveMicroWallet ? 5 : 6);
+        const minObservedVolume = isLiveMicro ? 0.95 : (isLiveMicroWallet ? 0.45 : 0.65);
+        const reclaimPressureFloor = isLiveMicro ? 0.58 : (isLiveMicroWallet ? 0.54 : 0.56);
+        const reclaimNetFlowFloor = isLiveMicro ? 0.28 : (isLiveMicroWallet ? 0.12 : 0.22);
+        const reclaimDiversityFloor = isLiveMicro ? 0.52 : (isLiveMicroWallet ? 0.4 : 0.48);
+        const minPriceExpansion = isLiveMicro ? 10 : (isLiveMicroWallet ? 5 : 8);
+        const maxPriceExpansion = isLiveMicro ? 85 : (isLiveMicroWallet ? 110 : 95);
+        const minCurveProgress = isLiveMicro ? 1.0 : (isLiveMicroWallet ? 0.5 : 0.75);
+        const maxCurveProgress = isLiveMicro ? 14 : 16;
+        const maxSellCount = Math.max(2, Math.floor(tradeCount * (isLiveMicro ? 0.38 : 0.42)));
         const velocityReady =
           runnerVelocityScore >= velocityScoreFloor &&
           capitalEfficiency >= capitalEfficiencyFloor &&
-          curveVelocity >= (isLiveMicro ? 0.7 : (isLiveMicroWallet ? 0.4 : 0.55)) &&
-          netFlowVelocity >= (isLiveMicro ? 0.3 : (isLiveMicroWallet ? 0.18 : 0.24));
-        const antiChaseTriggered =
-          isLiveMicro &&
-          (
-            priceChangePercent >= 9 ||
-            bondingCurveProgress >= 3.5 ||
-            age > 85 ||
-            tradeCount >= 18
-          );
-
-        const launchPulse =
-          age <= 75 &&
-          buyCount >= (isLiveMicroWallet ? 2 : 3) &&
-          tradeCount >= (isLiveMicroWallet ? 2 : 3) &&
-          uniqueTraderCount >= (isLiveMicroWallet ? 2 : 3) &&
-          observedVolume >= (isLiveMicroWallet ? 0.35 : 0.55) &&
-          buyPressure >= healthyPressureFloor &&
-          netFlow > healthyNetFlowFloor &&
-          priceChangePercent > priceFadeFloor &&
-          traderDiversity >= healthyDiversityFloor;
-        const breakoutFlow =
-          age <= (isLiveMicroWallet ? 105 : 90) &&
-          buyCount >= (isLiveMicroWallet ? 3 : 4) &&
-          tradeCount >= (isLiveMicroWallet ? 4 : 6) &&
-          uniqueTraderCount >= (isLiveMicroWallet ? 2 : 3) &&
-          observedVolume >= (isLiveMicroWallet ? 0.65 : 0.9) &&
-          buyPressure >= (isLiveMicroWallet ? 0.54 : 0.56) &&
-          netFlow > (isLiveMicroWallet ? 0.3 : 0.45) &&
-          sellCount <= Math.max(1, buyCount) &&
-          priceChangePercent > (isLiveMicroWallet ? -1.5 : -0.5) &&
-          traderDiversity >= (isLiveMicroWallet ? 0.38 : 0.42);
-        const persistentFlow =
-          age <= 120 &&
-          buyCount >= (isLiveMicroWallet ? 5 : 6) &&
-          tradeCount >= (isLiveMicroWallet ? 9 : 12) &&
-          uniqueTraderCount >= (isLiveMicroWallet ? 3 : 4) &&
-          observedVolume >= (isLiveMicroWallet ? 0.9 : 1.2) &&
-          buyPressure >= (isLiveMicroWallet ? 0.48 : 0.5) &&
-          netFlow > (isLiveMicroWallet ? 0.4 : 0.55) &&
-          sellCount <= Math.max(2, buyCount) &&
-          priceChangePercent > (isLiveMicroWallet ? -2 : -1) &&
-          traderDiversity >= (isLiveMicroWallet ? 0.3 : 0.34);
-        const steadyTape =
-          age <= 120 &&
-          buyCount >= (isLiveMicroWallet ? 7 : 9) &&
-          tradeCount >= (isLiveMicroWallet ? 16 : 20) &&
-          uniqueTraderCount >= (isLiveMicroWallet ? 4 : 5) &&
-          observedVolume >= (isLiveMicroWallet ? 0.85 : 1.0) &&
-          buyPressure >= (isLiveMicroWallet ? 0.5 : 0.52) &&
-          netFlow > (isLiveMicroWallet ? 0.25 : 0.35) &&
-          priceChangePercent > (isLiveMicroWallet ? -1.5 : -0.5);
-        const feedMomentum =
-          age <= (isLiveMicroWallet ? 60 : 45) &&
-          liquidityGrowth >= (isLiveMicroWallet ? 0.35 : 0.6) &&
-          momentum >= (isLiveMicroWallet ? 0.75 : 1.0);
-        const strongFlow = launchPulse || breakoutFlow || persistentFlow || steadyTape;
-        const curveReady =
-          bondingCurveProgress >= (isLiveMicroWallet ? 0.75 : 1.0) &&
-          liquidityGrowth >= (isLiveMicroWallet ? 0.25 : 0.45);
-        const curveStarter =
-          bondingCurveProgress >= (isLiveMicroWallet ? 0.35 : 0.6) &&
-          (
-            liquidityGrowth >= (isLiveMicroWallet ? 0.15 : 0.3) ||
-            observedVolume >= (isLiveMicroWallet ? 0.35 : 0.5)
-          );
-        const deepLiquidity =
-          liquidity >= (isLiveMicroWallet ? 36 : 38) &&
-          (
-            bondingCurveProgress >= 0.35 ||
-            tradeCount >= (isLiveMicroWallet ? 2 : 3) ||
-            liquidityGrowth >= (isLiveMicroWallet ? 0.35 : 0.6)
-          );
-        const supportiveCurve = curveReady || curveStarter || deepLiquidity || feedMomentum;
-        const tapeConfirmed =
-          tradeCount >= (isLiveMicroWallet ? 2 : 3) &&
-          buyCount >= (isLiveMicroWallet ? 2 : 3) &&
-          uniqueTraderCount >= (isLiveMicroWallet ? 2 : 3) &&
-          traderDiversity >= healthyDiversityFloor &&
-          buyPressure >= healthyPressureFloor &&
-          netFlow > healthyNetFlowFloor &&
-          priceChangePercent > priceFadeFloor &&
-          sellCount <= Math.max(1, buyCount);
-        const earlyReversal =
-          tradeCount >= (isLiveMicroWallet ? 3 : 4) &&
+          capitalEfficiency <= capitalEfficiencyCeiling &&
+          curveVelocity >= (isLiveMicro ? 0.55 : (isLiveMicroWallet ? 0.32 : 0.42)) &&
+          netFlowVelocity >= (isLiveMicro ? 0.2 : (isLiveMicroWallet ? 0.1 : 0.16));
+        const sampleTooThin = tradeCount < minTradeCount || uniqueTraderCount < minUniqueTraders || observedSeconds < minObservedSeconds;
+        const needsMoreAge = age < minAgeSeconds;
+        const reclaimStructureReady =
+          observedVolume >= minObservedVolume &&
+          buyPressure >= reclaimPressureFloor &&
+          netFlow >= reclaimNetFlowFloor &&
+          traderDiversity >= reclaimDiversityFloor &&
+          priceChangePercent >= minPriceExpansion &&
+          priceChangePercent <= maxPriceExpansion &&
+          bondingCurveProgress >= minCurveProgress &&
+          bondingCurveProgress <= maxCurveProgress;
+        const pullbackConfirmed =
+          sellCount >= 1 &&
+          sellCount <= maxSellCount &&
+          buyCount > sellCount &&
+          (snapshot?.lastTradeType === 'buy' || buyPressure >= reclaimPressureFloor + 0.03);
+        const syntheticTape =
+          (tradeCount <= 4 && capitalEfficiency > 0.35) ||
+          (tradeCount <= 6 && capitalEfficiency > 0.6) ||
+          capitalEfficiency > capitalEfficiencyCeiling ||
+          (priceChangePercent < minPriceExpansion && sellCount === 0 && buyPressure > 0.85) ||
+          (tradeCount > 0 && uniqueTraderCount > tradeCount + 2);
+        const reversalActive =
+          tradeCount >= Math.max(4, minTradeCount - 2) &&
           (
             sellCount > buyCount ||
-            buyPressure < (isLiveMicroWallet ? 0.46 : 0.48) ||
-            netFlow <= (isLiveMicroWallet ? 0.05 : 0.12) ||
-            priceChangePercent <= (isLiveMicroWallet ? -4 : -3) ||
-            traderDiversity < (isLiveMicroWallet ? 0.28 : 0.33)
+            buyPressure < (reclaimPressureFloor - 0.08) ||
+            netFlow <= Math.max(0.05, reclaimNetFlowFloor * 0.35) ||
+            priceChangePercent <= -4
           );
-        const waitingOnSnapshot =
-          age <= 45 &&
-          tradeCount === 0 &&
-          observedVolume <= (isLiveMicroWallet ? 0.15 : 0.2) &&
-          liquidityGrowth > 0.25;
 
-        if (antiChaseTriggered) {
-          addLog(`MICRO Reject: ${token.symbol} already looks extended for live entry (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s).`);
+        if (needsMoreAge || sampleTooThin) {
+          scheduleRetry(5000, `MICRO wait: ${token.symbol} needs more history before reclaim entry (${tradeCount} trades, ${uniqueTraderCount} wallets, ${age.toFixed(0)}s age).`);
           return;
         }
 
-        if (earlyReversal) {
-          if (age < 75) {
-            scheduleRetry(4000, `MICRO wait: ${token.symbol} tape still unstable (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, price ${priceChangePercent.toFixed(1)}%).`);
+        if (syntheticTape) {
+          addLog(`MICRO Reject: ${token.symbol} flow looks synthetic or too concentrated (${tradeCount} trades, ${uniqueTraderCount} wallets, eff ${capitalEfficiency.toFixed(3)}).`);
+          return;
+        }
+
+        if (reversalActive) {
+          if (age < 150) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} reclaim is not stable yet (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, price ${priceChangePercent.toFixed(1)}%).`);
           } else {
-            addLog(`MICRO Reject: ${token.symbol} showed early reversal (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, price ${priceChangePercent.toFixed(1)}%).`);
+            addLog(`MICRO Reject: ${token.symbol} never stabilized after the first dump (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, price ${priceChangePercent.toFixed(1)}%).`);
           }
           return;
         }
 
-        if ((!strongFlow && !(tapeConfirmed && supportiveCurve)) || !velocityReady) {
-          if (age < 90 || waitingOnSnapshot) {
-            scheduleRetry(4000, `MICRO wait: ${token.symbol} needs stronger runner tape (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
+        if (!pullbackConfirmed) {
+          if (sellCount === 0) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} has not shown a real pullback yet (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure).`);
           } else {
-            addLog(`MICRO Reject: ${token.symbol} - Runner tape too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} needs a cleaner reclaim after the pullback (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure).`);
           }
           return;
         }
 
-        addLog(`MICRO setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}% | price ${priceChangePercent.toFixed(1)}% | diversity ${(traderDiversity * 100).toFixed(0)}% | vel ${runnerVelocityScore} | eff ${capitalEfficiency.toFixed(3)}`);
+        if (!reclaimStructureReady || !velocityReady) {
+          if (age < 150) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} needs cleaner reclaim structure (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
+          } else {
+            addLog(`MICRO Reject: ${token.symbol} reclaim never reached tradeable quality (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, vel ${runnerVelocityScore}, eff ${capitalEfficiency.toFixed(3)}).`);
+          }
+          return;
+        }
+
+        addLog(`MICRO reclaim setup: ${token.symbol} - flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | curve ${bondingCurveProgress.toFixed(1)}% | price ${priceChangePercent.toFixed(1)}% | diversity ${(traderDiversity * 100).toFixed(0)}% | vel ${runnerVelocityScore} | eff ${capitalEfficiency.toFixed(3)}`);
         const aggressiveSetup =
-          (buyPressure >= 0.62 || feedMomentum) &&
-          buyCount >= (isLiveMicroWallet ? 3 : 4) &&
-          tradeCount >= (isLiveMicroWallet ? 4 : 5) &&
-          observedVolume >= (isLiveMicroWallet ? 0.75 : 1.0) &&
-          netFlow > (isLiveMicroWallet ? 0.35 : 0.5) &&
-          priceChangePercent > (isLiveMicroWallet ? -1 : 0) &&
-          traderDiversity >= (isLiveMicroWallet ? 0.4 : 0.45) &&
-          (bondingCurveProgress >= (isLiveMicroWallet ? 1.0 : 1.5) || liquidityGrowth >= (isLiveMicroWallet ? 0.7 : 1.0));
+          buyPressure >= (reclaimPressureFloor + 0.08) &&
+          buyCount >= Math.max(minTradeCount - 2, sellCount + 4) &&
+          tradeCount >= (minTradeCount + 4) &&
+          uniqueTraderCount >= (minUniqueTraders + 2) &&
+          observedVolume >= (minObservedVolume + (isLiveMicroWallet ? 0.2 : 0.45)) &&
+          netFlow > (reclaimNetFlowFloor + (isLiveMicroWallet ? 0.12 : 0.2)) &&
+          priceChangePercent >= (minPriceExpansion + 2) &&
+          priceChangePercent <= (maxPriceExpansion - 12) &&
+          traderDiversity >= (reclaimDiversityFloor + 0.05) &&
+          capitalEfficiency <= (capitalEfficiencyCeiling * 0.8);
         const setupPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
           ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
           : 0;
         const verificationDelayMs = isLiveMicroWallet
-          ? (aggressiveSetup ? 350 : 650)
-          : (aggressiveSetup ? 800 : 1200);
+          ? (aggressiveSetup ? 1000 : 1400)
+          : (aggressiveSetup ? 1600 : 2200);
         await new Promise(r => setTimeout(r, verificationDelayMs));
+        const verificationSnapshot = getMarketSnapshot(token.mint);
         const freshData = await getPumpData(token.mint, connection);
         if (!freshData) {
+          const verificationTradeCount = verificationSnapshot?.tradeCount ?? tradeCount;
+          const verificationUniqueTraderCount = verificationSnapshot?.uniqueTraderCount ?? uniqueTraderCount;
+          const verificationObservedVolume = verificationSnapshot?.observedVolumeSol ?? observedVolume;
+          const verificationBuyPressure = verificationSnapshot?.buyPressure ?? buyPressure;
+          const verificationNetFlow = verificationSnapshot?.netFlowSol ?? netFlow;
+          const verificationTraderDiversity = calculateTraderDiversity(verificationUniqueTraderCount, verificationTradeCount);
           const hasFeedVerification =
-            (strongFlow || (tapeConfirmed && supportiveCurve)) &&
-            observedVolume >= (isLiveMicroWallet ? 0.35 : 0.55) &&
-            buyPressure >= healthyPressureFloor &&
-            netFlow > healthyNetFlowFloor &&
-            liquidityGrowth >= (isLiveMicroWallet ? 0.15 : 0.3) &&
-            priceChangePercent > priceFadeFloor;
+            verificationTradeCount >= tradeCount + 1 &&
+            verificationUniqueTraderCount >= minUniqueTraders &&
+            verificationObservedVolume >= minObservedVolume &&
+            verificationBuyPressure >= reclaimPressureFloor &&
+            verificationNetFlow >= reclaimNetFlowFloor &&
+            verificationTraderDiversity >= reclaimDiversityFloor &&
+            verificationSnapshot?.lastTradeType === 'buy';
 
           if (!hasFeedVerification) {
-            scheduleRetry(5000, `MICRO wait: ${token.symbol} verification snapshot unavailable.`);
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} reclaim verification snapshot unavailable.`);
             return;
           }
 
-          addLog(`MICRO fallback: ${token.symbol} using live feed verification while RPC snapshot is unavailable.`);
+          addLog(`MICRO fallback: ${token.symbol} using live feed reclaim verification while RPC snapshot is unavailable.`);
         }
 
         const verifiedLiquidity = freshData?.vSolInBondingCurve || liquidity;
@@ -1251,6 +1232,27 @@ export default function Home() {
         const verifiedPrice = verifiedLiquidity > 0 && verifiedTokens > 0
           ? calculatePumpPrice(verifiedLiquidity, verifiedTokens)
           : setupPrice;
+        const verificationTradeCount = verificationSnapshot?.tradeCount ?? tradeCount;
+        const verificationBuyCount = verificationSnapshot?.buyCount ?? buyCount;
+        const verificationSellCount = verificationSnapshot?.sellCount ?? sellCount;
+        const verificationUniqueTraderCount = verificationSnapshot?.uniqueTraderCount ?? uniqueTraderCount;
+        const verificationObservedVolume = verificationSnapshot?.observedVolumeSol ?? observedVolume;
+        const verificationBuyPressure = verificationSnapshot?.buyPressure ?? buyPressure;
+        const verificationNetFlow = verificationSnapshot?.netFlowSol ?? netFlow;
+        const verificationPriceChangePercent = verificationSnapshot?.priceChangePercent ?? priceChangePercent;
+        const verificationLastTradeType = verificationSnapshot?.lastTradeType ?? snapshot?.lastTradeType;
+        const verificationTraderDiversity = calculateTraderDiversity(verificationUniqueTraderCount, verificationTradeCount);
+        const verificationVelocityScore = calculateMicroVelocityScore({
+          age: Math.max(age, observedSeconds),
+          observedVolume: verificationObservedVolume,
+          tradeCount: verificationTradeCount,
+          uniqueTraderCount: verificationUniqueTraderCount,
+          buyPressure: verificationBuyPressure,
+          netFlow: verificationNetFlow,
+          bondingCurveProgress: verifiedCurveProgress,
+          sellCount: verificationSellCount,
+          priceChangePercent: verificationPriceChangePercent
+        });
 
         if (verifiedLiquidity <= 0) {
           scheduleRetry(5000, `MICRO wait: ${token.symbol} verification liquidity unavailable.`);
@@ -1263,17 +1265,40 @@ export default function Home() {
           const priceDeltaPercent = setupPrice > 0 && verifiedPrice > 0
             ? ((verifiedPrice - setupPrice) / setupPrice) * 100
             : 0;
+          const tradeDelta = verificationTradeCount - tradeCount;
+          const buyDelta = verificationBuyCount - buyCount;
+          const sellDelta = verificationSellCount - sellCount;
 
-          if (liquidityDeltaPercent < (isLiveMicro ? -8 : (isLiveMicroWallet ? -15 : -12)) || curveDelta < (isLiveMicro ? -2 : (isLiveMicroWallet ? -4 : -3)) || priceDeltaPercent < (isLiveMicro ? -2.25 : (isLiveMicroWallet ? -4.5 : -3.5))) {
-            addLog(`MICRO Reject: ${token.symbol} lost momentum during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price).`);
+          if (
+            liquidityDeltaPercent < (isLiveMicro ? -4 : (isLiveMicroWallet ? -6 : -5)) ||
+            curveDelta < (isLiveMicro ? -1.2 : (isLiveMicroWallet ? -1.8 : -1.5)) ||
+            priceDeltaPercent < (isLiveMicro ? -2.2 : (isLiveMicroWallet ? -3.2 : -2.8)) ||
+            verificationBuyPressure < reclaimPressureFloor ||
+            verificationNetFlow < reclaimNetFlowFloor ||
+            verificationTraderDiversity < reclaimDiversityFloor ||
+            verificationVelocityScore < velocityScoreFloor ||
+            verificationLastTradeType === 'sell' ||
+            tradeDelta < 1 ||
+            buyDelta < Math.max(1, sellDelta)
+          ) {
+            addLog(`MICRO Reject: ${token.symbol} reclaim failed verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${tradeDelta} fresh trades).`);
             return;
           }
-          if (liquidityDeltaPercent < (isLiveMicro ? -3 : (isLiveMicroWallet ? -6 : -4)) || curveDelta < (isLiveMicro ? -0.75 : (isLiveMicroWallet ? -1.5 : -1)) || priceDeltaPercent < (isLiveMicro ? -1.0 : (isLiveMicroWallet ? -2 : -1.25))) {
-            scheduleRetry(4000, `MICRO wait: ${token.symbol} pulled back during verification (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price).`);
+          if (
+            liquidityDeltaPercent < (isLiveMicro ? -1.5 : (isLiveMicroWallet ? -2.5 : -2)) ||
+            curveDelta < (isLiveMicro ? -0.4 : (isLiveMicroWallet ? -0.7 : -0.5)) ||
+            priceDeltaPercent < (isLiveMicro ? -0.8 : (isLiveMicroWallet ? -1.4 : -1.1)) ||
+            priceDeltaPercent > (isLiveMicro ? 6.5 : (isLiveMicroWallet ? 10 : 8.5))
+          ) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} reclaim is still resolving (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price).`);
             return;
           }
-          if (verifiedCurveProgress <= 0 && bondingCurveProgress > 0 && !isLiveMicroWallet) {
-            scheduleRetry(4000, `MICRO wait: ${token.symbol} verification curve still syncing.`);
+          if (
+            verificationTradeCount < minTradeCount ||
+            verificationUniqueTraderCount < minUniqueTraders ||
+            verificationObservedVolume < minObservedVolume
+          ) {
+            scheduleRetry(5000, `MICRO wait: ${token.symbol} reclaim still needs broader participation (${verificationTradeCount} trades, ${verificationUniqueTraderCount} wallets).`);
             return;
           }
         }
@@ -1286,54 +1311,54 @@ export default function Home() {
           : undefined;
 
         const microSizeMultiplier = isLiveMicro
-          ? (aggressiveSetup ? 0.7 : 0.55)
-          : (aggressiveSetup ? 1.0 : (strongFlow ? 0.85 : 0.7));
-        const microAmount = Number(Math.max(config.amount * (isLiveMicro ? 0.45 : 0.6), config.amount * microSizeMultiplier).toFixed(4));
-        const stagedEntryFraction = isLiveMicro ? (aggressiveSetup ? 0.45 : 0.35) : (aggressiveSetup ? 0.55 : 0.4);
+          ? (aggressiveSetup ? 0.58 : 0.46)
+          : (aggressiveSetup ? 0.82 : 0.65);
+        const microAmount = Number(Math.max(config.amount * (isLiveMicro ? 0.38 : 0.48), config.amount * microSizeMultiplier).toFixed(4));
+        const stagedEntryFraction = isLiveMicro ? (aggressiveSetup ? 0.52 : 0.42) : (aggressiveSetup ? 0.62 : 0.5);
         const starterAmount = Number((microAmount * stagedEntryFraction).toFixed(4));
         const scaleInAmount = Number(Math.max(0, microAmount - starterAmount).toFixed(4));
         const exitStrategy = {
-          takeProfit: Math.min(config.takeProfit, isLiveMicro ? (aggressiveSetup ? 8 : 9) : (aggressiveSetup ? 10 : 11)),
-          takeProfit2: isLiveMicro ? (aggressiveSetup ? 22 : 18) : (aggressiveSetup ? 30 : 24),
-          stopLoss: Math.min(config.stopLoss, isLiveMicro ? (aggressiveSetup ? 2.4 : 2.8) : (aggressiveSetup ? 4 : 4.5)),
-          maxHoldTime: isLiveMicro ? (aggressiveSetup ? 22 : 28) : (aggressiveSetup ? 35 : 45),
+          takeProfit: Math.min(config.takeProfit, isLiveMicro ? (aggressiveSetup ? 10 : 11) : (aggressiveSetup ? 13 : 14)),
+          takeProfit2: isLiveMicro ? (aggressiveSetup ? 22 : 18) : (aggressiveSetup ? 32 : 26),
+          stopLoss: Math.min(config.stopLoss, isLiveMicro ? (aggressiveSetup ? 2.8 : 3.2) : (aggressiveSetup ? 3.8 : 4.2)),
+          maxHoldTime: isLiveMicro ? (aggressiveSetup ? 28 : 34) : (aggressiveSetup ? 55 : 65),
           trailingStop: false,
           momentumExit: false,
-          minHoldTime: isLiveMicro ? 4 : 6,
-          fastKillLoss: isLiveMicro ? (aggressiveSetup ? 1.6 : 2.0) : (aggressiveSetup ? 2.5 : 3),
-          fastKillSeconds: isLiveMicro ? (aggressiveSetup ? 2 : 3) : (aggressiveSetup ? 3 : 4),
-          givebackPeakTrigger: isLiveMicro ? (aggressiveSetup ? 1.8 : 2.5) : (aggressiveSetup ? 2.5 : 3.5),
-          givebackFloor: isLiveMicro ? 0.4 : (aggressiveSetup ? -0.5 : 0),
-          givebackSeconds: isLiveMicro ? (aggressiveSetup ? 4 : 6) : (aggressiveSetup ? 7 : 9),
-          stagnationSeconds: isLiveMicro ? (aggressiveSetup ? 8 : 10) : (aggressiveSetup ? 12 : 15),
-          stagnationFloor: isLiveMicro ? (aggressiveSetup ? 0.6 : 0.9) : (aggressiveSetup ? 1 : 1.5),
+          minHoldTime: isLiveMicro ? 6 : 8,
+          fastKillLoss: isLiveMicro ? (aggressiveSetup ? 1.9 : 2.3) : (aggressiveSetup ? 2.6 : 3.0),
+          fastKillSeconds: isLiveMicro ? (aggressiveSetup ? 3 : 4) : (aggressiveSetup ? 5 : 6),
+          givebackPeakTrigger: isLiveMicro ? (aggressiveSetup ? 2.8 : 3.5) : (aggressiveSetup ? 4.5 : 5.2),
+          givebackFloor: isLiveMicro ? 0.8 : (aggressiveSetup ? 0.3 : 0),
+          givebackSeconds: isLiveMicro ? (aggressiveSetup ? 6 : 8) : (aggressiveSetup ? 10 : 12),
+          stagnationSeconds: isLiveMicro ? (aggressiveSetup ? 10 : 12) : (aggressiveSetup ? 18 : 22),
+          stagnationFloor: isLiveMicro ? (aggressiveSetup ? -0.4 : -0.8) : (aggressiveSetup ? -0.4 : -0.6),
           tp1SellPercent: isLiveMicro ? 85 : 80,
           tp2SellPercent: 10,
           postTp1FloorPercent: isLiveMicro ? 0.5 : 0,
-          postTp2FloorPercent: isLiveMicro ? (aggressiveSetup ? 4 : 3) : (aggressiveSetup ? 6 : 4),
-          runnerMaxHoldTime: isLiveMicro ? (aggressiveSetup ? 120 : 90) : (aggressiveSetup ? 300 : 240),
-          runnerTrailingStopPercent: isLiveMicro ? (aggressiveSetup ? 12 : 10) : (aggressiveSetup ? 16 : 14),
-          runnerActivationProfit: isLiveMicro ? (aggressiveSetup ? 12 : 10) : (aggressiveSetup ? 20 : 16),
+          postTp2FloorPercent: isLiveMicro ? (aggressiveSetup ? 4 : 3) : (aggressiveSetup ? 8 : 5),
+          runnerMaxHoldTime: isLiveMicro ? (aggressiveSetup ? 150 : 120) : (aggressiveSetup ? 360 : 300),
+          runnerTrailingStopPercent: isLiveMicro ? (aggressiveSetup ? 11 : 9) : (aggressiveSetup ? 15 : 13),
+          runnerActivationProfit: isLiveMicro ? (aggressiveSetup ? 12 : 10) : (aggressiveSetup ? 22 : 18),
           runnerTimeExitFloor: isLiveMicro ? (aggressiveSetup ? 4 : 3) : (aggressiveSetup ? 8 : 6)
         };
-        const scaleInPlan = scaleInAmount >= 0.001 && (!isLiveMicro || aggressiveSetup) ? {
+        const scaleInPlan = scaleInAmount >= 0.001 && aggressiveSetup ? {
           pendingSol: scaleInAmount,
-          triggerPnlPercent: isLiveMicro ? (aggressiveSetup ? 3.5 : 4.5) : (aggressiveSetup ? 2.2 : 3.0),
-          requiredObservedVolumeSol: Number((observedVolume + (isLiveMicro ? 0.35 : (isLiveMicroWallet ? 0.12 : 0.2))).toFixed(3)),
-          requiredUniqueTraderCount: uniqueTraderCount + 1,
-          requiredBuyPressure: Number(Math.max(healthyPressureFloor, buyPressure + (isLiveMicro ? 0.01 : -0.02)).toFixed(2)),
-          maxWaitSeconds: isLiveMicro ? (aggressiveSetup ? 10 : 12) : (aggressiveSetup ? 18 : 24),
+          triggerPnlPercent: isLiveMicro ? 4.5 : 5.5,
+          requiredObservedVolumeSol: Number((verificationObservedVolume + (isLiveMicro ? 0.18 : (isLiveMicroWallet ? 0.12 : 0.25))).toFixed(3)),
+          requiredUniqueTraderCount: verificationUniqueTraderCount + 1,
+          requiredBuyPressure: Number(Math.max(reclaimPressureFloor + 0.02, verificationBuyPressure).toFixed(2)),
+          maxWaitSeconds: isLiveMicro ? 16 : 24,
           inFlight: false,
           completed: false,
           expired: false
         } : undefined;
         const microSlippage = isLiveMicro
-          ? Math.min(config.advanced?.slippage || 18, aggressiveSetup ? 18 : 16)
-          : Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 35 : (isLiveMicroWallet ? 30 : 28));
+          ? Math.min(config.advanced?.slippage || 18, aggressiveSetup ? 16 : 14)
+          : Math.max(config.advanced?.slippage || 25, aggressiveSetup ? 30 : (isLiveMicroWallet ? 28 : 26));
 
         setLastTradeTime(Date.now());
         if (scaleInPlan) {
-          addLog(`MICRO staged entry: ${token.symbol} starting with ${starterAmount.toFixed(4)} SOL, add-on ${scaleInAmount.toFixed(4)} SOL if runner confirmation holds.`);
+          addLog(`MICRO staged reclaim: ${token.symbol} starting with ${starterAmount.toFixed(4)} SOL, add-on ${scaleInAmount.toFixed(4)} SOL only if the second leg confirms.`);
         }
         await buyToken(token.mint, token.symbol, scaleInPlan ? starterAmount : microAmount, microSlippage, initialPrice, exitStrategy, scaleInPlan ? { scaleInPlan } : undefined);
         return;
@@ -1358,7 +1383,7 @@ export default function Home() {
         const buyPressure = snapshot?.buyPressure ?? 0;
         const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
         const priceChangePercent = snapshot?.priceChangePercent || 0;
-        const traderDiversity = tradeCount > 0 ? uniqueTraderCount / tradeCount : 0;
+        const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
         const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
         const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
@@ -2038,12 +2063,13 @@ export default function Home() {
         const scaleBuyPressure = scaleSnapshot?.buyPressure ?? 0;
         const scaleTradeCount = scaleSnapshot?.tradeCount || 0;
         const scaleSellCount = scaleSnapshot?.sellCount || 0;
+        const scaleTraderDiversity = calculateTraderDiversity(scaleUniqueTraders, scaleTradeCount);
         const scaleInConfirmed =
           currentPnl >= scaleInPlan.triggerPnlPercent &&
           scaleObservedVolume >= scaleInPlan.requiredObservedVolumeSol &&
           scaleUniqueTraders >= scaleInPlan.requiredUniqueTraderCount &&
           scaleBuyPressure >= scaleInPlan.requiredBuyPressure &&
-          scaleTradeCount >= scaleUniqueTraders &&
+          scaleTraderDiversity >= 0.45 &&
           scaleSellCount <= Math.max(2, Math.floor(scaleTradeCount * 0.4));
 
         if (holdTimeSeconds >= scaleInPlan.maxWaitSeconds) {
