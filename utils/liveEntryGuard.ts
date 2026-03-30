@@ -204,26 +204,31 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): En
     const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
 
     const strongFlowConfirmation =
-        buyCount >= 2 &&
-        tradeCount >= 3 &&
-        uniqueTraderCount >= 2 &&
-        observedVolume >= 1.0 &&
-        buyPressure >= 0.6;
-    const steadyTapeConfirmation =
-        tradeCount >= 15 &&
+        buyCount >= 4 &&
+        tradeCount >= 6 &&
         uniqueTraderCount >= 4 &&
-        observedVolume >= 1.2 &&
-        buyPressure >= 0.58;
+        observedVolume >= 1.4 &&
+        buyPressure >= 0.64;
+    const steadyTapeConfirmation =
+        tradeCount >= 20 &&
+        uniqueTraderCount >= 6 &&
+        observedVolume >= 1.8 &&
+        buyPressure >= 0.61;
     const feedMomentumConfirmation =
         age <= 45 &&
-        liquidityGrowth >= 0.75 &&
-        momentum >= 1.25;
+        tradeCount >= 2 &&
+        uniqueTraderCount >= 2 &&
+        liquidityGrowth >= 1.0 &&
+        momentum >= 1.55 &&
+        buyPressure >= 0.55;
     const curveReady =
-        analysis.bondingCurveProgress >= 4 ||
-        (analysis.bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.5);
+        (analysis.bondingCurveProgress >= 3 && analysis.bondingCurveProgress <= 16) ||
+        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
     const deepLiquidityConfirmation =
         analysis.marketCap >= 55 &&
-        (analysis.bondingCurveProgress >= 1.5 || liquidityGrowth >= 0.75);
+        observedVolume >= 1.5 &&
+        uniqueTraderCount >= 4 &&
+        (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -238,7 +243,14 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): En
         };
     }
 
-    if (buyPressure < 0.45 && tradeCount >= 4) {
+    if (sellCount > Math.max(2, Math.floor(tradeCount * 0.4)) && age <= 90) {
+        return {
+            status: 'reject',
+            reason: `Sell pressure is already too heavy (${sellCount}/${tradeCount} sells)`
+        };
+    }
+
+    if (buyPressure < 0.55 && tradeCount >= 4) {
         return {
             status: 'reject',
             reason: `Momentum faded before entry (${(buyPressure * 100).toFixed(0)}% buy pressure)`

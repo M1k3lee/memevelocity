@@ -216,32 +216,20 @@ export async function analyzeEnhanced(
             effectiveConfig = { ...config };
             const hasEarlyFlowConfirmation = !!marketSnapshot &&
                 age <= 45 &&
-                (marketSnapshot.tradeCount >= 3 || marketSnapshot.buyCount >= 3) &&
-                marketSnapshot.uniqueTraderCount >= 3 &&
-                marketSnapshot.observedVolumeSol >= 1.5 &&
-                marketSnapshot.buyPressure >= 0.65;
+                marketSnapshot.buyCount >= 4 &&
+                marketSnapshot.tradeCount >= 6 &&
+                marketSnapshot.uniqueTraderCount >= 4 &&
+                marketSnapshot.observedVolumeSol >= 1.4 &&
+                marketSnapshot.buyPressure >= 0.64;
 
             if (hasEarlyFlowConfirmation && (effectiveConfig.minBondingCurve ?? 0) > 0) {
                 effectiveConfig.minBondingCurve = 0;
                 warnings.push('Degen confirmation: bypassing early curve floor due to strong early follow-through');
             }
 
-            if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 6) {
-                effectiveConfig.minHolderCount = 6;
-                warnings.push('Degen fallback: relaxing holder floor to 6 while RPC holder data is unavailable');
-            }
-
-            if (!marketSnapshot) {
-                if ((effectiveConfig.minVolume24h ?? effectiveConfig.minVolume ?? 0) > 0) {
-                    effectiveConfig.minVolume24h = 0;
-                    effectiveConfig.minVolume = 0;
-                    warnings.push('Degen fallback: ignoring observed-volume floor until trade-flow snapshot is available');
-                }
-
-                if ((effectiveConfig.minVelocity ?? 0) > 0) {
-                    effectiveConfig.minVelocity = 0;
-                    warnings.push('Degen fallback: ignoring velocity floor until trade-flow snapshot is available');
-                }
+            if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 8) {
+                effectiveConfig.minHolderCount = 8;
+                warnings.push('Degen fallback: relaxing holder floor to 8 while RPC holder data is unavailable');
             }
         }
 
@@ -294,9 +282,44 @@ export async function analyzeEnhanced(
             passed = tier0.score >= 100 && age < 120 && bondingCurveProgress < 10;
             riskLevel = 'high'; // Sniper is always high risk
         } else if (isDegenMode) {
-            // Degen: Pass Tier 0, ignoring other checks if momentum is high
-            passed = tier0.score >= 100 && (curveVelocity > 1.0 || liquidity > 50);
-            riskLevel = 'critical';
+            const degenTradeCount = marketSnapshot?.tradeCount || 0;
+            const degenUniqueTraderCount = marketSnapshot?.uniqueTraderCount || 0;
+            const degenObservedVolume = marketSnapshot?.observedVolumeSol || observedVolume;
+            const degenBuyPressure = marketSnapshot?.buyPressure ?? buyPressure;
+            const confirmedTape =
+                degenTradeCount >= 6 &&
+                degenUniqueTraderCount >= 4 &&
+                degenObservedVolume >= 1.2 &&
+                degenBuyPressure >= 0.58;
+            const strongTape =
+                degenTradeCount >= 10 &&
+                degenUniqueTraderCount >= 6 &&
+                degenObservedVolume >= 1.8 &&
+                degenBuyPressure >= 0.62;
+            const healthyCurve =
+                bondingCurveProgress >= 1.5 &&
+                bondingCurveProgress <= 20 &&
+                curveVelocity >= 0.65;
+            const healthyDistribution =
+                holderMetrics.top10Concentration <= 40 &&
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 8);
+            const enoughLiquidity = liquidity >= 35;
+
+            if (!healthyCurve) {
+                reasons.push(`Aggressive curve quality is weak (${bondingCurveProgress.toFixed(1)}% @ ${curveVelocity.toFixed(2)}%/min)`);
+            }
+            if (!healthyDistribution) {
+                reasons.push(`Aggressive distribution is too concentrated (${holderMetrics.top10Concentration.toFixed(1)}% top 10)`);
+            }
+            if (!enoughLiquidity) {
+                reasons.push(`Aggressive liquidity is too thin (${liquidity.toFixed(1)} SOL)`);
+            }
+            if (!(strongTape || confirmedTape)) {
+                reasons.push(`Aggressive mode needs confirmed tape (${degenTradeCount} trades, ${degenUniqueTraderCount} wallets, ${(degenBuyPressure * 100).toFixed(0)}% buy pressure)`);
+            }
+
+            passed = tier0.score >= 100 && enoughLiquidity && healthyCurve && healthyDistribution && (strongTape || confirmedTape);
+            riskLevel = passed ? 'high' : 'critical';
         } else {
             // Fallback
             passed = totalScore > 200;

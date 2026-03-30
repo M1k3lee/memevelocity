@@ -51,7 +51,7 @@ function isMicroWalletBalance(balance: number | null | undefined): boolean {
 function getLiveExitWarmupSeconds(mode: string | undefined): number {
   if (mode === 'micro') return 6;
   if (mode === 'god') return 12;
-  if (mode === 'degen') return 10;
+  if (mode === 'degen') return 6;
   return LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS;
 }
 
@@ -1721,10 +1721,7 @@ export default function Home() {
           'custom': 'medium'
         };
         const riskMode = riskModeMap[config.mode] || 'medium';
-        const analysisConfig =
-          config.mode === 'degen' && momentum >= 1.5
-            ? { ...config.advanced, minBondingCurve: 0 }
-            : config.advanced;
+        const analysisConfig = config.advanced;
         // @ts-ignore
         analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, analysisConfig);
 
@@ -1740,9 +1737,9 @@ export default function Home() {
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'god') minScore = 75;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
-      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
+      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 35;
       else if (config.mode === 'micro') minScore = 45;
-      if (!config.isDemo && config.mode === 'degen') minScore = Math.max(minScore, 30);
+      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 38 : 42);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -1755,34 +1752,40 @@ export default function Home() {
         return;
       }
 
-      if (!config.isDemo && config.mode === 'degen') {
+      if (config.mode === 'degen') {
         const snapshot = getMarketSnapshot(token.mint);
         const tradeCount = snapshot?.tradeCount || analysis.metrics.tradeCount || 0;
         const buyCount = snapshot?.buyCount || 0;
+        const sellCount = snapshot?.sellCount || 0;
         const uniqueTraderCount = snapshot?.uniqueTraderCount || analysis.metrics.uniqueTraderCount || 0;
         const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
         const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
         const strongFlowConfirmation =
-          buyCount >= 2 &&
-          tradeCount >= 3 &&
-          uniqueTraderCount >= 2 &&
-          observedVolume >= 1.0 &&
-          buyPressure >= 0.6;
-        const steadyTapeConfirmation =
-          tradeCount >= 15 &&
+          buyCount >= 4 &&
+          tradeCount >= 6 &&
           uniqueTraderCount >= 4 &&
-          observedVolume >= 1.2 &&
-          buyPressure >= 0.58;
+          observedVolume >= 1.4 &&
+          buyPressure >= 0.64;
+        const steadyTapeConfirmation =
+          tradeCount >= 20 &&
+          uniqueTraderCount >= 6 &&
+          observedVolume >= 1.8 &&
+          buyPressure >= 0.61;
         const feedMomentumConfirmation =
           age <= 45 &&
-          liquidityGrowth >= 0.75 &&
-          momentum >= 1.25;
+          tradeCount >= 2 &&
+          uniqueTraderCount >= 2 &&
+          liquidityGrowth >= 1.0 &&
+          momentum >= 1.55 &&
+          buyPressure >= 0.55;
         const curveReady =
-          analysis.bondingCurveProgress >= 4 ||
-          (analysis.bondingCurveProgress >= 1.25 && liquidityGrowth >= 0.5);
+          (analysis.bondingCurveProgress >= 3 && analysis.bondingCurveProgress <= 16) ||
+          (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
         const deepLiquidityConfirmation =
           analysis.marketCap >= 55 &&
-          (analysis.bondingCurveProgress >= 1.5 || liquidityGrowth >= 0.75);
+          observedVolume >= 1.5 &&
+          uniqueTraderCount >= 4 &&
+          (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
         const waitingOnSnapshot =
           age <= 45 &&
           tradeCount === 0 &&
@@ -1792,6 +1795,16 @@ export default function Home() {
 
         if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 35)) {
           scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          return;
+        }
+
+        if (sellCount > Math.max(2, Math.floor(tradeCount * 0.4)) && age <= 90) {
+          addLog(`🚫 Degen Reject: ${token.symbol} already shows too much sell pressure (${sellCount}/${tradeCount} sells).`);
+          return;
+        }
+
+        if (tradeCount >= 4 && buyPressure < 0.55) {
+          addLog(`🚫 Degen Reject: ${token.symbol} buy pressure is too weak for aggressive mode (${(buyPressure * 100).toFixed(0)}%).`);
           return;
         }
 
@@ -1912,7 +1925,8 @@ export default function Home() {
       }
 
       // Cap position size for safety
-      positionSize = Math.min(positionSize, config.amount * 2); // Never more than 2x base
+      const maxPositionMultiplier = config.mode === 'degen' ? 1.25 : 2;
+      positionSize = Math.min(positionSize, config.amount * maxPositionMultiplier);
       positionSize = Math.max(positionSize, config.amount * (!config.isDemo && (config.mode === 'degen' || config.mode === 'micro') ? 0.75 : 0.3));
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
@@ -1927,15 +1941,40 @@ export default function Home() {
       // Finalize: Token successfully passed all filters
       processedMints.current.add(token.mint);
 
-      const exitStrategy = {
-        takeProfit: config.takeProfit,
-        takeProfit2: config.mode === 'micro' ? 35 : undefined,
-        stopLoss: config.stopLoss,
-        maxHoldTime: config.mode === 'micro' ? 90 : (config.mode === 'sniper' ? 300 : (config.mode === 'degen' ? 120 : 3600)), // Sniper/Degen = short hold, Runner = long
-        trailingStop: config.mode === 'runner', // Enable trailing stop for runners
-        momentumExit: config.mode === 'degen', // Momentum exit for degens
-        minHoldTime: config.mode === 'micro' ? 12 : undefined,
-      };
+      const exitStrategy = config.mode === 'degen'
+        ? {
+            takeProfit: Math.min(config.takeProfit, 16),
+            takeProfit2: 28,
+            stopLoss: Math.min(config.stopLoss, 5),
+            maxHoldTime: 75,
+            trailingStop: false,
+            momentumExit: false,
+            minHoldTime: 6,
+            fastKillLoss: 3,
+            fastKillSeconds: 5,
+            givebackPeakTrigger: 4.5,
+            givebackFloor: 0.5,
+            givebackSeconds: 10,
+            stagnationSeconds: 18,
+            stagnationFloor: -1,
+            tp1SellPercent: 80,
+            tp2SellPercent: 10,
+            postTp1FloorPercent: 1.5,
+            postTp2FloorPercent: 6,
+            runnerMaxHoldTime: 180,
+            runnerTrailingStopPercent: 12,
+            runnerActivationProfit: 14,
+            runnerTimeExitFloor: 4
+          }
+        : {
+            takeProfit: config.takeProfit,
+            takeProfit2: config.mode === 'micro' ? 35 : undefined,
+            stopLoss: config.stopLoss,
+            maxHoldTime: config.mode === 'micro' ? 90 : (config.mode === 'sniper' ? 300 : 3600), // Sniper = short hold, Runner = long
+            trailingStop: config.mode === 'runner', // Enable trailing stop for runners
+            momentumExit: false,
+            minHoldTime: config.mode === 'micro' ? 12 : undefined,
+          };
 
       await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice, exitStrategy);
     } catch (error: any) {

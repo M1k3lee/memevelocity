@@ -63,8 +63,8 @@ export const STRATEGY_PROFILE_DEFINITIONS: StrategyProfileDefinition[] = [
     {
         id: 'degen',
         label: 'Aggressive',
-        subtitle: 'Faster momentum entries',
-        description: 'Picks up trades earlier with smaller size, but still keeps rug filters on.'
+        subtitle: 'Earlier continuation entries',
+        description: 'Acts sooner than Balanced, but only after the tape confirms and exits much faster if follow-through dies.'
     },
     {
         id: 'sniper',
@@ -159,25 +159,25 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'degen':
             return {
                 mode: 'degen',
-                amount: 0.006,
-                takeProfit: 24,
-                stopLoss: 10,
+                amount: 0.004,
+                takeProfit: 16,
+                stopLoss: 5,
                 maxConcurrentTrades: 1,
-                dynamicSizing: true,
+                dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 8,
-                    maxLiquidity: 300,
-                    minVolume: 1.0,
+                    minLiquidity: 12,
+                    maxLiquidity: 180,
+                    minVolume: 1.2,
                     minHolderCount: 8,
-                    maxTop10: 45,
-                    maxDev: 10,
-                    minBondingCurve: 0.75,
-                    maxBondingCurve: 30,
-                    minVelocity: 0.35,
+                    maxTop10: 38,
+                    maxDev: 6,
+                    minBondingCurve: 1.25,
+                    maxBondingCurve: 18,
+                    minVelocity: 0.45,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
-                    slippage: 18
+                    slippage: 16
                 }
             };
         case 'sniper':
