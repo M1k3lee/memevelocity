@@ -18,6 +18,7 @@ import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
 import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
+import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
 import {
   getProfitLockFloor,
   getRunnerActivationProfit,
@@ -70,6 +71,18 @@ type DecisionPulse = {
   totalSignals: number;
 };
 
+type RiskRails = {
+  modeLabel: string;
+  posture: string;
+  openExposureSol: number;
+  recentRealizedSol: number;
+  lossStreak: number;
+  winRate: number;
+  waitRate: number;
+  rejectRate: number;
+  approvalRate: number;
+};
+
 function isMicroWalletBalance(balance: number | null | undefined): boolean {
   return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 && balance <= MICRO_WALLET_MAX_SOL;
 }
@@ -104,6 +117,8 @@ function classifyDecisionReason(reason: string): string {
   if (normalized.includes('creator already sold')) return 'Creator sold';
   if (normalized.includes('already too extended')) return 'Too extended';
   if (normalized.includes('top 2 wallets') || normalized.includes('concentrated') || normalized.includes('dominant')) return 'Wallet concentration';
+  if (normalized.includes('repeat wallet') || normalized.includes('recycled by the same wallets')) return 'Repeat-wallet flow';
+  if (normalized.includes('pump launch mode') || normalized.includes('incentive-heavy')) return 'Pump mode filter';
   if (normalized.includes('one-sided')) return 'One-sided flow';
   if (normalized.includes('shakeout')) return 'Needs shakeout';
   if (normalized.includes('composite score') || normalized.includes('runner floor')) return 'Score too low';
@@ -226,6 +241,60 @@ function buildDecisionPulse(logs: string[]): DecisionPulse {
       .map(([label, count]) => ({ label, count })),
     recentSignals,
     totalSignals: counts.wait + counts.reject + counts.approve + counts.buy + counts.retry
+  };
+}
+
+function buildRiskRails(params: {
+  config: { mode?: string; isDemo?: boolean };
+  activeTrades: Array<{ amountSolPaid?: number }>;
+  tradeHistory: Array<{ realizedPnlSol?: number; amountSolPaid?: number; originalAmount?: number; pnlPercent?: number }>;
+  decisionPulse: DecisionPulse;
+}): RiskRails {
+  const { config, activeTrades, tradeHistory, decisionPulse } = params;
+  const recentClosed = tradeHistory.slice(0, 5);
+  const recentRealizedSol = recentClosed.reduce((sum, trade) => {
+    const cost = trade.originalAmount || trade.amountSolPaid || 0;
+    const realized = trade.realizedPnlSol ?? ((trade.pnlPercent || 0) / 100) * cost;
+    return sum + realized;
+  }, 0);
+  let lossStreak = 0;
+  for (const trade of tradeHistory) {
+    const cost = trade.originalAmount || trade.amountSolPaid || 0;
+    const realized = trade.realizedPnlSol ?? ((trade.pnlPercent || 0) / 100) * cost;
+    if (realized < 0) {
+      lossStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  const recentWins = recentClosed.filter((trade) => {
+    const cost = trade.originalAmount || trade.amountSolPaid || 0;
+    const realized = trade.realizedPnlSol ?? ((trade.pnlPercent || 0) / 100) * cost;
+    return realized > 0;
+  }).length;
+  const recentActionableSignals = Math.max(1, decisionPulse.counts.wait + decisionPulse.counts.reject + decisionPulse.counts.approve + decisionPulse.counts.buy);
+  const waitRate = decisionPulse.counts.wait / recentActionableSignals;
+  const rejectRate = decisionPulse.counts.reject / recentActionableSignals;
+  const approvalRate = (decisionPulse.counts.approve + decisionPulse.counts.buy) / recentActionableSignals;
+  const openExposureSol = activeTrades.reduce((sum, trade) => sum + (trade.amountSolPaid || 0), 0);
+  const modeLabel = normalizeDecisionMode(config.mode);
+
+  let posture = 'Selective';
+  if (rejectRate >= 0.65) posture = 'Tight Tape';
+  else if (waitRate >= 0.45) posture = 'Watching Resets';
+  else if (approvalRate >= 0.18) posture = 'Open Window';
+
+  return {
+    modeLabel,
+    posture: `${posture} · ${config.isDemo ? 'Paper' : 'Live'} ${modeLabel}`,
+    openExposureSol,
+    recentRealizedSol,
+    lossStreak,
+    winRate: recentClosed.length > 0 ? recentWins / recentClosed.length : 0,
+    waitRate,
+    rejectRate,
+    approvalRate
   };
 }
 
@@ -530,12 +599,20 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
       liquidityDepth: liquidity,
       tradeCount,
       uniqueTraderCount,
+      repeatTraderRatio: snapshot?.repeatTraderRatio || 0,
+      averageTradeSizeSol: snapshot?.averageTradeSizeSol || 0,
       priceChangePercent,
+      maxPriceChangePercent: snapshot?.maxPriceChangePercent || priceChangePercent,
+      minPriceChangePercent: snapshot?.minPriceChangePercent || priceChangePercent,
+      peakLiquiditySol: snapshot?.peakLiquiditySol || liquidity,
+      peakPrice: snapshot?.peakPrice || snapshot?.currentPrice || 0,
       largestTraderVolumeShare,
       topTwoTraderVolumeShare,
       creatorVolumeShare,
+      creatorNetFlowSol: snapshot?.creatorNetFlowSol || 0,
       creatorBuyCount,
       creatorSellCount,
+      launchFlags: createEmptyPumpLaunchFlags(),
       contractSecurity: {
         freezeAuthority: false,
         mintAuthority: false,
@@ -725,6 +802,12 @@ export default function Home() {
     return acc;
   }, { totalProfit: 0, walletDelta: 0, rentRecovered: 0, wins: 0, losses: 0 });
   const decisionPulse = buildDecisionPulse(logs);
+  const riskRails = buildRiskRails({
+    config,
+    activeTrades: displayedActiveTrades,
+    tradeHistory: displayedTradeHistory,
+    decisionPulse
+  });
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const analyzingMints = useRef<Set<string>>(new Set());
   const analysisCooldowns = useRef<Map<string, number>>(new Map());
@@ -1972,12 +2055,20 @@ export default function Home() {
             liquidityDepth: token.vSolInBondingCurve || 30,
             tradeCount: 0,
             uniqueTraderCount: 0,
+            repeatTraderRatio: 0,
+            averageTradeSizeSol: 0,
             priceChangePercent: 0,
+            maxPriceChangePercent: 0,
+            minPriceChangePercent: 0,
+            peakLiquiditySol: token.vSolInBondingCurve || 30,
+            peakPrice: 0,
             largestTraderVolumeShare: 0,
             topTwoTraderVolumeShare: 0,
             creatorVolumeShare: 0,
+            creatorNetFlowSol: 0,
             creatorBuyCount: 0,
             creatorSellCount: 0,
+            launchFlags: createEmptyPumpLaunchFlags(),
             contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
           }
         };
@@ -2807,120 +2898,8 @@ export default function Home() {
               <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} realBalance={realBalance} config={config} />
             </div>
 
-            <div className="glass-panel p-4">
-              <h3 className="font-bold mb-3 flex items-center gap-2 text-gray-400 text-sm">
-                <Activity size={14} /> Decision Pulse
-              </h3>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-wide text-amber-300/70">Waits</div>
-                  <div className="text-lg font-semibold text-amber-300">{decisionPulse.counts.wait}</div>
-                </div>
-                <div className="rounded-lg border border-red-500/20 bg-red-500/8 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-wide text-red-300/70">Rejects</div>
-                  <div className="text-lg font-semibold text-red-300">{decisionPulse.counts.reject}</div>
-                </div>
-                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-wide text-emerald-300/70">Approvals</div>
-                  <div className="text-lg font-semibold text-emerald-300">{decisionPulse.counts.approve}</div>
-                </div>
-                <div className="rounded-lg border border-sky-500/20 bg-sky-500/8 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-wide text-sky-300/70">Entries</div>
-                  <div className="text-lg font-semibold text-sky-300">{decisionPulse.counts.buy}</div>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Mode Breakdown</div>
-                  <div className="space-y-2">
-                    {decisionPulse.modeStats.length > 0 ? decisionPulse.modeStats.map((mode) => {
-                      const modePressure = Math.max(1, mode.total);
-                      const waitWidth = (mode.waits / modePressure) * 100;
-                      const rejectWidth = (mode.rejects / modePressure) * 100;
-                      const approveWidth = ((mode.approvals + mode.buys) / modePressure) * 100;
-
-                      return (
-                        <div key={mode.mode} className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-semibold text-gray-300">{mode.mode}</span>
-                            <span className="text-gray-500">{mode.total} signals</span>
-                          </div>
-                          <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-white/5">
-                            <div className="h-full bg-amber-400/80" style={{ width: `${waitWidth}%` }} />
-                            <div className="h-full bg-red-400/80" style={{ width: `${rejectWidth}%` }} />
-                            <div className="h-full bg-emerald-400/80" style={{ width: `${approveWidth}%` }} />
-                          </div>
-                          <div className="mt-2 flex justify-between text-[10px] text-gray-500">
-                            <span>W {mode.waits}</span>
-                            <span>R {mode.rejects}</span>
-                            <span>A {mode.approvals + mode.buys}</span>
-                          </div>
-                        </div>
-                      );
-                    }) : (
-                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
-                        No structured signals yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Top Reasons</div>
-                  <div className="space-y-2">
-                    {decisionPulse.topReasons.length > 0 ? decisionPulse.topReasons.map((reason) => {
-                      const width = decisionPulse.topReasons[0]?.count ? (reason.count / decisionPulse.topReasons[0].count) * 100 : 0;
-                      return (
-                        <div key={reason.label} className="space-y-1">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="truncate text-gray-300">{reason.label}</span>
-                            <span className="text-gray-500">{reason.count}</span>
-                          </div>
-                          <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-[var(--primary)]/70" style={{ width: `${width}%` }} />
-                          </div>
-                        </div>
-                      );
-                    }) : (
-                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
-                        Waiting for enough logs to classify.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Recent Signals</div>
-                  <div className="flex flex-wrap gap-2">
-                    {decisionPulse.recentSignals.length > 0 ? decisionPulse.recentSignals.map((signal, index) => (
-                      <div
-                        key={`${signal.raw}-${index}`}
-                        className={`rounded-full border px-2.5 py-1 text-[10px] font-mono ${
-                          signal.kind === 'reject'
-                            ? 'border-red-500/20 bg-red-500/10 text-red-300'
-                            : signal.kind === 'wait'
-                              ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
-                              : signal.kind === 'buy' || signal.kind === 'approve'
-                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                                : 'border-white/10 bg-white/[0.04] text-gray-400'
-                        }`}
-                        title={signal.reason}
-                      >
-                        {signal.mode} {signal.token}
-                      </div>
-                    )) : (
-                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
-                        Live decisions will appear here.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* System Logs */}
-            <div className="glass-panel p-4 h-[260px] flex flex-col">
+            <div className="glass-panel p-4 h-[360px] flex flex-col">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="font-bold flex items-center gap-2 text-gray-400 text-sm">
                 <Terminal size={14} /> System Logs
@@ -2940,6 +2919,202 @@ export default function Home() {
           {/* Main Center Area (Stats & Active Trades) */}
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
+              <div className="grid gap-6 xl:grid-cols-[1.9fr_1fr]">
+                <div className="glass-panel p-5">
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="font-bold flex items-center gap-2 text-gray-300 text-base">
+                        <Activity size={16} /> Decision Pulse
+                      </h3>
+                      <p className="mt-1 text-xs text-gray-500">Live view of waits, rejections, approvals, and entries as the tape evolves.</p>
+                    </div>
+                    <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-gray-500">
+                      {decisionPulse.totalSignals} parsed
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-amber-300/70">Waits</div>
+                      <div className="mt-1 text-2xl font-semibold text-amber-300">{decisionPulse.counts.wait}</div>
+                    </div>
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-red-300/70">Rejects</div>
+                      <div className="mt-1 text-2xl font-semibold text-red-300">{decisionPulse.counts.reject}</div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-emerald-300/70">Approvals</div>
+                      <div className="mt-1 text-2xl font-semibold text-emerald-300">{decisionPulse.counts.approve}</div>
+                    </div>
+                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-sky-300/70">Entries</div>
+                      <div className="mt-1 text-2xl font-semibold text-sky-300">{decisionPulse.counts.buy}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_1fr]">
+                    <div>
+                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Mode Breakdown</div>
+                      <div className="space-y-2.5">
+                        {decisionPulse.modeStats.length > 0 ? decisionPulse.modeStats.map((mode) => {
+                          const modePressure = Math.max(1, mode.total);
+                          const waitWidth = (mode.waits / modePressure) * 100;
+                          const rejectWidth = (mode.rejects / modePressure) * 100;
+                          const approveWidth = ((mode.approvals + mode.buys) / modePressure) * 100;
+
+                          return (
+                            <div key={mode.mode} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-semibold text-gray-300">{mode.mode}</span>
+                                <span className="text-gray-500">{mode.total} signals</span>
+                              </div>
+                              <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-white/5">
+                                <div className="h-full bg-amber-400/80" style={{ width: `${waitWidth}%` }} />
+                                <div className="h-full bg-red-400/80" style={{ width: `${rejectWidth}%` }} />
+                                <div className="h-full bg-emerald-400/80" style={{ width: `${approveWidth}%` }} />
+                              </div>
+                              <div className="mt-2 flex justify-between text-[10px] uppercase tracking-wide text-gray-500">
+                                <span>Wait {mode.waits}</span>
+                                <span>Reject {mode.rejects}</span>
+                                <span>Approve {mode.approvals + mode.buys}</span>
+                              </div>
+                            </div>
+                          );
+                        }) : (
+                          <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
+                            No structured signals yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-5">
+                      <div>
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Top Reasons</div>
+                        <div className="space-y-2">
+                          {decisionPulse.topReasons.length > 0 ? decisionPulse.topReasons.map((reason) => {
+                            const width = decisionPulse.topReasons[0]?.count ? (reason.count / decisionPulse.topReasons[0].count) * 100 : 0;
+                            return (
+                              <div key={reason.label} className="space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="truncate text-gray-300">{reason.label}</span>
+                                  <span className="text-gray-500">{reason.count}</span>
+                                </div>
+                                <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                                  <div className="h-full rounded-full bg-[var(--primary)]/70" style={{ width: `${width}%` }} />
+                                </div>
+                              </div>
+                            );
+                          }) : (
+                            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
+                              Waiting for enough logs to classify.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Recent Signals</div>
+                        <div className="flex flex-wrap gap-2">
+                          {decisionPulse.recentSignals.length > 0 ? decisionPulse.recentSignals.map((signal, index) => (
+                            <div
+                              key={`${signal.raw}-${index}`}
+                              className={`rounded-full border px-3 py-1.5 text-[10px] font-mono ${
+                                signal.kind === 'reject'
+                                  ? 'border-red-500/20 bg-red-500/10 text-red-300'
+                                  : signal.kind === 'wait'
+                                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                                    : signal.kind === 'buy' || signal.kind === 'approve'
+                                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                                      : 'border-white/10 bg-white/[0.04] text-gray-400'
+                              }`}
+                              title={signal.reason}
+                            >
+                              {signal.mode} {signal.token}
+                            </div>
+                          )) : (
+                            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
+                              Live decisions will appear here.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5">
+                  <div className="mb-4">
+                    <h3 className="font-bold text-gray-300 text-base">Risk Rails</h3>
+                    <p className="mt-1 text-xs text-gray-500">{riskRails.posture}</p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Open Exposure</div>
+                      <div className="mt-1 text-xl font-semibold text-white">{riskRails.openExposureSol.toFixed(4)} SOL</div>
+                    </div>
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent 5 PnL</div>
+                      <div className={`mt-1 text-xl font-semibold ${riskRails.recentRealizedSol >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                        {riskRails.recentRealizedSol >= 0 ? '+' : ''}{riskRails.recentRealizedSol.toFixed(4)} SOL
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Loss Streak</div>
+                      <div className={`mt-1 text-xl font-semibold ${riskRails.lossStreak >= 2 ? 'text-red-300' : 'text-gray-200'}`}>{riskRails.lossStreak}</div>
+                    </div>
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent Win Rate</div>
+                      <div className="mt-1 text-xl font-semibold text-white">{(riskRails.winRate * 100).toFixed(0)}%</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 space-y-3">
+                    <div>
+                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Guard Pressure</div>
+                      <div className="space-y-2 text-xs">
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-gray-400">
+                            <span>Wait Rate</span>
+                            <span>{(riskRails.waitRate * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-white/5">
+                            <div className="h-full rounded-full bg-amber-400/80" style={{ width: `${riskRails.waitRate * 100}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-gray-400">
+                            <span>Reject Rate</span>
+                            <span>{(riskRails.rejectRate * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-white/5">
+                            <div className="h-full rounded-full bg-red-400/80" style={{ width: `${riskRails.rejectRate * 100}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-gray-400">
+                            <span>Approval Rate</span>
+                            <span>{(riskRails.approvalRate * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-white/5">
+                            <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${riskRails.approvalRate * 100}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Mode</div>
+                      <div className="mt-1 text-sm font-semibold text-gray-200">{riskRails.modeLabel}</div>
+                      <div className="mt-2 text-xs text-gray-500">
+                        {config.dynamicSizing ? 'Dynamic sizing is active.' : 'Static sizing is active.'} {config.isDemo ? 'Paper mode is forgiving; live mode should stay on the stricter path.' : 'Live mode should only add size when the tape stays diverse.'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <ActiveTrades trades={displayedActiveTrades} onSell={sellToken} onSync={syncTrades} onRecover={recoverTrades} onClearAll={clearTrades} onCleanup={cleanupWaste} isCleaning={isCleaning} />
               <TradeHistory trades={displayedTradeHistory} />
             </div>

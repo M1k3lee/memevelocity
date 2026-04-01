@@ -21,13 +21,20 @@ export interface MarketSnapshot {
     buyCount: number;
     sellCount: number;
     uniqueTraderCount: number;
+    repeatTraderRatio: number;
+    averageTradeSizeSol: number;
     velocitySolPerMin: number;
     priceChangePercent: number;
+    maxPriceChangePercent: number;
+    minPriceChangePercent: number;
+    peakLiquiditySol: number;
+    peakPrice: number;
     lastTradeType: TokenData['txType'];
     largestTraderVolumeShare: number;
     topTwoTraderVolumeShare: number;
     creatorBuyVolumeSol: number;
     creatorSellVolumeSol: number;
+    creatorNetFlowSol: number;
     creatorVolumeShare: number;
     creatorBuyCount: number;
     creatorSellCount: number;
@@ -38,6 +45,7 @@ interface InternalMarketSnapshot extends MarketSnapshot {
     firstObservedPrice: number;
     creatorWallet: string;
     traderVolumes: Map<string, number>;
+    traderTradeCounts: Map<string, number>;
 }
 
 const snapshots = new Map<string, InternalMarketSnapshot>();
@@ -95,11 +103,16 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
 
     const traderKeys = existing?.traderKeys || new Set<string>();
     const traderVolumes = existing?.traderVolumes || new Map<string, number>();
+    const traderTradeCounts = existing?.traderTradeCounts || new Map<string, number>();
     if (token.traderPublicKey && token.traderPublicKey !== 'SIM') {
         traderKeys.add(token.traderPublicKey);
         traderVolumes.set(
             token.traderPublicKey,
             (traderVolumes.get(token.traderPublicKey) || 0) + tradeVolume
+        );
+        traderTradeCounts.set(
+            token.traderPublicKey,
+            (traderTradeCounts.get(token.traderPublicKey) || 0) + (token.txType === 'create' ? 0 : 1)
         );
     }
 
@@ -123,6 +136,7 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
     const topTwoTraderVolumeShare = totalTraderVolume > 0
         ? ((orderedTraderVolumes[0] || 0) + (orderedTraderVolumes[1] || 0)) / totalTraderVolume
         : 0;
+    const repeatedTraderCount = [...traderTradeCounts.values()].filter((count) => count > 1).length;
 
     const snapshot: InternalMarketSnapshot = {
         mint: token.mint,
@@ -142,26 +156,36 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
         buyCount: (existing?.buyCount || 0) + (token.txType === 'buy' ? 1 : 0),
         sellCount: (existing?.sellCount || 0) + (token.txType === 'sell' ? 1 : 0),
         uniqueTraderCount: traderKeys.size,
+        repeatTraderRatio: 0,
+        averageTradeSizeSol: 0,
         velocitySolPerMin: 0,
         priceChangePercent: 0,
+        maxPriceChangePercent: existing?.maxPriceChangePercent || 0,
+        minPriceChangePercent: existing?.minPriceChangePercent || 0,
+        peakLiquiditySol: Math.max(existing?.peakLiquiditySol || liquiditySol, liquiditySol),
+        peakPrice: Math.max(existing?.peakPrice || currentPrice, currentPrice),
         lastTradeType: token.txType,
         largestTraderVolumeShare,
         topTwoTraderVolumeShare,
         creatorBuyVolumeSol: nextCreatorBuyVolumeSol,
         creatorSellVolumeSol: nextCreatorSellVolumeSol,
+        creatorNetFlowSol: nextCreatorBuyVolumeSol - nextCreatorSellVolumeSol,
         creatorVolumeShare: 0,
         creatorBuyCount: nextCreatorBuyCount,
         creatorSellCount: nextCreatorSellCount,
         traderKeys,
         firstObservedPrice: existing?.firstObservedPrice || currentPrice,
         creatorWallet,
-        traderVolumes
+        traderVolumes,
+        traderTradeCounts
     };
 
     snapshot.buyPressure = snapshot.observedVolumeSol > 0 ? snapshot.buyVolumeSol / snapshot.observedVolumeSol : 0;
     snapshot.creatorVolumeShare = snapshot.observedVolumeSol > 0
         ? (snapshot.creatorBuyVolumeSol + snapshot.creatorSellVolumeSol) / snapshot.observedVolumeSol
         : 0;
+    snapshot.repeatTraderRatio = snapshot.uniqueTraderCount > 0 ? repeatedTraderCount / snapshot.uniqueTraderCount : 0;
+    snapshot.averageTradeSizeSol = snapshot.tradeCount > 0 ? snapshot.observedVolumeSol / snapshot.tradeCount : snapshot.observedVolumeSol;
 
     const observedMinutes = Math.max((snapshot.lastSeenAt - snapshot.firstSeenAt) / 60_000, 0.05);
     snapshot.velocitySolPerMin = snapshot.observedVolumeSol / observedMinutes;
@@ -169,6 +193,8 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
     if (snapshot.firstObservedPrice > 0 && snapshot.currentPrice > 0) {
         snapshot.priceChangePercent = ((snapshot.currentPrice - snapshot.firstObservedPrice) / snapshot.firstObservedPrice) * 100;
     }
+    snapshot.maxPriceChangePercent = Math.max(existing?.maxPriceChangePercent || snapshot.priceChangePercent, snapshot.priceChangePercent);
+    snapshot.minPriceChangePercent = Math.min(existing?.minPriceChangePercent || snapshot.priceChangePercent, snapshot.priceChangePercent);
 
     snapshots.set(token.mint, snapshot);
     return cloneSnapshot(snapshot);

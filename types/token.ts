@@ -11,6 +11,7 @@ export interface TokenData {
     name: string;
     symbol: string;
     uri: string;
+    isMayhemMode?: boolean;
     timestamp: number;
     createdAt?: number;
     lastSeenAt?: number;

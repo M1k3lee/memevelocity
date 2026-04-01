@@ -32,6 +32,7 @@ function calculateRunnerSetupScore(params: {
     observedVolume: number;
     tradeCount: number;
     uniqueTraderCount: number;
+    repeatTraderRatio: number;
     buyPressure: number;
     bondingCurveProgress: number;
     netFlow: number;
@@ -48,6 +49,7 @@ function calculateRunnerSetupScore(params: {
         observedVolume,
         tradeCount,
         uniqueTraderCount,
+        repeatTraderRatio,
         buyPressure,
         bondingCurveProgress,
         netFlow,
@@ -88,6 +90,10 @@ function calculateRunnerSetupScore(params: {
     if (traderDiversity >= 0.5) score += 10;
     else if (traderDiversity >= 0.42) score += 5;
     else score -= 8;
+
+    if (repeatTraderRatio <= 0.24) score += 8;
+    else if (repeatTraderRatio <= 0.36) score += 4;
+    else if (repeatTraderRatio > 0.5) score -= 10;
 
     if (curveVelocity >= 0.9) score += 10;
     else if (curveVelocity >= 0.65) score += 6;
@@ -293,6 +299,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || analysis.metrics.topTwoTraderVolumeShare || 0;
     const creatorVolumeShare = snapshot?.creatorVolumeShare || analysis.metrics.creatorVolumeShare || 0;
     const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
+    const repeatTraderRatio = snapshot?.repeatTraderRatio || analysis.metrics.repeatTraderRatio || 0;
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
 
     if (age > 60) {
@@ -334,6 +341,13 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
+    if (analysis.metrics.launchFlags.hardBlock) {
+        return {
+            status: 'reject',
+            reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})`
+        };
+    }
+
     if (largestTraderVolumeShare > 0.4) {
         return {
             status: 'reject',
@@ -352,6 +366,13 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         return {
             status: 'reject',
             reason: `Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (repeatTraderRatio > 0.58 && tradeCount >= 6) {
+        return {
+            status: 'reject',
+            reason: `Aggressive tape is too dependent on repeat wallets (${(repeatTraderRatio * 100).toFixed(0)}%)`
         };
     }
 
@@ -475,9 +496,24 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || analysis.metrics.topTwoTraderVolumeShare || 0;
     const creatorVolumeShare = snapshot?.creatorVolumeShare || analysis.metrics.creatorVolumeShare || 0;
     const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
+    const repeatTraderRatio = snapshot?.repeatTraderRatio || analysis.metrics.repeatTraderRatio || 0;
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
     const isGodMode = mode === 'god';
     const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
+
+    if (analysis.metrics.launchFlags.hardBlock) {
+        return {
+            status: 'reject',
+            reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})`
+        };
+    }
+
+    if (isGodMode && analysis.metrics.launchFlags.incentiveMode) {
+        return {
+            status: 'reject',
+            reason: `Incentive-heavy Pump launch text detected (${analysis.metrics.launchFlags.tags.join(', ')})`
+        };
+    }
 
     if (creatorSellCount > 0 && age <= 180) {
         return {
@@ -599,6 +635,13 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
+    if (repeatTraderRatio > (isGodMode ? 0.42 : 0.5) && tradeCount >= 6) {
+        return {
+            status: 'reject',
+            reason: `Too much of the tape is being recycled by the same wallets (${(repeatTraderRatio * 100).toFixed(0)}%)`
+        };
+    }
+
     if (creatorVolumeShare > maxCreatorVolumeShare && age >= 15) {
         return {
             status: 'reject',
@@ -664,6 +707,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         observedVolume,
         tradeCount,
         uniqueTraderCount,
+        repeatTraderRatio,
         buyPressure,
         bondingCurveProgress: analysis.bondingCurveProgress,
         netFlow,
@@ -701,6 +745,13 @@ export function evaluateLiveEntryGuard(
     analysis: EnhancedAnalysis,
     amountSol: number
 ): EntryGuardDecision {
+    if (analysis.metrics.launchFlags.hardBlock) {
+        return {
+            status: 'reject',
+            reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})`
+        };
+    }
+
     if (mode === 'sniper' || mode === 'first') {
         return evaluateSniperEntry(token);
     }

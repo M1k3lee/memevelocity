@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import WebSocket from 'ws';
+import { normalizeTokenEvent } from '../utils/tokenFeed';
 
 const DEFAULT_DURATION_MINUTES = 10;
 const MAX_TRACKED_MINTS = 250;
@@ -25,8 +26,16 @@ function main(): void {
     const outputPath = path.join(outputDir, fileName);
     const stream = fs.createWriteStream(outputPath, { flags: 'a' });
     const trackedMints = new Set<string>();
+    let sequence = 0;
+    let capturedEvents = 0;
+    let launchCount = 0;
 
     console.log(`Capturing PumpPortal launch tape for ${durationMinutes} minute(s) -> ${outputPath}`);
+    stream.write(`${JSON.stringify({
+        type: 'session',
+        startedAt: startedAt.toISOString(),
+        durationMinutes
+    })}\n`);
 
     const ws = new WebSocket('wss://pumpportal.fun/api/data');
     const stopTimer = setTimeout(() => {
@@ -44,11 +53,16 @@ function main(): void {
 
         try {
             const parsed = JSON.parse(payload);
+            const normalized = parsed?.mint ? normalizeTokenEvent(parsed, Date.now()) : null;
             const event = {
+                type: 'event',
+                sequence: ++sequence,
                 capturedAt: new Date().toISOString(),
-                payload: parsed
+                raw: parsed,
+                normalized
             };
             stream.write(`${JSON.stringify(event)}\n`);
+            capturedEvents += 1;
 
             if (parsed?.mint && parsed?.txType === 'create' && !trackedMints.has(parsed.mint)) {
                 if (trackedMints.size >= MAX_TRACKED_MINTS) {
@@ -56,6 +70,7 @@ function main(): void {
                 }
 
                 trackedMints.add(parsed.mint);
+                launchCount += 1;
                 ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [parsed.mint] }));
             }
         } catch {
@@ -72,7 +87,7 @@ function main(): void {
     ws.on('close', () => {
         clearTimeout(stopTimer);
         stream.end();
-        console.log('Feed closed.');
+        console.log(`Feed closed. Captured ${capturedEvents} events across ${launchCount} launch(es).`);
     });
 }
 

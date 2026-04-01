@@ -30,6 +30,7 @@ export function normalizeTokenEvent(data: any, receivedAt: number = Date.now()):
         name: sanitizeTokenIdentity(data.name),
         symbol: sanitizeTokenIdentity(data.symbol),
         uri: data.uri || "",
+        isMayhemMode: Boolean(data.is_mayhem_mode || data.isMayhemMode),
         timestamp: receivedAt,
         createdAt: txType === 'create' ? receivedAt : undefined,
         lastSeenAt: receivedAt
@@ -62,6 +63,7 @@ export function mergeTokenData(existing: TokenData | undefined, token: TokenData
         name: sanitizeTokenIdentity(token.name) || sanitizeTokenIdentity(existing?.name) || "",
         symbol: sanitizeTokenIdentity(token.symbol) || sanitizeTokenIdentity(existing?.symbol) || "",
         uri: token.uri || existing?.uri || "",
+        isMayhemMode: token.isMayhemMode ?? existing?.isMayhemMode ?? false,
         timestamp: createdAt,
         createdAt,
         lastSeenAt

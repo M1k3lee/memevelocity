@@ -199,6 +199,42 @@ function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
     };
 }
 
+function getPresetRiskControls(mode: BotMode): { maxConsecutiveLosses: number; maxDailyLossSol: number; riskFloorMultiplier: number; riskCeilingMultiplier: number } {
+    if (mode === 'god') {
+        return {
+            maxConsecutiveLosses: 2,
+            maxDailyLossSol: 0.008,
+            riskFloorMultiplier: 0.6,
+            riskCeilingMultiplier: 1.35
+        };
+    }
+
+    if (mode === 'sniper' || mode === 'first') {
+        return {
+            maxConsecutiveLosses: 3,
+            maxDailyLossSol: 0.005,
+            riskFloorMultiplier: 0.45,
+            riskCeilingMultiplier: 1.05
+        };
+    }
+
+    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
+        return {
+            maxConsecutiveLosses: 3,
+            maxDailyLossSol: 0.006,
+            riskFloorMultiplier: 0.5,
+            riskCeilingMultiplier: 1.15
+        };
+    }
+
+    return {
+        maxConsecutiveLosses: 2,
+        maxDailyLossSol: 0.01,
+        riskFloorMultiplier: 0.55,
+        riskCeilingMultiplier: 1.2
+    };
+}
+
 function withAdvancedOverrides(base: AdvancedConfig): AdvancedConfig {
     return {
         ...base,
@@ -257,6 +293,7 @@ export function loadRunnerConfig(): RunnerConfig {
     const mode = resolveMode(process.env.BOT_MODE);
     const advanced = withAdvancedOverrides(getPresetAdvancedConfig(mode));
     const defaultExit = withExitOverrides(getPresetExitStrategy(mode));
+    const riskControls = getPresetRiskControls(mode);
     const wallet = getConfiguredWallet();
     const statePath = process.env.BOT_STATE_PATH
         ? path.resolve(process.cwd(), process.env.BOT_STATE_PATH)
@@ -278,6 +315,10 @@ export function loadRunnerConfig(): RunnerConfig {
         healthLogIntervalMs: Math.max(10_000, parseNumber(process.env.BOT_HEALTH_LOG_INTERVAL_MS, 60_000)),
         pricePollIntervalMs: Math.max(1_000, parseNumber(process.env.BOT_PRICE_POLL_INTERVAL_MS, 2_000)),
         maxTrackedMints: Math.max(50, Math.floor(parseNumber(process.env.BOT_MAX_TRACKED_MINTS, 200))),
+        maxConsecutiveLosses: Math.max(1, Math.floor(parseNumber(process.env.BOT_MAX_CONSECUTIVE_LOSSES, riskControls.maxConsecutiveLosses))),
+        maxDailyLossSol: Math.max(0.001, parseNumber(process.env.BOT_MAX_DAILY_LOSS_SOL, riskControls.maxDailyLossSol)),
+        riskFloorMultiplier: Math.max(0.2, parseNumber(process.env.BOT_RISK_FLOOR_MULTIPLIER, riskControls.riskFloorMultiplier)),
+        riskCeilingMultiplier: Math.max(0.5, parseNumber(process.env.BOT_RISK_CEILING_MULTIPLIER, riskControls.riskCeilingMultiplier)),
         statePath,
         advanced,
         defaultExit

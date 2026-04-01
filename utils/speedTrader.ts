@@ -3,6 +3,7 @@ import type { EnhancedAnalysis } from './enhancedAnalyzer';
 import { evaluateLiveEntryGuard } from './liveEntryGuard';
 import { getMarketSnapshot } from './marketData';
 import { calculateBondingCurveProgress } from './pumpMath';
+import { createEmptyPumpLaunchFlags } from './pumpLaunchFlags';
 import type { TokenData } from '../types/token';
 
 export interface SpeedTradeSignal {
@@ -54,12 +55,20 @@ function buildFeedOnlyAnalysis(token: TokenData): EnhancedAnalysis {
             liquidityDepth: liquidity,
             tradeCount: snapshot?.tradeCount || 0,
             uniqueTraderCount: snapshot?.uniqueTraderCount || 0,
+            repeatTraderRatio: snapshot?.repeatTraderRatio || 0,
+            averageTradeSizeSol: snapshot?.averageTradeSizeSol || 0,
             priceChangePercent: snapshot?.priceChangePercent || 0,
+            maxPriceChangePercent: snapshot?.maxPriceChangePercent || 0,
+            minPriceChangePercent: snapshot?.minPriceChangePercent || 0,
+            peakLiquiditySol: snapshot?.peakLiquiditySol || liquidity,
+            peakPrice: snapshot?.peakPrice || 0,
             largestTraderVolumeShare: snapshot?.largestTraderVolumeShare || 0,
             topTwoTraderVolumeShare: snapshot?.topTwoTraderVolumeShare || 0,
             creatorVolumeShare: snapshot?.creatorVolumeShare || 0,
+            creatorNetFlowSol: snapshot?.creatorNetFlowSol || 0,
             creatorBuyCount: snapshot?.creatorBuyCount || 0,
             creatorSellCount: snapshot?.creatorSellCount || 0,
+            launchFlags: createEmptyPumpLaunchFlags(),
             contractSecurity: {
                 freezeAuthority: true,
                 mintAuthority: true,

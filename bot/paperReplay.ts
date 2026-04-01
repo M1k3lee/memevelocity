@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import type { EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { estimatePaperBuyExecution, estimatePaperSellExecution, PAPER_TOKEN_ACCOUNT_RENT_SOL } from '../utils/paperTrading';
 import {
@@ -7,6 +9,7 @@ import {
 } from '../utils/marketData';
 import { calculatePumpPrice } from '../utils/pumpMath';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
+import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
 import type { ManagedExitStrategy, PartialSellFlags } from '../utils/tradeExit';
 import {
     getProfitLockFloor,
@@ -20,6 +23,7 @@ import {
     hasTp2Sell
 } from '../utils/tradeExit';
 import type { TokenData } from '../types/token';
+import { loadCaptureReplayScenarios, resolveCapturePath, type ReplayScenario as Scenario, type ReplayTapeEvent as ScenarioEvent } from './captureTools';
 
 const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000;
 const PUMP_CURVE_SALE_TOKENS = 793_100_000;
@@ -114,27 +118,6 @@ const PROBE_EXIT: ManagedExitStrategy = {
     runnerTrailingStopPercent: 8,
     runnerActivationProfit: 8,
     runnerTimeExitFloor: 2
-};
-
-type ScenarioEvent = {
-    t: number;
-    txType: TokenData['txType'];
-    trader: string;
-    liquiditySol: number;
-    progress: number;
-    initialBuy?: number;
-};
-
-type Scenario = {
-    id: string;
-    description: string;
-    creator: string;
-    quality: {
-        holderCount: number;
-        deployerHoldings: number;
-        top10Concentration: number;
-    };
-    events: ScenarioEvent[];
 };
 
 type Position = {
@@ -262,12 +245,20 @@ function buildAnalysis(token: TokenData, quality: Scenario['quality']): Enhanced
             liquidityDepth: token.vSolInBondingCurve,
             tradeCount: snapshot?.tradeCount || 0,
             uniqueTraderCount: snapshot?.uniqueTraderCount || 0,
+            repeatTraderRatio: snapshot?.repeatTraderRatio || 0,
+            averageTradeSizeSol: snapshot?.averageTradeSizeSol || 0,
             priceChangePercent: snapshot?.priceChangePercent || 0,
+            maxPriceChangePercent: snapshot?.maxPriceChangePercent || 0,
+            minPriceChangePercent: snapshot?.minPriceChangePercent || 0,
+            peakLiquiditySol: snapshot?.peakLiquiditySol || token.vSolInBondingCurve,
+            peakPrice: snapshot?.peakPrice || 0,
             largestTraderVolumeShare: snapshot?.largestTraderVolumeShare || 0,
             topTwoTraderVolumeShare: snapshot?.topTwoTraderVolumeShare || 0,
             creatorVolumeShare: snapshot?.creatorVolumeShare || 0,
+            creatorNetFlowSol: snapshot?.creatorNetFlowSol || 0,
             creatorBuyCount: snapshot?.creatorBuyCount || 0,
             creatorSellCount: snapshot?.creatorSellCount || 0,
+            launchFlags: createEmptyPumpLaunchFlags(),
             contractSecurity: {
                 freezeAuthority: true,
                 mintAuthority: true,
@@ -620,7 +611,7 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     };
 }
 
-const scenarios: Scenario[] = [
+const syntheticScenarios: Scenario[] = [
     {
         id: 'organic',
         description: 'Diversified follow-through, small shakeout, then trend continuation.',
@@ -774,7 +765,69 @@ function formatSol(value: number): string {
     return `${value >= 0 ? '+' : ''}${value.toFixed(4)} SOL`;
 }
 
+function resolveReplayScenarios(): { scenarios: Scenario[]; capturePath: string | null } {
+    const rawArgs = process.argv.slice(2);
+    const latestCaptureRequested = rawArgs.includes('--latest-capture');
+    const captureFlagIndex = rawArgs.indexOf('--capture');
+    const captureArgument = captureFlagIndex >= 0 ? rawArgs[captureFlagIndex + 1] : undefined;
+
+    if (latestCaptureRequested) {
+        const captureDir = path.resolve(process.cwd(), 'runtime', 'captures');
+        if (fs.existsSync(captureDir)) {
+            const files = fs.readdirSync(captureDir)
+                .filter((file) => file.endsWith('.jsonl'))
+                .map((file) => path.join(captureDir, file))
+                .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+
+            for (const filePath of files) {
+                const capturedScenarios = loadCaptureReplayScenarios(filePath);
+                if (capturedScenarios.length > 0) {
+                    return {
+                        scenarios: capturedScenarios,
+                        capturePath: filePath
+                    };
+                }
+            }
+        }
+    }
+
+    const capturePath = captureArgument ? resolveCapturePath(captureArgument) : null;
+    if (capturePath) {
+        const capturedScenarios = loadCaptureReplayScenarios(capturePath);
+        if (capturedScenarios.length > 0) {
+            return {
+                scenarios: capturedScenarios,
+                capturePath
+            };
+        }
+    }
+
+    return {
+        scenarios: syntheticScenarios,
+        capturePath: null
+    };
+}
+
+function printOutcomeSummary(scenarios: Scenario[]): void {
+    const labels = new Map<string, number>();
+    for (const scenario of scenarios) {
+        const label = scenario.outcomeLabel || 'synthetic';
+        labels.set(label, (labels.get(label) || 0) + 1);
+    }
+
+    if (labels.size <= 1 && labels.has('synthetic')) {
+        return;
+    }
+
+    console.log('Outcome labels');
+    for (const [label, count] of [...labels.entries()].sort((a, b) => b[1] - a[1])) {
+        console.log(`  ${label} -> ${count}`);
+    }
+    console.log('');
+}
+
 function main(): void {
+    const { scenarios, capturePath } = resolveReplayScenarios();
     const resultsByStrategy = new Map<StrategyName, RunResult[]>();
     for (const strategy of STRATEGIES) {
         resultsByStrategy.set(
@@ -783,8 +836,13 @@ function main(): void {
         );
     }
 
-    console.log('Paper Replay - Conservative vs Aggressive vs Experimental');
-    console.log('');
+    if (capturePath) {
+        console.log(`Paper Replay - Captured Launches (${capturePath})`);
+        printOutcomeSummary(scenarios);
+    } else {
+        console.log('Paper Replay - Conservative vs Aggressive vs Experimental');
+        console.log('');
+    }
 
     for (let index = 0; index < scenarios.length; index++) {
         const scenario = scenarios[index];

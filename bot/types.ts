@@ -62,6 +62,10 @@ export interface RunnerConfig {
     healthLogIntervalMs: number;
     pricePollIntervalMs: number;
     maxTrackedMints: number;
+    maxConsecutiveLosses: number;
+    maxDailyLossSol: number;
+    riskFloorMultiplier: number;
+    riskCeilingMultiplier: number;
     statePath: string;
     advanced: AdvancedConfig;
     defaultExit: ManagedExitStrategy;

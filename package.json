@@ -11,6 +11,7 @@
     "bot:start": "npm run bot:build && node dist/bot/bot/runner.js",
     "bot:wallet": "npm run bot:build && node dist/bot/bot/wallet.js",
     "paper:replay": "npm run bot:build && node dist/bot/bot/paperReplay.js",
+    "paper:captured": "npm run bot:build && node dist/bot/bot/paperReplay.js --latest-capture",
     "paper:capture": "npm run bot:build && node dist/bot/bot/captureFeed.js"
   },
   "dependencies": {

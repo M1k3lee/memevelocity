@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { clearTokenBalanceCache, createConnection, getBalance, getPumpData, getTokenBalance } from '../utils/solanaManager';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { detectRug } from '../utils/rugDetector';
-import { analyzeEnhanced } from '../utils/enhancedAnalyzer';
+import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { clearMarketSnapshot, getMarketSnapshot, recordMarketEvent } from '../utils/marketData';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
 import { mergeTokenData, normalizeTokenEvent } from '../utils/tokenFeed';
@@ -75,6 +75,7 @@ class PumpFunRunner {
         this.log(`Runner booting in ${this.config.dryRun ? 'dry-run' : 'live'} mode`);
         this.log(`Wallet: ${this.config.walletAddress || 'not configured'} | Balance: ${balance === null ? 'unavailable' : `${balance.toFixed(4)} SOL`}`);
         this.log(`Strategy: ${this.config.mode} | Trade amount: ${this.config.amountSol} SOL | Max trades: ${this.config.maxConcurrentTrades}`);
+        this.log(`Risk rails: max ${this.config.maxConsecutiveLosses} consecutive losses, daily stop ${this.config.maxDailyLossSol.toFixed(4)} SOL, size band ${this.config.riskFloorMultiplier.toFixed(2)}x-${this.config.riskCeilingMultiplier.toFixed(2)}x`);
 
         await this.reconcileOpenPositions();
         this.startLoops();
@@ -97,7 +98,9 @@ class PumpFunRunner {
         }, this.config.pricePollIntervalMs);
 
         this.healthLoop = setInterval(() => {
-            this.log(`Health: ${this.state.openPositions.length} open position(s), realized ${this.state.totals.realizedProfitSol.toFixed(4)} SOL`);
+            const dailyRealized = this.getDailyRealizedPnl();
+            const lossStreak = this.getLossStreak();
+            this.log(`Health: ${this.state.openPositions.length} open position(s), realized ${this.state.totals.realizedProfitSol.toFixed(4)} SOL, daily ${dailyRealized.toFixed(4)} SOL, loss streak ${lossStreak}`);
         }, this.config.healthLogIntervalMs);
     }
 
@@ -238,7 +241,7 @@ class PumpFunRunner {
                 return;
             }
 
-            const amountSol = await this.getTradeSize(analysis.score);
+            const amountSol = await this.getTradeSize(analysis);
             if (amountSol <= 0) return;
 
             const entryDecision = evaluateLiveEntryGuard(this.config.mode, token, analysis, amountSol);
@@ -258,7 +261,7 @@ class PumpFunRunner {
                 return;
             }
 
-            const exitStrategy = this.buildExitStrategy(token, analysis.score);
+            const exitStrategy = this.buildExitStrategy(token, analysis);
             await this.executeBuy(token, amountSol, exitStrategy, analysis.score, analysis.riskLevel, analysis.reasons);
         } catch (error: any) {
             this.log(`Analysis error for ${token.symbol}: ${error.message}`);
@@ -267,17 +270,68 @@ class PumpFunRunner {
         }
     }
 
-    private async getTradeSize(score: number): Promise<number> {
-        let amount = this.config.amountSol;
+    private getUtcDayStart(now: number = Date.now()): number {
+        const current = new Date(now);
+        return Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate());
+    }
+
+    private getDailyRealizedPnl(now: number = Date.now()): number {
+        const dayStart = this.getUtcDayStart(now);
+        return this.state.closedPositions
+            .filter((position) => (position.closeTime || 0) >= dayStart)
+            .reduce((sum, position) => sum + (position.realizedProfitSol || 0), 0);
+    }
+
+    private getLossStreak(): number {
+        let lossStreak = 0;
+        for (const position of this.state.closedPositions) {
+            if ((position.realizedProfitSol || 0) < 0) {
+                lossStreak += 1;
+            } else {
+                break;
+            }
+        }
+        return lossStreak;
+    }
+
+    private getRiskAdjustedSizeMultiplier(analysis: EnhancedAnalysis): number {
+        let multiplier = 1;
 
         if (this.config.dynamicSizing) {
-            if (score >= 90) amount *= 1.5;
-            else if (score >= 80) amount *= 1.25;
-            else if (score < 70) amount *= 0.75;
+            if (analysis.score >= 90) multiplier *= 1.18;
+            else if (analysis.score >= 80) multiplier *= 1.08;
+            else if (analysis.score < 72) multiplier *= 0.82;
         }
 
+        if (analysis.metrics.largestTraderVolumeShare > 0.24) multiplier *= 0.86;
+        if (analysis.metrics.topTwoTraderVolumeShare > 0.46) multiplier *= 0.9;
+        if (analysis.metrics.repeatTraderRatio > 0.35) multiplier *= 0.8;
+        if (analysis.metrics.creatorVolumeShare > 0.16) multiplier *= 0.88;
+        if (analysis.metrics.launchFlags.incentiveMode) multiplier *= 0.7;
+
+        const cleanContinuation =
+            analysis.metrics.buyPressure >= 0.72 &&
+            analysis.metrics.uniqueTraderCount >= 8 &&
+            analysis.metrics.repeatTraderRatio <= 0.28 &&
+            analysis.metrics.topTwoTraderVolumeShare <= 0.42;
+        if (cleanContinuation) {
+            multiplier *= 1.08;
+        }
+
+        return Math.max(this.config.riskFloorMultiplier, Math.min(this.config.riskCeilingMultiplier, multiplier));
+    }
+
+    private async getTradeSize(analysis: EnhancedAnalysis): Promise<number> {
+        if (analysis.metrics.launchFlags.hardBlock) {
+            return 0;
+        }
+
+        let amount = this.config.amountSol * this.getRiskAdjustedSizeMultiplier(analysis);
+
+        amount = Number(amount.toFixed(4));
+
         if (!this.wallet) {
-            return Number(amount.toFixed(4));
+            return amount;
         }
 
         const balance = await getBalance(this.wallet.publicKey.toBase58(), this.connection);
@@ -294,6 +348,13 @@ class PumpFunRunner {
             return null;
         }
 
+        const now = Date.now();
+        const dailyRealizedPnl = this.getDailyRealizedPnl(now);
+        if (dailyRealizedPnl <= -Math.abs(this.config.maxDailyLossSol)) {
+            const nextResetMs = (this.getUtcDayStart(now) + 86_400_000) - now;
+            return `daily loss rail active for ${Math.ceil(nextResetMs / 60000)}m (${dailyRealizedPnl.toFixed(4)} SOL <= -${this.config.maxDailyLossSol.toFixed(4)} SOL)`;
+        }
+
         const isSelectiveMode =
             this.config.mode === 'god' ||
             this.config.mode === 'runner' ||
@@ -301,8 +362,8 @@ class PumpFunRunner {
             this.config.mode === 'medium';
         const pauseWindowMs = isSelectiveMode ? 15 * 60 * 1000 : 8 * 60 * 1000;
         const recentClosed = this.state.closedPositions
-            .filter((position) => position.txId && position.closeTime && (Date.now() - (position.closeTime || 0)) < pauseWindowMs)
-            .slice(0, 3);
+            .filter((position) => position.txId && position.closeTime && (now - (position.closeTime || 0)) < pauseWindowMs)
+            .slice(0, Math.max(3, this.config.maxConsecutiveLosses + 1));
 
         let lossStreak = 0;
         let cumulativeLoss = 0;
@@ -323,14 +384,14 @@ class PumpFunRunner {
             ? Math.max(0.003, this.config.amountSol * 0.35)
             : Math.max(0.0035, this.config.amountSol * 0.5);
         const trippedBreaker = isSelectiveMode
-            ? (lossStreak >= 2 || cumulativeLoss <= -thresholdLoss)
-            : (lossStreak >= 3 || cumulativeLoss <= -thresholdLoss);
+            ? (lossStreak >= this.config.maxConsecutiveLosses || cumulativeLoss <= -thresholdLoss)
+            : (lossStreak >= this.config.maxConsecutiveLosses || cumulativeLoss <= -thresholdLoss);
         if (!trippedBreaker) {
             return null;
         }
 
         const latestLossTime = recentClosed[0]?.closeTime || 0;
-        const remainingMs = pauseWindowMs - (Date.now() - latestLossTime);
+        const remainingMs = pauseWindowMs - (now - latestLossTime);
         if (remainingMs <= 0) {
             return null;
         }
@@ -399,9 +460,10 @@ class PumpFunRunner {
         return null;
     }
 
-    private buildExitStrategy(token: TokenData, score: number): ManagedExitStrategy {
+    private buildExitStrategy(token: TokenData, analysis: EnhancedAnalysis): ManagedExitStrategy {
         const snapshot = getMarketSnapshot(token.mint);
         const exit: ManagedExitStrategy = { ...this.config.defaultExit };
+        const score = analysis.score;
 
         if (snapshot?.buyPressure && snapshot.buyPressure > 0.8) {
             exit.takeProfit += 5;
@@ -426,6 +488,23 @@ class PumpFunRunner {
             }
             if (exit.runnerMaxHoldTime) {
                 exit.runnerMaxHoldTime = Math.round(exit.runnerMaxHoldTime * 1.15);
+            }
+        }
+
+        if (
+            analysis.metrics.repeatTraderRatio > 0.32 ||
+            analysis.metrics.creatorVolumeShare > 0.14 ||
+            analysis.metrics.launchFlags.incentiveMode
+        ) {
+            exit.maxHoldTime = Math.max(18, Math.round(exit.maxHoldTime * 0.8));
+            if (exit.runnerMaxHoldTime) {
+                exit.runnerMaxHoldTime = Math.max(45, Math.round(exit.runnerMaxHoldTime * 0.7));
+            }
+            if (exit.runnerTrailingStopPercent !== undefined) {
+                exit.runnerTrailingStopPercent = Math.max(5, exit.runnerTrailingStopPercent - 2);
+            }
+            if (exit.fastKillLoss !== undefined) {
+                exit.fastKillLoss = Math.min(exit.fastKillLoss, 2.4);
             }
         }
 
