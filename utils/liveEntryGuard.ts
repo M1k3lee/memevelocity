@@ -144,61 +144,126 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     const buyPressure = snapshot?.buyPressure ?? 0;
     const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
     const netFlow = snapshot?.netFlowSol || 0;
+    const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || 0;
+    const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || 0;
+    const creatorVolumeShare = snapshot?.creatorVolumeShare || 0;
+    const creatorSellCount = snapshot?.creatorSellCount || 0;
 
-    if (sellCount > buyCount && age < 45) {
+    if (age > 60) {
         return {
             status: 'reject',
-            reason: `Early sell pressure (${sellCount} sells vs ${buyCount} buys)`
+            reason: `Probe window already passed (${age.toFixed(0)}s old)`
         };
     }
 
-    if (netFlow < -0.25 && age < 45) {
+    if (creatorSellCount > 0 && age <= 180) {
+        return {
+            status: 'reject',
+            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+        };
+    }
+
+    if (largestTraderVolumeShare > 0.46) {
+        return {
+            status: 'reject',
+            reason: `One wallet still dominates the probe tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (topTwoTraderVolumeShare > 0.68 && uniqueTraderCount < 8) {
+        return {
+            status: 'reject',
+            reason: `Too much early flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (creatorVolumeShare > 0.4 && age >= 12) {
+        return {
+            status: 'reject',
+            reason: `Creator-linked flow is too dominant for a probe (${(creatorVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (sellCount > Math.max(2, Math.floor(tradeCount * 0.5)) && age < 60) {
+        return {
+            status: 'reject',
+            reason: `Early sell pressure is too heavy for a probe (${sellCount}/${tradeCount} sells)`
+        };
+    }
+
+    if (netFlow < -0.15 && age < 50) {
         return {
             status: 'reject',
             reason: `Net flow turned negative too early (${netFlow.toFixed(2)} SOL)`
         };
     }
 
-    const hasSecondaryBuyer = uniqueTraderCount >= 2 && (tradeCount >= 1 || buyCount >= 1);
-    const hasStrongFlow =
-        buyCount >= 2 &&
-        tradeCount >= 2 &&
-        uniqueTraderCount >= 2 &&
-        buyPressure >= 0.6 &&
-        observedVolume >= 1.0;
-    const hasTapeConfirmation =
-        tradeCount >= 6 &&
+    if (tradeCount >= 3 && buyPressure < 0.54) {
+        return {
+            status: 'reject',
+            reason: `Buy pressure is too weak for an early probe (${(buyPressure * 100).toFixed(0)}%)`
+        };
+    }
+
+    const hasEarlyProbeFlow =
+        age <= 10 &&
+        buyCount >= 3 &&
+        tradeCount >= 3 &&
         uniqueTraderCount >= 3 &&
-        buyPressure >= 0.58 &&
-        observedVolume >= 1.2;
-    const hasCurveConfirmation =
-        observedVolume >= 0.6 &&
-        (uniqueTraderCount >= 2 || liquidityGrowth >= 1.0);
-    const hasFeedOnlyMomentum =
-        age <= 35 &&
-        tradeCount === 0 &&
-        liquidity >= 36 &&
-        liquidityGrowth >= 1.0 &&
-        momentum >= 1.25;
+        observedVolume >= 0.7 &&
+        buyPressure >= 0.62 &&
+        netFlow >= 0.45;
+    const hasShakeoutAbsorb =
+        sellCount >= 2 &&
+        buyCount >= 3 &&
+        tradeCount >= 6 &&
+        uniqueTraderCount >= 4 &&
+        observedVolume >= 1.0 &&
+        buyPressure >= 0.6 &&
+        netFlow >= 0.25;
+    const hasTapeConfirmation =
+        sellCount >= 2 &&
+        tradeCount >= 7 &&
+        uniqueTraderCount >= 5 &&
+        buyPressure >= 0.6 &&
+        observedVolume >= 1.2 &&
+        netFlow >= 0.35;
     const waitingOnSnapshot =
         age <= 40 &&
         tradeCount === 0 &&
         uniqueTraderCount <= 1 &&
         observedVolume <= 0.35 &&
         liquidityGrowth > 0.2;
+    const needsShakeoutConfirmation =
+        age >= 15 &&
+        observedVolume >= 0.8 &&
+        tradeCount >= 4 &&
+        sellCount === 0;
 
-    if (hasStrongFlow || hasTapeConfirmation || (hasSecondaryBuyer && hasCurveConfirmation) || hasFeedOnlyMomentum) {
+    if (needsShakeoutConfirmation) {
+        return age < 45
+            ? {
+                status: 'wait',
+                reason: `Waiting for the first probe shakeout (${tradeCount} trades, no sells yet)`
+            }
+            : {
+                status: 'reject',
+                reason: `Probe stayed too one-sided and never reset`
+            };
+    }
+
+    if (hasTapeConfirmation || hasShakeoutAbsorb || hasEarlyProbeFlow) {
         return { status: 'pass' };
     }
 
-    if (age < 12 || waitingOnSnapshot) {
+    if (age < 10 || waitingOnSnapshot) {
         return {
             status: 'wait',
             reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
         };
     }
 
-    if (age < 35 && (tradeCount > 0 || liquidityGrowth > 0.4)) {
+    if (age < 45 && (tradeCount > 0 || liquidityGrowth > 0.4)) {
         return {
             status: 'wait',
             reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`
@@ -211,7 +276,7 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     };
 }
 
-function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): EntryGuardDecision {
+function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amountSol: number): EntryGuardDecision {
     const snapshot = getMarketSnapshot(token.mint);
     const age = getTokenAgeSeconds(token);
     const liquidity = token.vSolInBondingCurve || 30;
@@ -223,33 +288,38 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): En
     const uniqueTraderCount = snapshot?.uniqueTraderCount || analysis.metrics.uniqueTraderCount || 0;
     const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
     const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
+    const netFlow = snapshot?.netFlowSol || 0;
+    const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || analysis.metrics.largestTraderVolumeShare || 0;
+    const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || analysis.metrics.topTwoTraderVolumeShare || 0;
+    const creatorVolumeShare = snapshot?.creatorVolumeShare || analysis.metrics.creatorVolumeShare || 0;
+    const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
+    const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
 
-    const strongFlowConfirmation =
+    if (age > 60) {
+        return {
+            status: 'reject',
+            reason: `Aggressive continuation window already passed (${age.toFixed(0)}s old)`
+        };
+    }
+
+    const continuationTape =
+        sellCount >= 2 &&
         buyCount >= 4 &&
-        tradeCount >= 6 &&
-        uniqueTraderCount >= 4 &&
-        observedVolume >= 1.4 &&
-        buyPressure >= 0.64;
-    const steadyTapeConfirmation =
-        tradeCount >= 20 &&
+        tradeCount >= 8 &&
+        uniqueTraderCount >= 5 &&
+        observedVolume >= 1.5 &&
+        buyPressure >= 0.6 &&
+        netFlow >= 0.3;
+    const strongContinuationTape =
+        sellCount >= 2 &&
+        tradeCount >= 10 &&
         uniqueTraderCount >= 6 &&
         observedVolume >= 1.8 &&
-        buyPressure >= 0.61;
-    const feedMomentumConfirmation =
-        age <= 45 &&
-        tradeCount >= 2 &&
-        uniqueTraderCount >= 2 &&
-        liquidityGrowth >= 1.0 &&
-        momentum >= 1.55 &&
-        buyPressure >= 0.55;
+        buyPressure >= 0.6 &&
+        netFlow >= 0.45;
     const curveReady =
-        (analysis.bondingCurveProgress >= 3 && analysis.bondingCurveProgress <= 16) ||
-        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
-    const deepLiquidityConfirmation =
-        analysis.marketCap >= 55 &&
-        observedVolume >= 1.5 &&
-        uniqueTraderCount >= 4 &&
-        (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
+        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 16) ||
+        (analysis.bondingCurveProgress >= 1.5 && liquidityGrowth >= 0.9);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -257,7 +327,35 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): En
         observedVolume <= 0.2 &&
         liquidityGrowth > 0.25;
 
-    if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 35)) {
+    if (creatorSellCount > 0 && age <= 180) {
+        return {
+            status: 'reject',
+            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+        };
+    }
+
+    if (largestTraderVolumeShare > 0.4) {
+        return {
+            status: 'reject',
+            reason: `One wallet still dominates the aggressive tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (topTwoTraderVolumeShare > 0.66 && uniqueTraderCount < 10) {
+        return {
+            status: 'reject',
+            reason: `Too much aggressive flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (creatorVolumeShare > 0.34 && age >= 12) {
+        return {
+            status: 'reject',
+            reason: `Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (waitingOnSnapshot && (analysis.marketCap >= 35 || liquidityGrowth >= 0.8)) {
         return {
             status: 'wait',
             reason: `Early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
@@ -271,22 +369,89 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis): En
         };
     }
 
-    if (buyPressure < 0.55 && tradeCount >= 4) {
+    if (tradeCount >= 4 && buyPressure < 0.56) {
         return {
             status: 'reject',
             reason: `Momentum faded before entry (${(buyPressure * 100).toFixed(0)}% buy pressure)`
         };
     }
 
-    if (!curveReady && !strongFlowConfirmation && !steadyTapeConfirmation && !deepLiquidityConfirmation && !feedMomentumConfirmation) {
-        return age < 75
+    if (impact > 1.8) {
+        return {
+            status: 'reject',
+            reason: `Entry would hit the curve too hard (${impact.toFixed(2)}% impact)`
+        };
+    }
+
+    if (liquidity < 34) {
+        return age < 55
             ? {
                 status: 'wait',
-                reason: `Needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
+                reason: `Aggressive mode still needs a deeper liquidity base (${liquidity.toFixed(2)} SOL)`
             }
             : {
                 status: 'reject',
-                reason: `Early flow stayed too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
+                reason: `Aggressive liquidity never built enough depth (${liquidity.toFixed(2)} SOL)`
+            };
+    }
+
+    const needsShakeoutConfirmation =
+        age >= 18 &&
+        observedVolume >= 1.2 &&
+        tradeCount >= 6 &&
+        sellCount < 2;
+    if (needsShakeoutConfirmation) {
+        return age < 70
+            ? {
+                status: 'wait',
+                reason: `Waiting for a second aggressive reset (${sellCount} sells, ${tradeCount} trades)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive setup never printed a clean second reset`
+            };
+    }
+
+    if (age >= 20 && buyPressure > 0.9 && sellCount < 1 && uniqueTraderCount < 7) {
+        return age < 55
+            ? {
+                status: 'wait',
+                reason: `Tape is still too one-sided for an aggressive continuation (${(buyPressure * 100).toFixed(0)}% buy pressure)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive launch stayed too coordinated and never reset`
+            };
+    }
+
+    if (netFlow <= 0 && age >= 25) {
+        return {
+            status: 'reject',
+            reason: `Net flow is no longer positive (${netFlow.toFixed(2)} SOL)`
+        };
+    }
+
+    if (!curveReady) {
+        return age < 75
+            ? {
+                status: 'wait',
+                reason: `Curve still needs to expand cleanly (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive curve never reached a clean continuation window (${analysis.bondingCurveProgress.toFixed(1)}%)`
+            };
+    }
+
+    if (!(continuationTape || strongContinuationTape)) {
+        return age < 75
+            ? {
+                status: 'wait',
+                reason: `Needs stronger continuation tape (${tradeCount} trades, ${sellCount} sells, ${(buyPressure * 100).toFixed(0)}% buy pressure)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive tape never confirmed clean continuation (${tradeCount} trades, ${sellCount} sells)`
             };
     }
 
@@ -305,12 +470,14 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
     const netFlow = snapshot?.netFlowSol || 0;
     const priceChangePercent = snapshot?.priceChangePercent || analysis.metrics.priceChangePercent || 0;
+    const bondingCurveProgress = analysis.bondingCurveProgress;
     const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || analysis.metrics.largestTraderVolumeShare || 0;
     const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || analysis.metrics.topTwoTraderVolumeShare || 0;
     const creatorVolumeShare = snapshot?.creatorVolumeShare || analysis.metrics.creatorVolumeShare || 0;
     const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
     const isGodMode = mode === 'god';
+    const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
 
     if (creatorSellCount > 0 && age <= 180) {
         return {
@@ -346,13 +513,76 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
-    const minimumTrades = isGodMode ? 8 : 6;
+    const hardExtendedReject =
+        isGodMode &&
+        (
+            age > 180 ||
+            bondingCurveProgress >= 18 ||
+            priceChangePercent >= 36 ||
+            tradeCount >= 110
+        );
+    const reclaimWatchTriggered =
+        isGodMode &&
+        !hardExtendedReject &&
+        (
+            priceChangePercent >= 14 ||
+            bondingCurveProgress >= 11 ||
+            tradeCount >= 26
+        );
+    const reclaimStructureReady =
+        reclaimWatchTriggered &&
+        age >= 18 &&
+        age <= 140 &&
+        sellCount >= 1 &&
+        tradeCount >= 8 &&
+        uniqueTraderCount >= 6 &&
+        observedVolume >= 1.25 &&
+        buyPressure >= 0.56 &&
+        buyPressure <= 0.92 &&
+        netFlow >= 0.28 &&
+        traderDiversity >= 0.42 &&
+        impact <= 1.8;
+    const reclaimLaneActive = reclaimWatchTriggered && reclaimStructureReady;
+
+    if (hardExtendedReject) {
+        return {
+            status: 'reject',
+            reason: `Launch is already too extended for conservative mode (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s)`
+        };
+    }
+
+    if (
+        isGodMode &&
+        age >= 110 &&
+        bondingCurveProgress < 6.5 &&
+        priceChangePercent < 18 &&
+        (observedVolume < 5 || netFlow < 3.6)
+    ) {
+        return {
+            status: 'reject',
+            reason: `Runner stayed too stale for conservative mode (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, age ${age.toFixed(0)}s)`
+        };
+    }
+
+    if (reclaimWatchTriggered && !reclaimLaneActive) {
+        return age < 140
+            ? {
+                status: 'wait',
+                reason: `Extended cleanly, but still waiting for a calmer reclaim (${tradeCount} trades, ${sellCount} sells, curve ${bondingCurveProgress.toFixed(1)}%)`
+            }
+            : {
+                status: 'reject',
+                reason: `Extended launch never settled into a conservative reclaim`
+            };
+    }
+
+    const minimumTrades = isGodMode ? (reclaimLaneActive ? 7 : 8) : 6;
     const minimumWallets = isGodMode ? 6 : 4;
-    const minimumVolume = isGodMode ? 1.25 : 1.0;
-    const minimumBuyPressure = isGodMode ? 0.6 : 0.57;
-    const maximumImpact = isGodMode ? 1.65 : 2.15;
-    const maxLargestTraderShare = isGodMode ? 0.3 : 0.35;
-    const maxTopTwoTraderShare = isGodMode ? 0.48 : 0.56;
+    const minimumVolume = isGodMode ? (reclaimLaneActive ? 1.15 : 1.25) : 1.0;
+    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.58 : 0.6) : 0.57;
+    const maximumImpact = isGodMode ? (reclaimLaneActive ? 1.8 : 1.65) : 2.15;
+    const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.38 : 0.3) : 0.35;
+    const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.56 : 0.48) : 0.56;
     const maxCreatorVolumeShare = isGodMode ? 0.24 : 0.3;
 
     if (largestTraderVolumeShare > maxLargestTraderShare) {
@@ -445,7 +675,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         topTwoTraderVolumeShare,
         creatorSellCount
     });
-    const scoreFloor = isGodMode ? 78 : 70;
+    const scoreFloor = isGodMode ? (reclaimLaneActive ? 74 : 78) : 70;
 
     if (score < scoreFloor) {
         return age < 95
@@ -471,12 +701,12 @@ export function evaluateLiveEntryGuard(
     analysis: EnhancedAnalysis,
     amountSol: number
 ): EntryGuardDecision {
-    if (mode === 'sniper' || mode === 'first' || mode === 'scalp') {
+    if (mode === 'sniper' || mode === 'first') {
         return evaluateSniperEntry(token);
     }
 
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high') {
-        return evaluateMomentumEntry(token, analysis);
+    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
+        return evaluateMomentumEntry(token, analysis, amountSol);
     }
 
     return evaluateRunnerEntry(mode, token, analysis, amountSol);

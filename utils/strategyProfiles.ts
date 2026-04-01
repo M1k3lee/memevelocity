@@ -64,13 +64,13 @@ export const STRATEGY_PROFILE_DEFINITIONS: StrategyProfileDefinition[] = [
         id: 'degen',
         label: 'Aggressive',
         subtitle: 'Earlier continuation entries',
-        description: 'Acts sooner than Balanced, but only after the tape confirms and exits much faster if follow-through dies.'
+        description: 'Takes earlier continuation setups after a real shakeout, with faster exits and tighter anti-rug filters.'
     },
     {
         id: 'sniper',
         label: 'Experimental',
         subtitle: 'Earliest entries, smallest size',
-        description: 'Use for paper testing or tiny size only. Launch behavior is still the least reliable.'
+        description: 'Structured launch probe mode. Tiny size only, multi-wallet flow required, and still best kept in paper testing first.'
     },
     {
         id: 'custom',
@@ -118,14 +118,14 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 dynamicSizing: true,
                 advanced: {
                     minLiquidity: 36,
-                    maxLiquidity: 110,
-                    minVolume: 1.4,
-                    minHolderCount: 14,
+                    maxLiquidity: 125,
+                    minVolume: 1.25,
+                    minHolderCount: 12,
                     maxTop10: 22,
                     maxDev: 3,
                     minBondingCurve: 1.5,
-                    maxBondingCurve: 12,
-                    minVelocity: 0.8,
+                    maxBondingCurve: 14,
+                    minVelocity: 0.7,
                     rugCheckStrictness: 'strict',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -159,49 +159,49 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'degen':
             return {
                 mode: 'degen',
-                amount: 0.004,
-                takeProfit: 16,
-                stopLoss: 5,
+                amount: 0.0025,
+                takeProfit: 8,
+                stopLoss: 4,
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 12,
-                    maxLiquidity: 180,
-                    minVolume: 1.2,
+                    minLiquidity: 34,
+                    maxLiquidity: 140,
+                    minVolume: 1.4,
                     minHolderCount: 8,
-                    maxTop10: 38,
+                    maxTop10: 34,
                     maxDev: 6,
-                    minBondingCurve: 1.25,
-                    maxBondingCurve: 18,
-                    minVelocity: 0.45,
+                    minBondingCurve: 2,
+                    maxBondingCurve: 14,
+                    minVelocity: 0.6,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
-                    slippage: 16
+                    slippage: 12
                 }
             };
         case 'sniper':
             return {
                 mode: 'sniper',
-                amount: 0.004,
-                takeProfit: 30,
-                stopLoss: 12,
+                amount: 0.002,
+                takeProfit: 8,
+                stopLoss: 4,
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 2,
-                    maxLiquidity: 150,
-                    minVolume: 0,
-                    minHolderCount: 0,
-                    maxTop10: 65,
-                    maxDev: 20,
-                    minBondingCurve: 0,
-                    maxBondingCurve: 8,
-                    minVelocity: 0,
+                    minLiquidity: 31.2,
+                    maxLiquidity: 70,
+                    minVolume: 0.75,
+                    minHolderCount: 3,
+                    maxTop10: 50,
+                    maxDev: 12,
+                    minBondingCurve: 0.15,
+                    maxBondingCurve: 4.5,
+                    minVelocity: 0.2,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
-                    avoidSnipers: false,
-                    slippage: 20
+                    avoidSnipers: true,
+                    slippage: 12
                 }
             };
         case 'custom':

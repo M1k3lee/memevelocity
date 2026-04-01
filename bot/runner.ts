@@ -367,13 +367,21 @@ class PumpFunRunner {
             this.config.mode === 'runner' ||
             this.config.mode === 'safe' ||
             this.config.mode === 'medium';
+        const isProbeMode =
+            this.config.mode === 'sniper' ||
+            this.config.mode === 'first';
+        const isAggressiveMode =
+            this.config.mode === 'degen' ||
+            this.config.mode === 'velocity' ||
+            this.config.mode === 'high' ||
+            this.config.mode === 'scalp';
         const liquidityDeltaPercent = setupLiquidity > 0 ? ((freshLiquidity - setupLiquidity) / setupLiquidity) * 100 : 0;
         const curveDelta = freshCurve - setupCurve;
         const priceDeltaPercent = setupPrice > 0 && freshPrice > 0 ? ((freshPrice - setupPrice) / setupPrice) * 100 : 0;
-        const minBuyPressure = isSelectiveMode ? 0.57 : 0.52;
-        const maxLiquidityDrop = isSelectiveMode ? -4 : -6;
-        const maxCurveRollback = isSelectiveMode ? -0.8 : -1.2;
-        const maxPriceFade = isSelectiveMode ? -1.8 : -2.5;
+        const minBuyPressure = isSelectiveMode ? 0.57 : (isProbeMode ? 0.56 : (isAggressiveMode ? 0.55 : 0.52));
+        const maxLiquidityDrop = isSelectiveMode ? -4 : (isProbeMode ? -3.8 : (isAggressiveMode ? -4.5 : -6));
+        const maxCurveRollback = isSelectiveMode ? -0.8 : (isProbeMode ? -0.7 : (isAggressiveMode ? -0.9 : -1.2));
+        const maxPriceFade = isSelectiveMode ? -1.8 : (isProbeMode ? -1.4 : (isAggressiveMode ? -2.0 : -2.5));
 
         if (
             liquidityDeltaPercent < maxLiquidityDrop ||
@@ -421,8 +429,12 @@ class PumpFunRunner {
             }
         }
 
-        if (this.config.mode === 'sniper' || this.config.mode === 'first' || this.config.mode === 'scalp') {
-            exit.maxHoldTime = Math.min(exit.maxHoldTime, 90);
+        if (this.config.mode === 'sniper' || this.config.mode === 'first') {
+            exit.maxHoldTime = Math.min(exit.maxHoldTime, 45);
+        }
+
+        if (this.config.mode === 'degen' || this.config.mode === 'velocity' || this.config.mode === 'high' || this.config.mode === 'scalp') {
+            exit.maxHoldTime = Math.min(exit.maxHoldTime, 70);
         }
 
         return exit;

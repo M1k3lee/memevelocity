@@ -23,8 +23,6 @@ import type { TokenData } from '../types/token';
 
 const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000;
 const PUMP_CURVE_SALE_TOKENS = 793_100_000;
-const TRADE_AMOUNT_SOL = 0.006;
-const BUY_SLIPPAGE_PERCENT = 12;
 
 const LEGACY_EXIT: ManagedExitStrategy = {
     takeProfit: 30,
@@ -72,6 +70,52 @@ const STRICT_EXIT: ManagedExitStrategy = {
     runnerTimeExitFloor: 6
 };
 
+const AGGRESSIVE_EXIT: ManagedExitStrategy = {
+    takeProfit: 8,
+    takeProfit2: 14,
+    stopLoss: 4,
+    maxHoldTime: 40,
+    trailingStop: false,
+    fastKillLoss: 2.2,
+    fastKillSeconds: 5,
+    givebackPeakTrigger: 3.2,
+    givebackFloor: 0.2,
+    givebackSeconds: 6,
+    stagnationSeconds: 10,
+    stagnationFloor: -0.5,
+    tp1SellPercent: 82,
+    tp2SellPercent: 8,
+    postTp1FloorPercent: 1,
+    postTp2FloorPercent: 3,
+    runnerMaxHoldTime: 90,
+    runnerTrailingStopPercent: 6,
+    runnerActivationProfit: 8,
+    runnerTimeExitFloor: 2
+};
+
+const PROBE_EXIT: ManagedExitStrategy = {
+    takeProfit: 8,
+    takeProfit2: 14,
+    stopLoss: 4,
+    maxHoldTime: 30,
+    trailingStop: false,
+    fastKillLoss: 2.2,
+    fastKillSeconds: 4,
+    givebackPeakTrigger: 3.2,
+    givebackFloor: 0.4,
+    givebackSeconds: 7,
+    stagnationSeconds: 12,
+    stagnationFloor: -0.5,
+    tp1SellPercent: 85,
+    tp2SellPercent: 10,
+    postTp1FloorPercent: 1.2,
+    postTp2FloorPercent: 4,
+    runnerMaxHoldTime: 90,
+    runnerTrailingStopPercent: 8,
+    runnerActivationProfit: 8,
+    runnerTimeExitFloor: 2
+};
+
 type ScenarioEvent = {
     t: number;
     txType: TokenData['txType'];
@@ -105,7 +149,17 @@ type Position = {
     entryAgeSeconds: number;
 };
 
-type StrategyName = 'legacy' | 'strict';
+type StrategyName = 'legacy' | 'strict' | 'aggressive' | 'probe';
+
+type StrategyConfig = {
+    name: StrategyName;
+    label: string;
+    amountSol: number;
+    buySlippagePercent: number;
+    exitStrategy: ManagedExitStrategy;
+    guardMode?: 'god' | 'degen' | 'sniper';
+    useLegacyEntry?: boolean;
+};
 
 type RunResult = {
     strategy: StrategyName;
@@ -114,6 +168,41 @@ type RunResult = {
     realizedPnlSol: number;
     closeReason: string;
 };
+
+const STRATEGIES: StrategyConfig[] = [
+    {
+        name: 'legacy',
+        label: 'legacy',
+        amountSol: 0.006,
+        buySlippagePercent: 12,
+        exitStrategy: LEGACY_EXIT,
+        useLegacyEntry: true
+    },
+    {
+        name: 'strict',
+        label: 'strict',
+        amountSol: 0.006,
+        buySlippagePercent: 12,
+        exitStrategy: STRICT_EXIT,
+        guardMode: 'god'
+    },
+    {
+        name: 'aggressive',
+        label: 'aggressive',
+        amountSol: 0.0025,
+        buySlippagePercent: 12,
+        exitStrategy: AGGRESSIVE_EXIT,
+        guardMode: 'degen'
+    },
+    {
+        name: 'probe',
+        label: 'probe',
+        amountSol: 0.002,
+        buySlippagePercent: 12,
+        exitStrategy: PROBE_EXIT,
+        guardMode: 'sniper'
+    }
+];
 
 function vTokensFromProgress(progress: number): number {
     return Math.max(1, PUMP_INITIAL_VIRTUAL_TOKENS - ((progress / 100) * PUMP_CURVE_SALE_TOKENS));
@@ -432,6 +521,15 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
     return {};
 }
 
+function getStrategyConfig(strategy: StrategyName): StrategyConfig {
+    const config = STRATEGIES.find((item) => item.name === strategy);
+    if (!config) {
+        throw new Error(`Unknown replay strategy: ${strategy}`);
+    }
+
+    return config;
+}
+
 function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     clearAllMarketSnapshots();
 
@@ -439,8 +537,10 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     const replayStart = originalDateNow();
     const launchTime = replayStart;
     const mint = `${scenario.id}-mint`;
-    const exitStrategy = strategy === 'legacy' ? LEGACY_EXIT : STRICT_EXIT;
+    const strategyConfig = getStrategyConfig(strategy);
+    const exitStrategy = strategyConfig.exitStrategy;
     let position: Position | null = null;
+    let entryAgeSeconds: number | undefined;
     let realizedPnlSol = 0;
     let closeReason = 'no-entry';
 
@@ -455,24 +555,24 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
 
             if (!position) {
                 const analysis = buildAnalysis(token, scenario.quality);
-                const shouldEnter = strategy === 'legacy'
-                    ? evaluateLegacyRunnerEntry(token, analysis, TRADE_AMOUNT_SOL)
-                    : evaluateLiveEntryGuard('god', token, analysis, TRADE_AMOUNT_SOL).status === 'pass';
+                const shouldEnter = strategyConfig.useLegacyEntry
+                    ? evaluateLegacyRunnerEntry(token, analysis, strategyConfig.amountSol)
+                    : evaluateLiveEntryGuard(strategyConfig.guardMode || 'god', token, analysis, strategyConfig.amountSol).status === 'pass';
 
                 if (shouldEnter && price > 0) {
                     const buyExecution = estimatePaperBuyExecution({
                         observedPrice: price,
-                        amountSol: TRADE_AMOUNT_SOL,
-                        requestedSlippagePercent: BUY_SLIPPAGE_PERCENT,
+                        amountSol: strategyConfig.amountSol,
+                        requestedSlippagePercent: strategyConfig.buySlippagePercent,
                         exitStrategy
                     });
-                    const tradeableSol = TRADE_AMOUNT_SOL - PAPER_TOKEN_ACCOUNT_RENT_SOL;
+                    const tradeableSol = strategyConfig.amountSol - PAPER_TOKEN_ACCOUNT_RENT_SOL;
                     const amountTokens = tradeableSol / buyExecution.fillPrice;
 
                     position = {
                         buyPrice: buyExecution.fillPrice,
                         amountTokens,
-                        amountSolPaid: TRADE_AMOUNT_SOL + buyExecution.networkFeeSol,
+                        amountSolPaid: strategyConfig.amountSol + buyExecution.networkFeeSol,
                         currentPrice: buyExecution.fillPrice,
                         highestPrice: buyExecution.fillPrice,
                         buyTime: now,
@@ -480,6 +580,7 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
                         exitStrategy,
                         entryAgeSeconds: event.t
                     };
+                    entryAgeSeconds = event.t;
                     closeReason = 'open';
                 }
             }
@@ -513,7 +614,7 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     return {
         strategy,
         entered: closeReason !== 'no-entry',
-        entryAgeSeconds: position?.entryAgeSeconds,
+        entryAgeSeconds,
         realizedPnlSol,
         closeReason
     };
@@ -633,6 +734,39 @@ const scenarios: Scenario[] = [
             { t: 105, txType: 'sell', trader: 'w9', liquiditySol: 31.95, progress: 2.6 },
             { t: 160, txType: 'sell', trader: 'w10', liquiditySol: 31.55, progress: 2.1 }
         ]
+    },
+    {
+        id: 'probepop',
+        description: 'Multi-wallet early flow prints, a small shakeout hits, then the launch extends just enough for probe exits.',
+        creator: 'creator-probepop',
+        quality: { holderCount: 20, deployerHoldings: 2.7, top10Concentration: 18 },
+        events: [
+            { t: 0, txType: 'create', trader: 'creator-probepop', liquiditySol: 30.24, progress: 0.3, initialBuy: 0.24 },
+            { t: 4, txType: 'buy', trader: 'w1', liquiditySol: 30.58, progress: 0.7 },
+            { t: 8, txType: 'buy', trader: 'w2', liquiditySol: 30.95, progress: 1.2 },
+            { t: 11, txType: 'buy', trader: 'w3', liquiditySol: 31.28, progress: 1.6 },
+            { t: 14, txType: 'sell', trader: 'w4', liquiditySol: 31.08, progress: 1.4 },
+            { t: 18, txType: 'buy', trader: 'w5', liquiditySol: 31.85, progress: 2.3 },
+            { t: 24, txType: 'buy', trader: 'w6', liquiditySol: 32.65, progress: 3.3 },
+            { t: 33, txType: 'sell', trader: 'w7', liquiditySol: 32.38, progress: 3.0 },
+            { t: 42, txType: 'buy', trader: 'w8', liquiditySol: 33.82, progress: 4.7 },
+            { t: 60, txType: 'sell', trader: 'w9', liquiditySol: 33.05, progress: 3.8 }
+        ]
+    },
+    {
+        id: 'probetrap',
+        description: 'Early prints look busy, but the tape is concentrated and creator selling starts before any real continuation.',
+        creator: 'creator-probetrap',
+        quality: { holderCount: 14, deployerHoldings: 4.2, top10Concentration: 27 },
+        events: [
+            { t: 0, txType: 'create', trader: 'creator-probetrap', liquiditySol: 30.22, progress: 0.2, initialBuy: 0.22 },
+            { t: 5, txType: 'buy', trader: 'whale-1', liquiditySol: 30.82, progress: 0.9 },
+            { t: 8, txType: 'buy', trader: 'whale-1', liquiditySol: 31.46, progress: 1.7 },
+            { t: 11, txType: 'buy', trader: 'whale-2', liquiditySol: 32.02, progress: 2.5 },
+            { t: 14, txType: 'sell', trader: 'creator-probetrap', liquiditySol: 31.15, progress: 1.4 },
+            { t: 18, txType: 'sell', trader: 'whale-1', liquiditySol: 30.55, progress: 0.7 },
+            { t: 25, txType: 'sell', trader: 'whale-2', liquiditySol: 30.08, progress: 0.1 }
+        ]
     }
 ];
 
@@ -641,33 +775,38 @@ function formatSol(value: number): string {
 }
 
 function main(): void {
-    const strictResults = scenarios.map((scenario) => runScenario('strict', scenario));
-    const legacyResults = scenarios.map((scenario) => runScenario('legacy', scenario));
+    const resultsByStrategy = new Map<StrategyName, RunResult[]>();
+    for (const strategy of STRATEGIES) {
+        resultsByStrategy.set(
+            strategy.name,
+            scenarios.map((scenario) => runScenario(strategy.name, scenario))
+        );
+    }
 
-    console.log('Paper Replay - Conservative Runner Comparison');
+    console.log('Paper Replay - Conservative vs Aggressive vs Experimental');
     console.log('');
 
     for (let index = 0; index < scenarios.length; index++) {
         const scenario = scenarios[index];
-        const legacy = legacyResults[index];
-        const strict = strictResults[index];
 
         console.log(`${scenario.id}: ${scenario.description}`);
-        console.log(`  legacy -> entered=${legacy.entered} pnl=${formatSol(legacy.realizedPnlSol)} close=${legacy.closeReason}`);
-        console.log(`  strict -> entered=${strict.entered} pnl=${formatSol(strict.realizedPnlSol)} close=${strict.closeReason}`);
+        for (const strategy of STRATEGIES) {
+            const result = resultsByStrategy.get(strategy.name)?.[index];
+            if (!result) continue;
+            const entryText = result.entered && result.entryAgeSeconds !== undefined ? ` entry=${result.entryAgeSeconds}s` : '';
+            console.log(`  ${strategy.label} -> entered=${result.entered}${entryText} pnl=${formatSol(result.realizedPnlSol)} close=${result.closeReason}`);
+        }
     }
-
-    const legacyTotal = legacyResults.reduce((sum, result) => sum + result.realizedPnlSol, 0);
-    const strictTotal = strictResults.reduce((sum, result) => sum + result.realizedPnlSol, 0);
-    const legacyTrades = legacyResults.filter((result) => result.entered).length;
-    const strictTrades = strictResults.filter((result) => result.entered).length;
-    const legacyWins = legacyResults.filter((result) => result.entered && result.realizedPnlSol > 0).length;
-    const strictWins = strictResults.filter((result) => result.entered && result.realizedPnlSol > 0).length;
 
     console.log('');
     console.log('Summary');
-    console.log(`  legacy -> trades=${legacyTrades} wins=${legacyWins} pnl=${formatSol(legacyTotal)}`);
-    console.log(`  strict -> trades=${strictTrades} wins=${strictWins} pnl=${formatSol(strictTotal)}`);
+    for (const strategy of STRATEGIES) {
+        const results = resultsByStrategy.get(strategy.name) || [];
+        const totalPnl = results.reduce((sum, result) => sum + result.realizedPnlSol, 0);
+        const trades = results.filter((result) => result.entered).length;
+        const wins = results.filter((result) => result.entered && result.realizedPnlSol > 0).length;
+        console.log(`  ${strategy.label} -> trades=${trades} wins=${wins} pnl=${formatSol(totalPnl)}`);
+    }
 }
 
 main();

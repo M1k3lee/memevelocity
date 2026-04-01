@@ -1,275 +1,167 @@
 import { Connection } from '@solana/web3.js';
-import { getPumpData } from './solanaManager';
+import type { EnhancedAnalysis } from './enhancedAnalyzer';
+import { evaluateLiveEntryGuard } from './liveEntryGuard';
+import { getMarketSnapshot } from './marketData';
+import { calculateBondingCurveProgress } from './pumpMath';
 import type { TokenData } from '../types/token';
-import { getTokenAgeSeconds } from './tokenTiming';
 
 export interface FirstBuyerSignal {
+    status: 'pass' | 'wait' | 'reject';
     shouldBuy: boolean;
-    confidence: number; // 0-100
+    confidence: number;
     reason: string;
-    entryTime: number; // Timestamp
+    entryTime: number;
     exitStrategy: {
-        timeBasedExit: number; // Seconds to hold (default 6)
-        momentumExit: boolean; // Exit when momentum detected
-        minHoldTime: number; // Minimum seconds before exit (e.g., 2)
-        takeProfit: number; // Percentage (2x target - sell 50%)
-        takeProfit2?: number; // Percentage (5x target - sell 30% more)
-        stopLoss: number; // Percentage
-        positionSize: number; // SOL amount based on confidence
+        timeBasedExit: number;
+        momentumExit: boolean;
+        minHoldTime: number;
+        takeProfit: number;
+        takeProfit2?: number;
+        stopLoss: number;
+        positionSize: number;
+    };
+}
+
+function buildFeedOnlyAnalysis(token: TokenData): EnhancedAnalysis {
+    const snapshot = getMarketSnapshot(token.mint);
+    const liquidity = token.vSolInBondingCurve || 30;
+    const liquidityGrowth = liquidity - 30;
+    const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
+    const age = token.createdAt ? Math.max(0, (Date.now() - token.createdAt) / 1000) : 0;
+
+    return {
+        score: 55,
+        riskLevel: 'high',
+        passed: false,
+        reasons: [],
+        warnings: [],
+        strengths: [],
+        bondingCurveProgress,
+        marketCap: liquidity,
+        tiers: {
+            tier0: 100,
+            tier1: 0,
+            tier2: 0,
+            tier3: 0,
+            tier4: 0,
+            totalScore: 275
+        },
+        metrics: {
+            holderCount: snapshot?.uniqueTraderCount || 0,
+            deployerHoldings: -1,
+            top10Concentration: 0,
+            observedVolume: snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth),
+            buyPressure: snapshot?.buyPressure ?? 0,
+            bondingCurveVelocity: age > 0 ? (bondingCurveProgress / age) * 60 : 0,
+            liquidityDepth: liquidity,
+            tradeCount: snapshot?.tradeCount || 0,
+            uniqueTraderCount: snapshot?.uniqueTraderCount || 0,
+            priceChangePercent: snapshot?.priceChangePercent || 0,
+            largestTraderVolumeShare: snapshot?.largestTraderVolumeShare || 0,
+            topTwoTraderVolumeShare: snapshot?.topTwoTraderVolumeShare || 0,
+            creatorVolumeShare: snapshot?.creatorVolumeShare || 0,
+            creatorBuyCount: snapshot?.creatorBuyCount || 0,
+            creatorSellCount: snapshot?.creatorSellCount || 0,
+            contractSecurity: {
+                freezeAuthority: true,
+                mintAuthority: true,
+                updateAuthority: true
+            }
+        }
+    };
+}
+
+function buildDefaultExit(positionSize: number = 0.002): FirstBuyerSignal['exitStrategy'] {
+    return {
+        timeBasedExit: 30,
+        momentumExit: false,
+        minHoldTime: 5,
+        takeProfit: 8,
+        takeProfit2: 14,
+        stopLoss: 4,
+        positionSize
     };
 }
 
 /**
- * First Buyer Mode - Buy immediately, sell after 6 seconds or when momentum detected
- * Strategy: Be first to buy, profit from early pump, exit before rug
+ * Experimental probe mode.
+ * This is no longer a literal first-buyer entry. It waits for a tiny amount of
+ * real launch flow before allowing a very small, fast probe.
  */
 export async function analyzeFirstBuyer(
     token: TokenData,
-    connection: Connection,
-    previousData?: { liquidity: number; timestamp: number }
+    _connection: Connection,
+    _previousData?: { liquidity: number; timestamp: number }
 ): Promise<FirstBuyerSignal> {
-    try {
-        const currentData = await getPumpData(token.mint, connection);
-        if (!currentData) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: 'Token not found or RPC error',
-                entryTime: Date.now(),
-                exitStrategy: {
-                    timeBasedExit: 6,
-                    momentumExit: true,
-                    minHoldTime: 3,
-                    takeProfit: 30,
-                    stopLoss: 10,
-                    positionSize: 0.01
-                }
-            };
-        }
+    const analysis = buildFeedOnlyAnalysis(token);
+    const snapshot = getMarketSnapshot(token.mint);
+    const observedVolume = snapshot?.observedVolumeSol || 0;
+    const tradeCount = snapshot?.tradeCount || 0;
+    const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+    const sellCount = snapshot?.sellCount || 0;
+    const buyPressure = snapshot?.buyPressure ?? 0;
+    const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || 0;
 
-        const age = getTokenAgeSeconds(token);
-        const liquidity = currentData.vSolInBondingCurve;
-        const initialLiquidity = 30; // Pump.fun starts at 30 SOL
-        const liquidityGrowth = liquidity - initialLiquidity;
+    const basePositionSize =
+        tradeCount >= 6 && uniqueTraderCount >= 4 && observedVolume >= 1
+            ? 0.0025
+            : 0.002;
 
-        // Calculate momentum (liquidity growth rate)
-        let momentum = 0;
-        if (previousData && age > 0) {
-            const liquidityChange = liquidity - previousData.liquidity;
-            const timeDiff = (Date.now() - previousData.timestamp) / 1000;
-            momentum = timeDiff > 0 ? (liquidityChange / timeDiff) * 60 : 0; // SOL per minute
-        } else {
-            momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
-        }
-
-        // === FIRST BUYER CRITERIA ===
-        // Must be VERY early (within 10 seconds ideally)
-        // Must have some initial activity (dev buy or first buyers)
-
-        let confidence = 0;
-        let reason = '';
-        let shouldBuy = false;
-
-        // REJECT if too old (missed the window)
-        if (age > 15) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: `Too late - token is ${age.toFixed(1)}s old (need <15s)`,
-                entryTime: Date.now(),
-                exitStrategy: {
-                    timeBasedExit: 6,
-                    momentumExit: true,
-                    minHoldTime: 3,
-                    takeProfit: 30,
-                    stopLoss: 10,
-                    positionSize: 0.01
-                }
-            };
-        }
-
-        // REJECT if liquidity is draining (instant rug)
-        if (liquidityGrowth < -1) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: '🚨 Liquidity draining - instant rug',
-                entryTime: Date.now(),
-                exitStrategy: {
-                    timeBasedExit: 6,
-                    momentumExit: true,
-                    minHoldTime: 3,
-                    takeProfit: 30,
-                    stopLoss: 10,
-                    positionSize: 0.01
-                }
-            };
-        }
-
-        // === ENTRY SIGNALS ===
-
-        // PERFECT: Very early (<5s) with some activity
-        if (age < 5 && liquidityGrowth > 0.1) {
-            confidence = 90;
-            reason = `⚡ FIRST BUYER: ${age.toFixed(1)}s old, +${liquidityGrowth.toFixed(2)} SOL`;
-            shouldBuy = true;
-        }
-        // GOOD: Early (<10s) with activity
-        else if (age < 10 && liquidityGrowth > 0.2) {
-            confidence = 75;
-            reason = `⚡ EARLY BUYER: ${age.toFixed(1)}s old, +${liquidityGrowth.toFixed(2)} SOL`;
-            shouldBuy = true;
-        }
-        // OKAY: Still early (<15s) with decent activity
-        else if (age < 15 && liquidityGrowth > 0.5) {
-            confidence = 60;
-            reason = `⚡ QUICK BUY: ${age.toFixed(1)}s old, +${liquidityGrowth.toFixed(2)} SOL`;
-            shouldBuy = true;
-        }
-        // MOMENTUM DETECTED: Others are buying
-        else if (momentum > 1 && age < 12) {
-            confidence = 70;
-            reason = `📈 MOMENTUM: ${momentum.toFixed(1)} SOL/min detected`;
-            shouldBuy = true;
-        }
-        // TOO LATE or NO ACTIVITY
-        else {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: `No signal - Age: ${age.toFixed(1)}s, Growth: ${liquidityGrowth.toFixed(2)} SOL`,
-                entryTime: Date.now(),
-                exitStrategy: {
-                    timeBasedExit: 6,
-                    momentumExit: true,
-                    minHoldTime: 3,
-                    takeProfit: 30,
-                    stopLoss: 10,
-                    positionSize: 0.01
-                }
-            };
-        }
-
-        // === EXIT STRATEGY (Research-Based: Staged Profit Taking) ===
-        // Strategy: 50% at 2x, 30% at 5x, hold 20% for lottery
-        // Research: Never allocate >0.5 SOL to single unknown token
-        
-        // Position sizing based on confidence (research-based)
-        let positionSize = 0.01; // Default small position
-        if (confidence >= 90) {
-            positionSize = 0.05; // High confidence: up to 0.05 SOL
-        } else if (confidence >= 75) {
-            positionSize = 0.03; // Good confidence: 0.03 SOL
-        } else if (confidence >= 60) {
-            positionSize = 0.02; // Moderate confidence: 0.02 SOL
-        }
-        // Cap at 0.05 SOL max (research: never >0.5 SOL, but for 6s trades we use smaller)
-        
-        let timeBasedExit = 6; // Default 6 seconds (research target: <2.5s detection-to-execution)
-        let takeProfit = 100; // 2x target (100% gain) - sell 50%
-        let takeProfit2 = 400; // 5x target (400% gain) - sell 30% more (hold 20% for lottery)
-        let stopLoss = 20; // Hard stop (research: exit if >20% loss)
-        let minHoldTime = 2; // Minimum 2 seconds (allow for execution latency)
-
-        // Adjust based on momentum and bonding curve position
-        if (momentum > 2) {
-            // Strong momentum - hold slightly longer for bigger gains
-            timeBasedExit = 8;
-            takeProfit = 150; // 2.5x target
-            takeProfit2 = 500; // 6x target
-            stopLoss = 20;
-        } else if (momentum > 1) {
-            // Good momentum - standard staged exits
-            timeBasedExit = 6;
-            takeProfit = 100; // 2x target
-            takeProfit2 = 400; // 5x target
-            stopLoss = 20;
-        } else {
-            // Weak momentum - exit faster, take profits early
-            timeBasedExit = 5;
-            takeProfit = 50; // 1.5x target (quick profit)
-            takeProfit2 = 200; // 3x target
-            stopLoss = 15;
-        }
-
-        // Very early entries (<3s) - ultra-fast exits (beat other bots)
-        if (age < 3) {
-            timeBasedExit = 4;
-            takeProfit = 30; // Quick 30% profit
-            takeProfit2 = 100; // 2x if it pumps
-            stopLoss = 12;
-            // Increase position slightly for ultra-early entries (higher risk/reward)
-            if (confidence >= 85) {
-                positionSize = Math.min(positionSize + 0.01, 0.05);
-            }
-        }
-        
-        // Check bonding curve progress - if already high, exit faster
-        const bondingCurveProgress = age > 0 ? (liquidityGrowth / 30) * 100 : 0;
-        if (bondingCurveProgress > 10) {
-            // Already past sweet spot, exit quickly
-            timeBasedExit = Math.min(timeBasedExit, 4);
-            takeProfit = Math.min(takeProfit, 50);
-        }
-
+    const guardDecision = evaluateLiveEntryGuard('first', token, analysis, basePositionSize);
+    if (guardDecision.status === 'reject') {
         return {
-            shouldBuy,
-            confidence,
-            reason,
-            entryTime: Date.now(),
-            exitStrategy: {
-                timeBasedExit,
-                momentumExit: true, // Exit when momentum detected
-                minHoldTime,
-                takeProfit,
-                takeProfit2,
-                stopLoss,
-                positionSize
-            }
-        };
-
-    } catch (error: any) {
-        // Handle rate limiting and RPC errors gracefully
-        const errorMsg = error.message || String(error);
-        const isRateLimit = errorMsg.includes('429') || errorMsg.includes('Too Many Requests');
-        const isForbidden = errorMsg.includes('403') || errorMsg.includes('Forbidden');
-        
-        return {
+            status: 'reject',
             shouldBuy: false,
             confidence: 0,
-            reason: isRateLimit 
-                ? 'RPC rate limit - skipping' 
-                : isForbidden 
-                ? 'RPC access denied - check API key'
-                : `Analysis error: ${errorMsg.substring(0, 50)}`,
+            reason: guardDecision.reason || 'Probe rejected',
             entryTime: Date.now(),
-            exitStrategy: {
-                timeBasedExit: 6,
-                momentumExit: true,
-                minHoldTime: 3,
-                takeProfit: 30,
-                stopLoss: 10,
-                positionSize: 0.01
-            }
+            exitStrategy: buildDefaultExit(basePositionSize)
         };
     }
-}
 
-/**
- * Quick check for first buyer mode (ultra-fast rejection)
- */
-export function quickFirstBuyerCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const age = getTokenAgeSeconds(token);
-    
-    // Too old
-    if (age > 15) {
-        return { passed: false, reason: 'Too old for first buyer' };
+    if (guardDecision.status === 'wait') {
+        return {
+            status: 'wait',
+            shouldBuy: false,
+            confidence: 35,
+            reason: guardDecision.reason || 'Probe not ready yet',
+            entryTime: Date.now(),
+            exitStrategy: buildDefaultExit(basePositionSize)
+        };
     }
 
-    // Check for negative liquidity
-    const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
-    if (liquidityGrowth < -1) {
-        return { passed: false, reason: 'Liquidity draining' };
+    let confidence = 60;
+    if (sellCount >= 1) confidence += 8;
+    if (tradeCount >= 6) confidence += 6;
+    if (uniqueTraderCount >= 4) confidence += 5;
+    if (observedVolume >= 1.0) confidence += 4;
+    if (buyPressure >= 0.62) confidence += 4;
+    if (largestTraderVolumeShare <= 0.32) confidence += 3;
+    confidence = Math.max(60, Math.min(86, confidence));
+
+    const exitStrategy = buildDefaultExit(basePositionSize);
+    if (sellCount >= 1 && observedVolume >= 1.0) {
+        exitStrategy.timeBasedExit = 35;
+        exitStrategy.takeProfit = 10;
+        exitStrategy.takeProfit2 = 16;
+        exitStrategy.stopLoss = 4;
+        exitStrategy.positionSize = 0.0025;
+    }
+
+    return {
+        status: 'pass',
+        shouldBuy: true,
+        confidence,
+        reason: `EARLY PROBE: ${tradeCount} trades, ${uniqueTraderCount} wallets, ${(buyPressure * 100).toFixed(0)}% buy pressure`,
+        entryTime: Date.now(),
+        exitStrategy
+    };
+}
+
+export function quickFirstBuyerCheck(token: TokenData): { passed: boolean; reason?: string } {
+    const decision = evaluateLiveEntryGuard('first', token, buildFeedOnlyAnalysis(token), 0.0025);
+    if (decision.status === 'reject') {
+        return { passed: false, reason: decision.reason || 'Probe rejected' };
     }
 
     return { passed: true };

@@ -107,8 +107,8 @@ export async function analyzeEnhanced(
     // Map legacy modes to new strategy intent
     const isGodMode = riskMode === 'god';
     const isRunnerMode = isGodMode || riskMode === 'runner' || riskMode === 'safe' || riskMode === 'medium'; // Strict Tier compliance
-    const isSniperMode = riskMode === 'sniper' || riskMode === 'high' || riskMode === 'first'; // Speed, Tier 0 only
-    const isDegenMode = riskMode === 'degen' || riskMode === 'velocity'; // Loose checks, momentum focus
+    const isSniperMode = riskMode === 'sniper' || riskMode === 'first'; // Earliest probe entries
+    const isDegenMode = riskMode === 'degen' || riskMode === 'velocity' || riskMode === 'high' || riskMode === 'scalp'; // Earlier continuation entries
     const tier2Floor = isGodMode ? 75 : 60;
     const tier4Floor = isGodMode ? 60 : 50;
 
@@ -228,6 +228,7 @@ export async function analyzeEnhanced(
             effectiveConfig = { ...config };
             const hasEarlyFlowConfirmation = !!marketSnapshot &&
                 age <= 45 &&
+                marketSnapshot.sellCount >= 1 &&
                 marketSnapshot.buyCount >= 4 &&
                 marketSnapshot.tradeCount >= 6 &&
                 marketSnapshot.uniqueTraderCount >= 4 &&
@@ -266,7 +267,7 @@ export async function analyzeEnhanced(
             warnings.push('Observed trade-flow history not yet available');
         }
 
-        if (creatorSellCount > 0 && age <= 180 && !isSniperMode) {
+        if (creatorSellCount > 0 && age <= 180) {
             reasons.push(`Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`);
             return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
         }
@@ -288,6 +289,36 @@ export async function analyzeEnhanced(
 
             if (creatorVolumeShare > maxCreatorVolumeShare && creatorBuyCount > 0 && age >= 12) {
                 reasons.push(`Creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+        } else if (isDegenMode) {
+            if (largestTraderVolumeShare > 0.38) {
+                reasons.push(`Aggressive flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (topTwoTraderVolumeShare > 0.64 && uniqueTraderCount < 10) {
+                reasons.push(`Aggressive flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (creatorVolumeShare > 0.34 && creatorBuyCount > 0 && age >= 12) {
+                reasons.push(`Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+        } else if (isSniperMode) {
+            if (largestTraderVolumeShare > 0.44) {
+                reasons.push(`Probe flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (topTwoTraderVolumeShare > 0.7 && uniqueTraderCount < 8) {
+                reasons.push(`Probe flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (creatorVolumeShare > 0.4 && creatorBuyCount > 0 && age >= 12) {
+                reasons.push(`Creator-linked flow is too dominant for probe mode (${(creatorVolumeShare * 100).toFixed(0)}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
             }
         } else if (largestTraderVolumeShare > 0.42) {
@@ -328,32 +359,87 @@ export async function analyzeEnhanced(
                 creatorSellCount === 0;
             riskLevel = passed ? 'low' : 'high';
         } else if (isSniperMode) {
-            // Sniper: Must pass Tier 0, and be VERY early (< 2 mins)
-            passed = tier0.score >= 100 && age < 120 && bondingCurveProgress < 10;
-            riskLevel = 'high'; // Sniper is always high risk
+            const sniperTradeCount = marketSnapshot?.tradeCount || 0;
+            const sniperUniqueTraderCount = marketSnapshot?.uniqueTraderCount || 0;
+            const sniperObservedVolume = marketSnapshot?.observedVolumeSol || observedVolume;
+            const sniperBuyPressure = marketSnapshot?.buyPressure ?? buyPressure;
+            const sniperSellCount = marketSnapshot?.sellCount || 0;
+            const sniperNetFlow = marketSnapshot?.netFlowSol || 0;
+            const earlyProbeTape =
+                age <= 10 &&
+                sniperTradeCount >= 4 &&
+                sniperUniqueTraderCount >= 3 &&
+                sniperObservedVolume >= 0.7 &&
+                sniperBuyPressure >= 0.62;
+            const confirmedProbeTape =
+                sniperSellCount >= 2 &&
+                sniperTradeCount >= 7 &&
+                sniperUniqueTraderCount >= 4 &&
+                sniperObservedVolume >= 1.1 &&
+                sniperBuyPressure >= 0.6 &&
+                sniperNetFlow >= 0.25;
+            const curveWindow =
+                bondingCurveProgress >= 0.15 &&
+                bondingCurveProgress <= 8 &&
+                curveVelocity >= 0.15;
+            const healthyDistribution =
+                holderMetrics.top10Concentration <= 55 &&
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 12);
+
+            if (!curveWindow) {
+                reasons.push(`Probe curve window is weak (${bondingCurveProgress.toFixed(1)}% @ ${curveVelocity.toFixed(2)}%/min)`);
+            }
+            if (!healthyDistribution) {
+                reasons.push(`Probe distribution is too concentrated (${holderMetrics.top10Concentration.toFixed(1)}% top 10)`);
+            }
+            if (!(confirmedProbeTape || earlyProbeTape)) {
+                reasons.push(`Probe mode needs multi-wallet early flow (${sniperTradeCount} trades, ${sniperUniqueTraderCount} wallets, ${(sniperBuyPressure * 100).toFixed(0)}% buy pressure)`);
+            }
+
+            passed =
+                tier0.score >= 100 &&
+                age < 75 &&
+                curveWindow &&
+                healthyDistribution &&
+                largestTraderVolumeShare <= 0.44 &&
+                topTwoTraderVolumeShare <= 0.7 &&
+                creatorVolumeShare <= 0.4 &&
+                (confirmedProbeTape || earlyProbeTape);
+            riskLevel = passed ? 'high' : 'critical';
         } else if (isDegenMode) {
             const degenTradeCount = marketSnapshot?.tradeCount || 0;
             const degenUniqueTraderCount = marketSnapshot?.uniqueTraderCount || 0;
             const degenObservedVolume = marketSnapshot?.observedVolumeSol || observedVolume;
             const degenBuyPressure = marketSnapshot?.buyPressure ?? buyPressure;
-            const confirmedTape =
-                degenTradeCount >= 6 &&
-                degenUniqueTraderCount >= 4 &&
-                degenObservedVolume >= 1.2 &&
-                degenBuyPressure >= 0.58;
+            const degenSellCount = marketSnapshot?.sellCount || 0;
+            const degenNetFlow = marketSnapshot?.netFlowSol || 0;
+            const continuationTape =
+                degenSellCount >= 2 &&
+                degenTradeCount >= 8 &&
+                degenUniqueTraderCount >= 5 &&
+                degenObservedVolume >= 1.5 &&
+                degenBuyPressure >= 0.6 &&
+                degenNetFlow >= 0.3;
             const strongTape =
+                degenSellCount >= 2 &&
                 degenTradeCount >= 10 &&
                 degenUniqueTraderCount >= 6 &&
                 degenObservedVolume >= 1.8 &&
-                degenBuyPressure >= 0.62;
+                degenBuyPressure >= 0.6 &&
+                degenNetFlow >= 0.45;
             const healthyCurve =
-                bondingCurveProgress >= 1.5 &&
-                bondingCurveProgress <= 20 &&
-                curveVelocity >= 0.65;
+                bondingCurveProgress >= 1.75 &&
+                bondingCurveProgress <= 18 &&
+                curveVelocity >= 0.55;
             const healthyDistribution =
-                holderMetrics.top10Concentration <= 40 &&
-                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 8);
-            const enoughLiquidity = liquidity >= 35;
+                holderMetrics.top10Concentration <= 42 &&
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 10);
+            const enoughLiquidity = liquidity >= 34;
+            const healthyFlowShape =
+                largestTraderVolumeShare <= 0.38 &&
+                topTwoTraderVolumeShare <= 0.64 &&
+                creatorVolumeShare <= 0.34;
+            const hasAbsorb = degenSellCount >= 2;
 
             if (!healthyCurve) {
                 reasons.push(`Aggressive curve quality is weak (${bondingCurveProgress.toFixed(1)}% @ ${curveVelocity.toFixed(2)}%/min)`);
@@ -364,11 +450,25 @@ export async function analyzeEnhanced(
             if (!enoughLiquidity) {
                 reasons.push(`Aggressive liquidity is too thin (${liquidity.toFixed(1)} SOL)`);
             }
-            if (!(strongTape || confirmedTape)) {
+            if (!healthyFlowShape) {
+                reasons.push(`Aggressive flow is too concentrated (${(largestTraderVolumeShare * 100).toFixed(0)}% from one wallet)`);
+            }
+            if (!hasAbsorb) {
+                reasons.push(`Aggressive mode still needs a sell-and-absorb before entry`);
+            }
+            if (!(strongTape || continuationTape)) {
                 reasons.push(`Aggressive mode needs confirmed tape (${degenTradeCount} trades, ${degenUniqueTraderCount} wallets, ${(degenBuyPressure * 100).toFixed(0)}% buy pressure)`);
             }
 
-            passed = tier0.score >= 100 && enoughLiquidity && healthyCurve && healthyDistribution && (strongTape || confirmedTape);
+            passed =
+                tier0.score >= 100 &&
+                enoughLiquidity &&
+                healthyCurve &&
+                healthyDistribution &&
+                healthyFlowShape &&
+                hasAbsorb &&
+                degenNetFlow > 0 &&
+                (strongTape || continuationTape);
             riskLevel = passed ? 'high' : 'critical';
         } else {
             // Fallback

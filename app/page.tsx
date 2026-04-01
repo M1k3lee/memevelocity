@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { createConnection, getPumpData } from '../utils/solanaManager';
 import { usePumpTrader } from '../hooks/usePumpTrader';
 import type { TokenData } from '../types/token';
-import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings } from 'lucide-react';
+import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings, Activity } from 'lucide-react';
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
@@ -44,6 +44,32 @@ const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
 const MICRO_WALLET_MAX_SOL = 0.05;
 const BOT_CONFIG_STORAGE_KEY = 'pump_bot_config';
 
+type DecisionSignalKind = 'wait' | 'reject' | 'approve' | 'buy' | 'retry' | 'info';
+
+type ParsedDecisionSignal = {
+  timeLabel: string;
+  mode: string;
+  kind: DecisionSignalKind;
+  token: string;
+  reason: string;
+  raw: string;
+};
+
+type DecisionPulse = {
+  counts: Record<DecisionSignalKind, number>;
+  modeStats: Array<{
+    mode: string;
+    total: number;
+    waits: number;
+    rejects: number;
+    approvals: number;
+    buys: number;
+  }>;
+  topReasons: Array<{ label: string; count: number }>;
+  recentSignals: ParsedDecisionSignal[];
+  totalSignals: number;
+};
+
 function isMicroWalletBalance(balance: number | null | undefined): boolean {
   return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 && balance <= MICRO_WALLET_MAX_SOL;
 }
@@ -62,6 +88,145 @@ function getPaperExitWarmupSeconds(trade: { exitStrategy?: { maxHoldTime?: numbe
   if (maxHoldTime && maxHoldTime <= 90) return 4;
   if (maxHoldTime && maxHoldTime <= 120) return 6;
   return PAPER_TRADE_EXIT_WARMUP_SECONDS;
+}
+
+function normalizeDecisionMode(rawMode: string | undefined): string {
+  const mode = (rawMode || '').trim().toUpperCase();
+  if (!mode) return 'GENERAL';
+  if (mode === 'DEGEN' || mode === 'HIGH' || mode === 'VELOCITY' || mode === 'SCALP') return 'AGGRESSIVE';
+  if (mode === 'FIRST' || mode === 'SNIPER' || mode === 'PROBE') return 'EXPERIMENTAL';
+  return mode;
+}
+
+function classifyDecisionReason(reason: string): string {
+  const normalized = reason.toLowerCase();
+  if (normalized.includes('opening chaos')) return 'Opening chaos';
+  if (normalized.includes('creator already sold')) return 'Creator sold';
+  if (normalized.includes('already too extended')) return 'Too extended';
+  if (normalized.includes('top 2 wallets') || normalized.includes('concentrated') || normalized.includes('dominant')) return 'Wallet concentration';
+  if (normalized.includes('one-sided')) return 'One-sided flow';
+  if (normalized.includes('shakeout')) return 'Needs shakeout';
+  if (normalized.includes('composite score') || normalized.includes('runner floor')) return 'Score too low';
+  if (normalized.includes('failed the runner gate')) return 'Runner gate failed';
+  if (normalized.includes('verification')) return 'Verification issue';
+  if (normalized.includes('rug')) return 'Rug risk';
+  if (normalized.includes('too new') || normalized.includes('still early')) return 'Too early';
+  if (normalized.includes('buy pressure')) return 'Weak buy pressure';
+  return reason.length > 48 ? `${reason.slice(0, 48)}…` : reason;
+}
+
+function parseDecisionSignal(log: string): ParsedDecisionSignal | null {
+  const timeMatch = log.match(/^\[([^\]]+)\]\s*/);
+  const timeLabel = timeMatch?.[1] || '';
+  const message = log.replace(/^\[[^\]]+\]\s*/, '').trim();
+
+  let match = message.match(/^([A-Z]+)\s+(wait|Reject):\s+(\S+)\s*(.*)$/i);
+  if (match) {
+    const mode = normalizeDecisionMode(match[1]);
+    const kind = match[2].toLowerCase() === 'wait' ? 'wait' : 'reject';
+    const token = match[3];
+    const reason = match[4].trim();
+    return { timeLabel, mode, kind, token, reason, raw: message };
+  }
+
+  match = message.match(/^([A-Z]+)\s+setup:\s+(\S+)\s+-\s+(.*)$/i);
+  if (match) {
+    return {
+      timeLabel,
+      mode: normalizeDecisionMode(match[1]),
+      kind: 'approve',
+      token: match[2],
+      reason: match[3].trim(),
+      raw: message
+    };
+  }
+
+  match = message.match(/^🧪\s+EARLY PROBE:\s+(\S+)\s+-\s+(.*)$/i);
+  if (match) {
+    return { timeLabel, mode: 'EXPERIMENTAL', kind: 'buy', token: match[1], reason: match[2].trim(), raw: message };
+  }
+
+  match = message.match(/^🔥\s+AGGRESSIVE BUY:\s+(\S+)\s+-\s+(.*)$/i);
+  if (match) {
+    return { timeLabel, mode: 'AGGRESSIVE', kind: 'buy', token: match[1], reason: match[2].trim(), raw: message };
+  }
+
+  match = message.match(/^✅\s+APPROVED:\s+(\S+)\s+-\s+(.*)$/i);
+  if (match) {
+    return { timeLabel, mode: 'GENERAL', kind: 'approve', token: match[1], reason: match[2].trim(), raw: message };
+  }
+
+  match = message.match(/^🔄\s+Re-analyzing\s+(\S+)\s+\(Wait period over\)\.\.\.$/i);
+  if (match) {
+    return { timeLabel, mode: 'GENERAL', kind: 'retry', token: match[1], reason: 'Retry window elapsed', raw: message };
+  }
+
+  match = message.match(/^🚫\s+(?:Guard\s+)?Reject(?:ed)?:\s+(\S+)\s+-\s+(.*)$/i);
+  if (match) {
+    return { timeLabel, mode: 'GENERAL', kind: 'reject', token: match[1], reason: match[2].trim(), raw: message };
+  }
+
+  match = message.match(/^⏳\s+(\S+)\s+(.*)$/i);
+  if (match) {
+    return { timeLabel, mode: 'GENERAL', kind: 'wait', token: match[1], reason: match[2].trim(), raw: message };
+  }
+
+  return null;
+}
+
+function buildDecisionPulse(logs: string[]): DecisionPulse {
+  const counts: Record<DecisionSignalKind, number> = {
+    wait: 0,
+    reject: 0,
+    approve: 0,
+    buy: 0,
+    retry: 0,
+    info: 0
+  };
+  const modeStats = new Map<string, { mode: string; total: number; waits: number; rejects: number; approvals: number; buys: number }>();
+  const reasonCounts = new Map<string, number>();
+  const recentSignals: ParsedDecisionSignal[] = [];
+
+  for (const log of logs) {
+    const parsed = parseDecisionSignal(log);
+    if (!parsed) continue;
+
+    counts[parsed.kind] += 1;
+    if (recentSignals.length < 8) {
+      recentSignals.push(parsed);
+    }
+
+    const current = modeStats.get(parsed.mode) || {
+      mode: parsed.mode,
+      total: 0,
+      waits: 0,
+      rejects: 0,
+      approvals: 0,
+      buys: 0
+    };
+    current.total += 1;
+    if (parsed.kind === 'wait') current.waits += 1;
+    if (parsed.kind === 'reject') current.rejects += 1;
+    if (parsed.kind === 'approve') current.approvals += 1;
+    if (parsed.kind === 'buy') current.buys += 1;
+    modeStats.set(parsed.mode, current);
+
+    if (parsed.kind === 'wait' || parsed.kind === 'reject') {
+      const reasonLabel = classifyDecisionReason(parsed.reason);
+      reasonCounts.set(reasonLabel, (reasonCounts.get(reasonLabel) || 0) + 1);
+    }
+  }
+
+  return {
+    counts,
+    modeStats: [...modeStats.values()].sort((a, b) => b.total - a.total).slice(0, 4),
+    topReasons: [...reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([label, count]) => ({ label, count })),
+    recentSignals,
+    totalSignals: counts.wait + counts.reject + counts.approve + counts.buy + counts.retry
+  };
 }
 
 function getBondingCurveProgressFromFeed(token: TokenData): number {
@@ -381,86 +546,27 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
 }
 
 function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decision: 'pass' | 'wait' | 'reject'; reason?: string; waitTimeMs?: number } {
-  const snapshot = getMarketSnapshot(token.mint);
   const liquidity = token.vSolInBondingCurve || 30;
   const liquidityGrowth = liquidity - 30;
   const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
-  const bondingCurveProgress = getBondingCurveProgressFromFeed(token);
-  const tradeCount = snapshot?.tradeCount || 0;
-  const buyCount = snapshot?.buyCount || 0;
-  const sellCount = snapshot?.sellCount || 0;
-  const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
-  const buyPressure = snapshot?.buyPressure ?? 0;
-  const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
-  const netFlow = snapshot?.netFlowSol || 0;
+  const fallbackAnalysis = buildPaperTradeFallbackAnalysis(token, age, momentum);
+  const guardDecision = evaluateLiveEntryGuard('sniper', token, fallbackAnalysis, 0.002);
 
-  if (sellCount > buyCount && age < 45) {
-    return {
-      decision: 'reject',
-      reason: `Early sell pressure (${sellCount} sells vs ${buyCount} buys)`
-    };
-  }
-
-  if (netFlow < -0.25 && age < 45) {
-    return {
-      decision: 'reject',
-      reason: `Net flow turned negative too early (${netFlow.toFixed(2)} SOL)`
-    };
-  }
-
-  const hasSecondaryBuyer = uniqueTraderCount >= 2 && (tradeCount >= 1 || buyCount >= 1);
-  const hasStrongFlow =
-    buyCount >= 2 &&
-    tradeCount >= 2 &&
-    uniqueTraderCount >= 2 &&
-    buyPressure >= 0.6 &&
-    observedVolume >= 1.0;
-  const hasTapeConfirmation =
-    tradeCount >= 6 &&
-    uniqueTraderCount >= 3 &&
-    buyPressure >= 0.58 &&
-    observedVolume >= 1.2;
-  const hasCurveConfirmation =
-    bondingCurveProgress >= 0.25 &&
-    observedVolume >= 0.6 &&
-    (uniqueTraderCount >= 2 || liquidityGrowth >= 1.0);
-  const hasFeedOnlyMomentum =
-    age <= 35 &&
-    tradeCount === 0 &&
-    liquidity >= 36 &&
-    liquidityGrowth >= 1.0 &&
-    bondingCurveProgress >= 0.35 &&
-    momentum >= 1.25;
-  const waitingOnSnapshot =
-    age <= 40 &&
-    tradeCount === 0 &&
-    uniqueTraderCount <= 1 &&
-    observedVolume <= 0.35 &&
-    liquidityGrowth > 0.2;
-
-  if (hasStrongFlow || hasTapeConfirmation || (hasSecondaryBuyer && hasCurveConfirmation) || hasFeedOnlyMomentum) {
+  if (guardDecision.status === 'pass') {
     return { decision: 'pass' };
   }
 
-  if (age < 12 || waitingOnSnapshot) {
+  if (guardDecision.status === 'wait') {
     return {
       decision: 'wait',
-      reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`,
-      waitTimeMs: 6000
-    };
-  }
-
-  if (age < 35 && (tradeCount > 0 || liquidityGrowth > 0.4 || bondingCurveProgress > 0.1)) {
-    return {
-      decision: 'wait',
-      reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`,
-      waitTimeMs: 8000
+      reason: guardDecision.reason || 'Waiting for early probe confirmation',
+      waitTimeMs: age < 15 ? 6000 : 8000
     };
   }
 
   return {
     decision: 'reject',
-    reason: `No follow-through after launch (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
+    reason: guardDecision.reason || 'Early probe rejected'
   };
 }
 
@@ -618,6 +724,7 @@ export default function Home() {
     }
     return acc;
   }, { totalProfit: 0, walletDelta: 0, rentRecovered: 0, wins: 0, losses: 0 });
+  const decisionPulse = buildDecisionPulse(logs);
   const processedMints = useRef<Set<string>>(new Set()); // deduplication ref
   const analyzingMints = useRef<Set<string>>(new Set());
   const analysisCooldowns = useRef<Map<string, number>>(new Map());
@@ -845,29 +952,34 @@ export default function Home() {
       // The actual check happens in usePumpTrader
     }
 
-    // === FIRST BUYER MODE (Buy immediately, sell after 6s) ===
+    // === EXPERIMENTAL PROBE MODE ===
     if (config.mode === 'first') {
       try {
         // Quick pre-filter
         const quickCheck = quickFirstBuyerCheck(token);
         if (!quickCheck.passed) {
-          addLog(`🚀 First Reject: ${token.symbol} - ${quickCheck.reason}`);
+          addLog(`🧪 Probe Reject: ${token.symbol} - ${quickCheck.reason}`);
           return;
         }
 
-        // First buyer analysis (ultra-early entry)
+        // Experimental probe analysis
         const firstSignal = await analyzeFirstBuyer(token, connection);
 
-        if (!firstSignal.shouldBuy || firstSignal.confidence < 60) {
-          addLog(`🚀 First Reject: ${token.symbol} - ${firstSignal.reason} (Confidence: ${firstSignal.confidence}%)`);
+        if (firstSignal.status === 'wait') {
+          scheduleRetry(6000, `⏳ ${token.symbol} probe: ${firstSignal.reason}`);
           return;
         }
 
-        // Log first buyer signal
-        addLog(`🚀 FIRST BUYER: ${token.symbol} - ${firstSignal.reason}`);
+        if (!firstSignal.shouldBuy || firstSignal.confidence < 60) {
+          addLog(`🧪 Probe Reject: ${token.symbol} - ${firstSignal.reason} (Confidence: ${firstSignal.confidence}%)`);
+          return;
+        }
+
+        // Log probe signal
+        addLog(`🧪 EARLY PROBE: ${token.symbol} - ${firstSignal.reason}`);
         addLog(`   Confidence: ${firstSignal.confidence}% | Entry Time: ${new Date(firstSignal.entryTime).toLocaleTimeString()}`);
-        const tp2Text = firstSignal.exitStrategy.takeProfit2 ? `, 30% @ ${firstSignal.exitStrategy.takeProfit2}%` : '';
-        addLog(`   Exit Strategy: ${firstSignal.exitStrategy.timeBasedExit}s hold | Staged: 50% @ ${firstSignal.exitStrategy.takeProfit}%${tp2Text} | SL ${firstSignal.exitStrategy.stopLoss}%`);
+        const tp2Text = firstSignal.exitStrategy.takeProfit2 ? ` | TP2 ${firstSignal.exitStrategy.takeProfit2}%` : '';
+        addLog(`   Exit Strategy: ${firstSignal.exitStrategy.timeBasedExit}s max hold | TP ${firstSignal.exitStrategy.takeProfit}%${tp2Text} | SL ${firstSignal.exitStrategy.stopLoss}%`);
 
         // Calculate initial price from token data
         // Demo mode uses REAL tokens, so always calculate from real token data
@@ -890,40 +1002,45 @@ export default function Home() {
           minHoldTime: firstSignal.exitStrategy.minHoldTime
         };
 
-        // Use position size from analysis (research-based sizing)
+        // Use small probe size from the analyzer
         const tradeAmount = firstSignal.exitStrategy.positionSize || config.amount;
-        addLog(`   💰 Position Size: ${tradeAmount} SOL (confidence-based)`);
+        addLog(`   💰 Position Size: ${tradeAmount} SOL (probe-sized)`);
 
-        // Buy with exit strategy and research-based position size
+        // Buy with fast probe exits
         setLastTradeTime(Date.now());
         await buyToken(token.mint, token.symbol, tradeAmount, 15, initialPrice, exitStrategy);
         return;
       } catch (error: any) {
-        addLog(`❌ First Buyer Error for ${token.symbol}: ${error.message}`);
+        addLog(`❌ Probe Error for ${token.symbol}: ${error.message}`);
         return;
       }
     }
 
-    // === SPEED TRADING MODE (SCALP) ===
+    // === AGGRESSIVE CONTINUATION MODE (SCALP) ===
     if (config.mode === 'scalp') {
       try {
         // Quick pre-filter
         const quickCheck = quickSpeedCheck(token);
         if (!quickCheck.passed) {
-          addLog(`⚡ Speed Reject: ${token.symbol} - ${quickCheck.reason}`);
+          addLog(`🔥 Aggressive Reject: ${token.symbol} - ${quickCheck.reason}`);
           return;
         }
 
-        // Speed trading analysis (momentum-based)
+        // Aggressive continuation analysis
         const speedSignal = await analyzeSpeedTrade(token, connection);
 
-        if (!speedSignal.shouldBuy || speedSignal.confidence < 50) {
-          addLog(`⚡ Speed Reject: ${token.symbol} - ${speedSignal.reason} (Confidence: ${speedSignal.confidence}%)`);
+        if (speedSignal.status === 'wait') {
+          scheduleRetry(5000, `⏳ ${token.symbol} aggressive continuation: ${speedSignal.reason}`);
           return;
         }
 
-        // Log speed trading signal
-        addLog(`⚡ SPEED BUY: ${token.symbol} - ${speedSignal.reason}`);
+        if (!speedSignal.shouldBuy || speedSignal.confidence < 50) {
+          addLog(`🔥 Aggressive Reject: ${token.symbol} - ${speedSignal.reason} (Confidence: ${speedSignal.confidence}%)`);
+          return;
+        }
+
+        // Log aggressive continuation signal
+        addLog(`🔥 AGGRESSIVE BUY: ${token.symbol} - ${speedSignal.reason}`);
         addLog(`   Confidence: ${speedSignal.confidence}% | Momentum: ${speedSignal.momentum.toFixed(2)} SOL/min`);
         addLog(`   Exit Strategy: TP ${speedSignal.exitStrategy.takeProfit}% | SL ${speedSignal.exitStrategy.stopLoss}% | Max Hold: ${speedSignal.exitStrategy.maxHoldTime}s`);
 
@@ -942,7 +1059,7 @@ export default function Home() {
         await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice, speedSignal.exitStrategy);
         return;
       } catch (error: any) {
-        addLog(`❌ Speed Trading Error for ${token.symbol}: ${error.message}`);
+        addLog(`❌ Aggressive Continuation Error for ${token.symbol}: ${error.message}`);
         return;
       }
     }
@@ -988,13 +1105,7 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
-            : undefined;
-
-          setLastTradeTime(Date.now());
-          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
-          return;
+          addLog(`   High mode candidate verified. Running shared aggressive analysis next.`);
         }
 
         // FAST TRACK: New tokens (<2 min) with very strong momentum (>3 SOL/min)
@@ -1022,13 +1133,7 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
-            : undefined;
-
-          setLastTradeTime(Date.now());
-          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
-          return;
+          addLog(`   High mode candidate verified. Running shared aggressive analysis next.`);
         }
       } catch (error: any) {
         // If fast track fails, fall through to normal analysis
@@ -1072,13 +1177,7 @@ export default function Home() {
           token.vSolInBondingCurve = freshData.vSolInBondingCurve;
           token.vTokensInBondingCurve = freshData.vTokensInBondingCurve;
 
-          const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
-            ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
-            : undefined;
-
-          setLastTradeTime(Date.now());
-          await buyToken(token.mint, token.symbol, config.amount, 15, initialPrice);
-          return;
+          addLog(`   Velocity candidate verified. Running shared aggressive analysis next.`);
         }
       } catch (e) { }
     }
@@ -1435,16 +1534,40 @@ export default function Home() {
         const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
         const stressBuySizeSol = config.isDemo ? 0.35 : Math.max(0.25, Math.min(0.5, config.amount * 40));
         const stressImpactPercent = estimateCurveBuyImpactPercent(liquidity, stressBuySizeSol);
-        const antiChaseTriggered =
-          age > 110 ||
-          priceChangePercent >= (config.isDemo ? 16 : 14) ||
-          bondingCurveProgress >= (config.isDemo ? 16 : 12) ||
-          tradeCount >= (config.isDemo ? 30 : 26);
         const waitingOnSnapshot =
           age <= 30 &&
           tradeCount === 0 &&
           observedVolume <= 0.2 &&
           liquidityGrowth > 0.3;
+        const hardExtendedReject =
+          age > (config.isDemo ? 220 : 180) ||
+          priceChangePercent >= (config.isDemo ? 42 : 36) ||
+          bondingCurveProgress >= (config.isDemo ? 22 : 18) ||
+          tradeCount >= (config.isDemo ? 140 : 110);
+        const reclaimWatchTriggered =
+          !hardExtendedReject &&
+          (
+            priceChangePercent >= (config.isDemo ? 16 : 14) ||
+            bondingCurveProgress >= (config.isDemo ? 12 : 11) ||
+            tradeCount >= (config.isDemo ? 32 : 26)
+          );
+        const reclaimStructureReady =
+          reclaimWatchTriggered &&
+          age >= 18 &&
+          age <= (config.isDemo ? 160 : 140) &&
+          sellCount >= 1 &&
+          tradeCount >= (config.isDemo ? 8 : 8) &&
+          uniqueTraderCount >= (config.isDemo ? 6 : 6) &&
+          observedVolume >= (config.isDemo ? 1.2 : 1.25) &&
+          buyPressure >= (config.isDemo ? 0.56 : 0.58) &&
+          buyPressure <= (config.isDemo ? 0.9 : 0.92) &&
+          netFlow >= (config.isDemo ? 0.28 : 0.28) &&
+          traderDiversity >= (config.isDemo ? 0.42 : 0.42) &&
+          capitalEfficiency >= (config.isDemo ? 0.075 : 0.08) &&
+          stressImpactPercent <= (config.isDemo ? 2.2 : 1.8) &&
+          curveVelocity >= (config.isDemo ? 0.45 : 0.55) &&
+          curveVelocity <= (config.isDemo ? 10 : 10);
+        const reclaimLaneActive = reclaimWatchTriggered && reclaimStructureReady;
 
         if (age < 6) {
           scheduleRetry(4000, `GOD wait: ${token.symbol} is still in the opening chaos (${age.toFixed(1)}s old).`);
@@ -1456,17 +1579,43 @@ export default function Home() {
           return;
         }
 
-        if (antiChaseTriggered) {
+        if (hardExtendedReject) {
           addLog(`GOD Reject: ${token.symbol} is already too extended (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s).`);
           return;
         }
 
-        if (largestTraderVolumeShare > (config.isDemo ? 0.34 : 0.3)) {
+        const staleRunnerReject =
+          age >= 110 &&
+          bondingCurveProgress < 6.5 &&
+          priceChangePercent < 18 &&
+          (observedVolume < 5 || netFlow < 3.6);
+
+        if (staleRunnerReject) {
+          addLog(`GOD Reject: ${token.symbol} stayed too stale for conservative mode (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, age ${age.toFixed(0)}s).`);
+          return;
+        }
+
+        if (reclaimWatchTriggered && !reclaimLaneActive) {
+          if (age < (config.isDemo ? 160 : 140)) {
+            scheduleRetry(
+              6000,
+              `GOD wait: ${token.symbol} extended cleanly; watching for a calmer reclaim (${tradeCount} trades, ${sellCount} sells, curve ${bondingCurveProgress.toFixed(1)}%).`
+            );
+          } else {
+            addLog(`GOD Reject: ${token.symbol} extended early but never settled into a conservative reclaim.`);
+          }
+          return;
+        }
+
+        const godMaxLargestTraderShare = reclaimLaneActive ? (config.isDemo ? 0.4 : 0.38) : (config.isDemo ? 0.34 : 0.3);
+        const godMaxTopTwoTraderShare = reclaimLaneActive ? (config.isDemo ? 0.58 : 0.56) : (config.isDemo ? 0.55 : 0.48);
+
+        if (largestTraderVolumeShare > godMaxLargestTraderShare) {
           addLog(`GOD Reject: ${token.symbol} early flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%).`);
           return;
         }
 
-        if (topTwoTraderVolumeShare > (config.isDemo ? 0.55 : 0.48) && uniqueTraderCount < 12) {
+        if (topTwoTraderVolumeShare > godMaxTopTwoTraderShare && uniqueTraderCount < 12) {
           addLog(`GOD Reject: ${token.symbol} top 2 wallets dominate the early tape (${(topTwoTraderVolumeShare * 100).toFixed(0)}%).`);
           return;
         }
@@ -1476,24 +1625,54 @@ export default function Home() {
           return;
         }
 
-        const participationReady =
-          buyCount >= (config.isDemo ? 5 : 6) &&
-          tradeCount >= (config.isDemo ? 7 : 9) &&
-          uniqueTraderCount >= (config.isDemo ? 5 : 6) &&
-          observedVolume >= (config.isDemo ? 1.0 : 1.4) &&
-          buyPressure >= (config.isDemo ? 0.58 : 0.61) &&
-          netFlow >= (config.isDemo ? 0.35 : 0.5) &&
-          traderDiversity >= (config.isDemo ? 0.4 : 0.44);
-        const curveReady =
-          bondingCurveProgress >= (config.isDemo ? 1.0 : 1.5) &&
-          bondingCurveProgress <= (config.isDemo ? 15 : 12) &&
-          curveVelocity >= (config.isDemo ? 0.6 : 0.8) &&
-          momentum >= (config.isDemo ? 0.8 : 0.95) &&
-          priceChangePercent > -0.75;
-        const executionReady =
-          capitalEfficiency >= (config.isDemo ? 0.08 : 0.095) &&
-          stressImpactPercent <= (config.isDemo ? 2.2 : 1.65) &&
-          sellCount <= Math.max(2, Math.floor(tradeCount * 0.42));
+        const participationReady = reclaimLaneActive
+          ? (
+            buyCount >= (config.isDemo ? 6 : 7) &&
+            tradeCount >= (config.isDemo ? 8 : 8) &&
+            uniqueTraderCount >= (config.isDemo ? 6 : 6) &&
+            observedVolume >= (config.isDemo ? 1.2 : 1.25) &&
+            buyPressure >= (config.isDemo ? 0.56 : 0.58) &&
+            buyPressure <= (config.isDemo ? 0.9 : 0.92) &&
+            netFlow >= (config.isDemo ? 0.28 : 0.28) &&
+            traderDiversity >= (config.isDemo ? 0.42 : 0.42)
+          )
+          : (
+            buyCount >= (config.isDemo ? 5 : 6) &&
+            tradeCount >= (config.isDemo ? 7 : 9) &&
+            uniqueTraderCount >= (config.isDemo ? 5 : 6) &&
+            observedVolume >= (config.isDemo ? 1.0 : 1.25) &&
+            buyPressure >= (config.isDemo ? 0.58 : 0.6) &&
+            netFlow >= (config.isDemo ? 0.32 : 0.45) &&
+            traderDiversity >= (config.isDemo ? 0.4 : 0.44)
+          );
+        const curveReady = reclaimLaneActive
+          ? (
+            bondingCurveProgress >= (config.isDemo ? 4 : 5) &&
+            bondingCurveProgress <= (config.isDemo ? 18 : 16) &&
+            curveVelocity >= (config.isDemo ? 0.45 : 0.55) &&
+            curveVelocity <= (config.isDemo ? 10 : 10) &&
+            momentum >= (config.isDemo ? 0.55 : 0.65) &&
+            priceChangePercent <= (config.isDemo ? 30 : 28) &&
+            priceChangePercent > -1.25
+          )
+          : (
+            bondingCurveProgress >= (config.isDemo ? 1.0 : 1.5) &&
+            bondingCurveProgress <= (config.isDemo ? 15 : 14) &&
+            curveVelocity >= (config.isDemo ? 0.55 : 0.7) &&
+            momentum >= (config.isDemo ? 0.75 : 0.9) &&
+            priceChangePercent > -0.75
+          );
+        const executionReady = reclaimLaneActive
+          ? (
+            capitalEfficiency >= (config.isDemo ? 0.075 : 0.085) &&
+            stressImpactPercent <= (config.isDemo ? 2.2 : 1.8) &&
+            sellCount <= Math.max(2, Math.floor(tradeCount * 0.48))
+          )
+          : (
+            capitalEfficiency >= (config.isDemo ? 0.08 : 0.09) &&
+            stressImpactPercent <= (config.isDemo ? 2.2 : 1.7) &&
+            sellCount <= Math.max(2, Math.floor(tradeCount * 0.42))
+          );
 
         const needsShakeoutConfirmation =
           age >= 18 &&
@@ -1535,14 +1714,14 @@ export default function Home() {
         const godAnalysisConfig = {
           ...config.advanced,
           minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 32 : 36),
-          maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? 150 : 110),
-          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 1.0 : 1.4),
-          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 12 : 14),
+          maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? (reclaimLaneActive ? 170 : 150) : (reclaimLaneActive ? 130 : 125)),
+          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 1.0 : 1.25),
+          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 12 : 12),
           maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 28 : 22),
           maxDev: Math.min(config.advanced?.maxDev ?? 100, 3),
           minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 1.0 : 1.5),
-          maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? 15 : 12),
-          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? 0.6 : 0.8),
+          maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? (reclaimLaneActive ? 18 : 15) : (reclaimLaneActive ? 16 : 14)),
+          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? (reclaimLaneActive ? 0.45 : 0.6) : (reclaimLaneActive ? 0.55 : 0.7)),
           rugCheckStrictness: 'strict',
           requireSocials: false,
           avoidSnipers: true,
@@ -1577,7 +1756,7 @@ export default function Home() {
           topTwoTraderVolumeShare,
           creatorSellCount
         });
-        const godScoreFloor = config.isDemo ? 72 : 78;
+        const godScoreFloor = config.isDemo ? (reclaimLaneActive ? 70 : 72) : (reclaimLaneActive ? 76 : 78);
 
         if (godScore < godScoreFloor) {
           if (age < 95) {
@@ -1610,7 +1789,13 @@ export default function Home() {
         const freshLargestTraderShare = freshSnapshot?.largestTraderVolumeShare ?? largestTraderVolumeShare;
         const freshCreatorSellCount = freshSnapshot?.creatorSellCount ?? creatorSellCount;
 
-        if (liquidityDeltaPercent < -4 || curveDelta < -0.8 || priceDeltaPercent < -1.8 || freshBuyPressure < 0.57) {
+        const verificationBuyPressureFloor = reclaimLaneActive ? (config.isDemo ? 0.54 : 0.56) : 0.57;
+        if (
+          liquidityDeltaPercent < (reclaimLaneActive ? -4.8 : -4) ||
+          curveDelta < (reclaimLaneActive ? -1.1 : -0.8) ||
+          priceDeltaPercent < (reclaimLaneActive ? -2.4 : -1.8) ||
+          freshBuyPressure < verificationBuyPressureFloor
+        ) {
           addLog(`GOD Reject: ${token.symbol} lost too much confirmation (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure).`);
           return;
         }
@@ -2035,36 +2220,63 @@ export default function Home() {
       // Finalize: Token successfully passed all filters
       processedMints.current.add(token.mint);
 
-      const exitStrategy = config.mode === 'degen'
+      const isAggressiveAlias = config.mode === 'degen' || config.mode === 'high' || config.mode === 'velocity' || config.mode === 'scalp';
+      const isExperimentalAlias = config.mode === 'sniper' || config.mode === 'first';
+      const exitStrategy = isAggressiveAlias
         ? {
-            takeProfit: Math.min(config.takeProfit, 16),
-            takeProfit2: 28,
-            stopLoss: Math.min(config.stopLoss, 5),
-            maxHoldTime: 75,
+            takeProfit: Math.min(config.takeProfit, 8),
+            takeProfit2: 14,
+            stopLoss: Math.min(config.stopLoss, 4),
+            maxHoldTime: 40,
             trailingStop: false,
             momentumExit: false,
             minHoldTime: 6,
-            fastKillLoss: 3,
+            fastKillLoss: 2.2,
             fastKillSeconds: 5,
-            givebackPeakTrigger: 4.5,
-            givebackFloor: 0.5,
-            givebackSeconds: 10,
-            stagnationSeconds: 18,
-            stagnationFloor: -1,
-            tp1SellPercent: 80,
+            givebackPeakTrigger: 3.2,
+            givebackFloor: 0.2,
+            givebackSeconds: 6,
+            stagnationSeconds: 10,
+            stagnationFloor: -0.5,
+            tp1SellPercent: 82,
+            tp2SellPercent: 8,
+            postTp1FloorPercent: 1,
+            postTp2FloorPercent: 3,
+            runnerMaxHoldTime: 90,
+            runnerTrailingStopPercent: 6,
+            runnerActivationProfit: 8,
+            runnerTimeExitFloor: 2
+          }
+        : isExperimentalAlias
+        ? {
+            takeProfit: Math.min(config.takeProfit, 8),
+            takeProfit2: 14,
+            stopLoss: Math.min(config.stopLoss, 4),
+            maxHoldTime: 30,
+            trailingStop: false,
+            momentumExit: false,
+            minHoldTime: 5,
+            fastKillLoss: 2.2,
+            fastKillSeconds: 4,
+            givebackPeakTrigger: 3.2,
+            givebackFloor: 0.4,
+            givebackSeconds: 7,
+            stagnationSeconds: 12,
+            stagnationFloor: -0.5,
+            tp1SellPercent: 85,
             tp2SellPercent: 10,
-            postTp1FloorPercent: 1.5,
-            postTp2FloorPercent: 6,
-            runnerMaxHoldTime: 180,
-            runnerTrailingStopPercent: 12,
-            runnerActivationProfit: 14,
-            runnerTimeExitFloor: 4
+            postTp1FloorPercent: 1.2,
+            postTp2FloorPercent: 4,
+            runnerMaxHoldTime: 90,
+            runnerTrailingStopPercent: 8,
+            runnerActivationProfit: 8,
+            runnerTimeExitFloor: 2
           }
         : {
             takeProfit: config.takeProfit,
             takeProfit2: config.mode === 'micro' ? 35 : undefined,
             stopLoss: config.stopLoss,
-            maxHoldTime: config.mode === 'micro' ? 90 : (config.mode === 'sniper' ? 300 : 3600), // Sniper = short hold, Runner = long
+            maxHoldTime: config.mode === 'micro' ? 90 : 3600,
             trailingStop: config.mode === 'runner', // Enable trailing stop for runners
             momentumExit: false,
             minHoldTime: config.mode === 'micro' ? 12 : undefined,
@@ -2595,11 +2807,126 @@ export default function Home() {
               <BotControls onConfigChange={handleConfigChange} walletConnected={!!wallet || config.isDemo} realBalance={realBalance} config={config} />
             </div>
 
-            {/* System Logs */}
-            <div className="glass-panel p-4 h-[300px] flex flex-col">
-              <h3 className="font-bold mb-2 flex items-center gap-2 text-gray-400 text-sm">
-                <Terminal size={14} /> System Logs
+            <div className="glass-panel p-4">
+              <h3 className="font-bold mb-3 flex items-center gap-2 text-gray-400 text-sm">
+                <Activity size={14} /> Decision Pulse
               </h3>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-amber-300/70">Waits</div>
+                  <div className="text-lg font-semibold text-amber-300">{decisionPulse.counts.wait}</div>
+                </div>
+                <div className="rounded-lg border border-red-500/20 bg-red-500/8 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-red-300/70">Rejects</div>
+                  <div className="text-lg font-semibold text-red-300">{decisionPulse.counts.reject}</div>
+                </div>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-emerald-300/70">Approvals</div>
+                  <div className="text-lg font-semibold text-emerald-300">{decisionPulse.counts.approve}</div>
+                </div>
+                <div className="rounded-lg border border-sky-500/20 bg-sky-500/8 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-sky-300/70">Entries</div>
+                  <div className="text-lg font-semibold text-sky-300">{decisionPulse.counts.buy}</div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Mode Breakdown</div>
+                  <div className="space-y-2">
+                    {decisionPulse.modeStats.length > 0 ? decisionPulse.modeStats.map((mode) => {
+                      const modePressure = Math.max(1, mode.total);
+                      const waitWidth = (mode.waits / modePressure) * 100;
+                      const rejectWidth = (mode.rejects / modePressure) * 100;
+                      const approveWidth = ((mode.approvals + mode.buys) / modePressure) * 100;
+
+                      return (
+                        <div key={mode.mode} className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-semibold text-gray-300">{mode.mode}</span>
+                            <span className="text-gray-500">{mode.total} signals</span>
+                          </div>
+                          <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-white/5">
+                            <div className="h-full bg-amber-400/80" style={{ width: `${waitWidth}%` }} />
+                            <div className="h-full bg-red-400/80" style={{ width: `${rejectWidth}%` }} />
+                            <div className="h-full bg-emerald-400/80" style={{ width: `${approveWidth}%` }} />
+                          </div>
+                          <div className="mt-2 flex justify-between text-[10px] text-gray-500">
+                            <span>W {mode.waits}</span>
+                            <span>R {mode.rejects}</span>
+                            <span>A {mode.approvals + mode.buys}</span>
+                          </div>
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
+                        No structured signals yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Top Reasons</div>
+                  <div className="space-y-2">
+                    {decisionPulse.topReasons.length > 0 ? decisionPulse.topReasons.map((reason) => {
+                      const width = decisionPulse.topReasons[0]?.count ? (reason.count / decisionPulse.topReasons[0].count) * 100 : 0;
+                      return (
+                        <div key={reason.label} className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="truncate text-gray-300">{reason.label}</span>
+                            <span className="text-gray-500">{reason.count}</span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                            <div className="h-full rounded-full bg-[var(--primary)]/70" style={{ width: `${width}%` }} />
+                          </div>
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
+                        Waiting for enough logs to classify.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 text-[10px] uppercase tracking-wide text-gray-500">Recent Signals</div>
+                  <div className="flex flex-wrap gap-2">
+                    {decisionPulse.recentSignals.length > 0 ? decisionPulse.recentSignals.map((signal, index) => (
+                      <div
+                        key={`${signal.raw}-${index}`}
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-mono ${
+                          signal.kind === 'reject'
+                            ? 'border-red-500/20 bg-red-500/10 text-red-300'
+                            : signal.kind === 'wait'
+                              ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                              : signal.kind === 'buy' || signal.kind === 'approve'
+                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                                : 'border-white/10 bg-white/[0.04] text-gray-400'
+                        }`}
+                        title={signal.reason}
+                      >
+                        {signal.mode} {signal.token}
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-3 text-[11px] text-gray-500">
+                        Live decisions will appear here.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* System Logs */}
+            <div className="glass-panel p-4 h-[260px] flex flex-col">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="font-bold flex items-center gap-2 text-gray-400 text-sm">
+                <Terminal size={14} /> System Logs
+                </h3>
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">{decisionPulse.totalSignals} parsed</span>
+              </div>
               <div className="flex-1 overflow-y-auto text-[10px] font-mono text-gray-500 space-y-1 custom-scrollbar">
                 {logs.map((log, i) => (
                   <div key={i} className="border-l-2 border-transparent hover:border-[var(--primary)] pl-2 break-all">

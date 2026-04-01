@@ -1,258 +1,169 @@
 import { Connection } from '@solana/web3.js';
-import { getPumpData } from './solanaManager';
+import type { EnhancedAnalysis } from './enhancedAnalyzer';
+import { evaluateLiveEntryGuard } from './liveEntryGuard';
+import { getMarketSnapshot } from './marketData';
+import { calculateBondingCurveProgress } from './pumpMath';
 import type { TokenData } from '../types/token';
-import { getTokenAgeSeconds } from './tokenTiming';
 
 export interface SpeedTradeSignal {
+    status: 'pass' | 'wait' | 'reject';
     shouldBuy: boolean;
-    confidence: number; // 0-100
+    confidence: number;
     reason: string;
-    momentum: number; // Liquidity growth rate
+    momentum: number;
     riskLevel: 'low' | 'medium' | 'high';
     exitStrategy: {
-        takeProfit: number; // Percentage
-        stopLoss: number; // Percentage
-        maxHoldTime: number; // Seconds
+        takeProfit: number;
+        stopLoss: number;
+        maxHoldTime: number;
         trailingStop: boolean;
     };
 }
 
-/**
- * Speed Trading Analyzer - For quick in-and-out trades on early launches
- * Strategy: Buy very early, exit quickly before rug pull
- */
-export async function analyzeSpeedTrade(
-    token: TokenData,
-    connection: Connection,
-    previousData?: { liquidity: number; timestamp: number }
-): Promise<SpeedTradeSignal> {
-    try {
-        const currentData = await getPumpData(token.mint, connection);
-        if (!currentData) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: 'Token not found',
-                momentum: 0,
-                riskLevel: 'high',
-                exitStrategy: {
-                    takeProfit: 50,
-                    stopLoss: 15,
-                    maxHoldTime: 180,
-                    trailingStop: true
-                }
-            };
-        }
+function buildFeedOnlyAnalysis(token: TokenData): EnhancedAnalysis {
+    const snapshot = getMarketSnapshot(token.mint);
+    const liquidity = token.vSolInBondingCurve || 30;
+    const liquidityGrowth = liquidity - 30;
+    const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
+    const age = token.createdAt ? Math.max(0, (Date.now() - token.createdAt) / 1000) : 0;
 
-        const age = getTokenAgeSeconds(token);
-        const liquidity = currentData.vSolInBondingCurve;
-        const initialLiquidity = 30; // Pump.fun starts at 30 SOL
-        const liquidityGrowth = liquidity - initialLiquidity;
-        const liquidityGrowthPercent = (liquidityGrowth / initialLiquidity) * 100;
-
-        // Calculate momentum (liquidity growth rate)
-        let momentum = 0;
-        if (previousData && age > 0) {
-            const liquidityChange = liquidity - previousData.liquidity;
-            const timeDiff = (Date.now() - previousData.timestamp) / 1000;
-            momentum = timeDiff > 0 ? (liquidityChange / timeDiff) * 60 : 0; // SOL per minute
-        } else {
-            // Estimate momentum from current growth
-            momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
-        }
-
-        // === SPEED TRADING CRITERIA ===
-
-        // CRITICAL REJECTIONS (instant rug indicators)
-        if (age < 5) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: 'Token too new (<5s) - wait for initial activity',
-                momentum: 0,
-                riskLevel: 'high',
-                exitStrategy: {
-                    takeProfit: 50,
-                    stopLoss: 15,
-                    maxHoldTime: 180,
-                    trailingStop: true
-                }
-            };
-        }
-
-        // Check if dev already sold (instant rug)
-        // This would need to check dev wallet, but for speed we'll use heuristics
-        if (liquidityGrowth < -5 && age < 60) {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: '🚨 Liquidity draining - possible instant rug',
-                momentum: momentum,
-                riskLevel: 'high',
-                exitStrategy: {
-                    takeProfit: 50,
-                    stopLoss: 15,
-                    maxHoldTime: 180,
-                    trailingStop: true
-                }
-            };
-        }
-
-        // === MOMENTUM-BASED SIGNALS ===
-
-        let confidence = 0;
-        let reason = '';
-        let riskLevel: 'low' | 'medium' | 'high' = 'high';
-
-        // STRONG MOMENTUM SIGNAL (Best case)
-        if (momentum > 2 && age < 120 && liquidityGrowth > 5) {
-            confidence = 85;
-            reason = `🔥 STRONG MOMENTUM: +${liquidityGrowth.toFixed(1)} SOL in ${age.toFixed(0)}s (${momentum.toFixed(1)} SOL/min)`;
-            riskLevel = 'low';
-        }
-        // GOOD MOMENTUM SIGNAL
-        else if (momentum > 1 && age < 180 && liquidityGrowth > 2) {
-            confidence = 70;
-            reason = `⚡ GOOD MOMENTUM: +${liquidityGrowth.toFixed(1)} SOL growth (${momentum.toFixed(1)} SOL/min)`;
-            riskLevel = 'medium';
-        }
-        // EARLY CATCH (Very early, some activity)
-        else if (momentum > 0.5 && age < 60 && liquidityGrowth > 0.5) {
-            confidence = 60;
-            reason = `⚡ EARLY CATCH: Growing liquidity (${momentum.toFixed(1)} SOL/min)`;
-            riskLevel = 'medium';
-        }
-        // NEUTRAL (Some activity but not strong)
-        else if (liquidityGrowth > 0 && age < 300) {
-            confidence = 40;
-            reason = `📊 NEUTRAL: Some activity (+${liquidityGrowth.toFixed(1)} SOL)`;
-            riskLevel = 'high';
-        }
-        // WEAK SIGNAL
-        else if (liquidityGrowth >= 0) {
-            confidence = 25;
-            reason = `⚠️ WEAK: Minimal growth (+${liquidityGrowth.toFixed(1)} SOL)`;
-            riskLevel = 'high';
-        }
-        // NEGATIVE (Reject)
-        else {
-            return {
-                shouldBuy: false,
-                confidence: 0,
-                reason: `❌ REJECT: Negative growth (${liquidityGrowth.toFixed(1)} SOL)`,
-                momentum: momentum,
-                riskLevel: 'high',
-                exitStrategy: {
-                    takeProfit: 50,
-                    stopLoss: 15,
-                    maxHoldTime: 180,
-                    trailingStop: true
-                }
-            };
-        }
-
-        // === AGE-BASED ADJUSTMENTS ===
-        // Older tokens are less attractive for speed trading
-        if (age > 300) {
-            confidence -= 20;
-            reason += ' (Token aging)';
-        } else if (age > 180) {
-            confidence -= 10;
-        }
-
-        // === MOMENTUM BONUS ===
-        if (momentum > 3) {
-            confidence += 10;
-            reason += ' [HIGH MOMENTUM]';
-        }
-
-        // Clamp confidence
-        confidence = Math.max(0, Math.min(100, confidence));
-
-        // === EXIT STRATEGY (Adaptive based on momentum) ===
-        let takeProfit = 50; // Default 50%
-        let stopLoss = 15; // Default 15%
-        let maxHoldTime = 180; // Default 3 minutes
-
-        if (momentum > 2) {
-            // Strong momentum = higher TP, longer hold
-            takeProfit = 100; // 2x target
-            stopLoss = 20;
-            maxHoldTime = 300; // 5 minutes
-        } else if (momentum > 1) {
-            // Good momentum = moderate TP
-            takeProfit = 75; // 1.75x target
-            stopLoss = 18;
-            maxHoldTime = 240; // 4 minutes
-        } else {
-            // Weak momentum = quick exit
-            takeProfit = 50; // 1.5x target
-            stopLoss = 15;
-            maxHoldTime = 180; // 3 minutes
-        }
-
-        // Very early tokens (<30s) = quick scalps
-        if (age < 30 && momentum > 0.5) {
-            takeProfit = 30; // Quick 30% profit
-            stopLoss = 10; // Tight stop
-            maxHoldTime = 120; // 2 minutes max
-        }
-
-        return {
-            shouldBuy: confidence >= 50, // Buy if confidence >= 50%
-            confidence,
-            reason,
-            momentum,
-            riskLevel,
-            exitStrategy: {
-                takeProfit,
-                stopLoss,
-                maxHoldTime,
-                trailingStop: true // Always use trailing stop for speed trades
+    return {
+        score: 62,
+        riskLevel: 'high',
+        passed: false,
+        reasons: [],
+        warnings: [],
+        strengths: [],
+        bondingCurveProgress,
+        marketCap: liquidity,
+        tiers: {
+            tier0: 100,
+            tier1: 0,
+            tier2: 0,
+            tier3: 0,
+            tier4: 0,
+            totalScore: 310
+        },
+        metrics: {
+            holderCount: snapshot?.uniqueTraderCount || 0,
+            deployerHoldings: -1,
+            top10Concentration: 0,
+            observedVolume: snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth),
+            buyPressure: snapshot?.buyPressure ?? 0,
+            bondingCurveVelocity: age > 0 ? (bondingCurveProgress / age) * 60 : 0,
+            liquidityDepth: liquidity,
+            tradeCount: snapshot?.tradeCount || 0,
+            uniqueTraderCount: snapshot?.uniqueTraderCount || 0,
+            priceChangePercent: snapshot?.priceChangePercent || 0,
+            largestTraderVolumeShare: snapshot?.largestTraderVolumeShare || 0,
+            topTwoTraderVolumeShare: snapshot?.topTwoTraderVolumeShare || 0,
+            creatorVolumeShare: snapshot?.creatorVolumeShare || 0,
+            creatorBuyCount: snapshot?.creatorBuyCount || 0,
+            creatorSellCount: snapshot?.creatorSellCount || 0,
+            contractSecurity: {
+                freezeAuthority: true,
+                mintAuthority: true,
+                updateAuthority: true
             }
-        };
+        }
+    };
+}
 
-    } catch (error: any) {
-        return {
-            shouldBuy: false,
-            confidence: 0,
-            reason: `Analysis error: ${error.message}`,
-            momentum: 0,
-            riskLevel: 'high',
-            exitStrategy: {
-                takeProfit: 50,
-                stopLoss: 15,
-                maxHoldTime: 180,
-                trailingStop: true
-            }
-        };
-    }
+function buildDefaultExit(): SpeedTradeSignal['exitStrategy'] {
+    return {
+        takeProfit: 8,
+        stopLoss: 4,
+        maxHoldTime: 40,
+        trailingStop: false
+    };
 }
 
 /**
- * Quick pre-filter for speed trading (ultra-fast rejection)
+ * Aggressive continuation mode.
+ * This is no longer a blind early momentum chase. It waits for a small shakeout
+ * and re-absorption, then trades the next continuation leg with a short leash.
  */
-export function quickSpeedCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const age = getTokenAgeSeconds(token);
-    
-    // Too old for speed trading
-    if (age > 600) {
-        return { passed: false, reason: 'Token too old for speed trade' };
+export async function analyzeSpeedTrade(
+    token: TokenData,
+    _connection: Connection,
+    _previousData?: { liquidity: number; timestamp: number }
+): Promise<SpeedTradeSignal> {
+    const analysis = buildFeedOnlyAnalysis(token);
+    const snapshot = getMarketSnapshot(token.mint);
+    const liquidity = token.vSolInBondingCurve || 30;
+    const liquidityGrowth = liquidity - 30;
+    const age = token.createdAt ? Math.max(0, (Date.now() - token.createdAt) / 1000) : 0;
+    const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
+    const observedVolume = snapshot?.observedVolumeSol || Math.max(0, liquidityGrowth);
+    const tradeCount = snapshot?.tradeCount || 0;
+    const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
+    const sellCount = snapshot?.sellCount || 0;
+    const buyPressure = snapshot?.buyPressure ?? 0;
+    const netFlow = snapshot?.netFlowSol || 0;
+
+    const guardDecision = evaluateLiveEntryGuard('scalp', token, analysis, 0.0025);
+    if (guardDecision.status === 'reject') {
+        return {
+            status: 'reject',
+            shouldBuy: false,
+            confidence: 0,
+            reason: guardDecision.reason || 'Aggressive continuation rejected',
+            momentum,
+            riskLevel: 'high',
+            exitStrategy: buildDefaultExit()
+        };
     }
 
-    // Check for negative liquidity growth
-    const liquidityGrowth = (token.vSolInBondingCurve || 30) - 30;
-    if (liquidityGrowth < -2) {
-        return { passed: false, reason: 'Liquidity draining' };
+    if (guardDecision.status === 'wait') {
+        return {
+            status: 'wait',
+            shouldBuy: false,
+            confidence: 40,
+            reason: guardDecision.reason || 'Aggressive continuation not ready',
+            momentum,
+            riskLevel: 'high',
+            exitStrategy: buildDefaultExit()
+        };
+    }
+
+    let confidence = 62;
+    if (sellCount >= 1) confidence += 6;
+    if (tradeCount >= 8) confidence += 7;
+    if (uniqueTraderCount >= 5) confidence += 5;
+    if (observedVolume >= 1.5) confidence += 5;
+    if (buyPressure >= 0.62) confidence += 4;
+    if (netFlow >= 0.5) confidence += 4;
+    confidence = Math.max(60, Math.min(88, confidence));
+
+    const exitStrategy = buildDefaultExit();
+    if (tradeCount >= 10 && observedVolume >= 1.8) {
+        exitStrategy.takeProfit = 10;
+        exitStrategy.stopLoss = 4;
+        exitStrategy.maxHoldTime = 50;
+    } else if (momentum < 0.9) {
+        exitStrategy.takeProfit = 6;
+        exitStrategy.stopLoss = 4;
+        exitStrategy.maxHoldTime = 35;
+    }
+
+    const riskLevel: SpeedTradeSignal['riskLevel'] = confidence >= 78 ? 'medium' : 'high';
+
+    return {
+        status: 'pass',
+        shouldBuy: true,
+        confidence,
+        reason: `AGGRESSIVE CONTINUATION: ${tradeCount} trades, ${uniqueTraderCount} wallets, ${(buyPressure * 100).toFixed(0)}% buy pressure`,
+        momentum,
+        riskLevel,
+        exitStrategy
+    };
+}
+
+export function quickSpeedCheck(token: TokenData): { passed: boolean; reason?: string } {
+    const decision = evaluateLiveEntryGuard('scalp', token, buildFeedOnlyAnalysis(token), 0.0025);
+    if (decision.status === 'reject') {
+        return { passed: false, reason: decision.reason || 'Aggressive continuation rejected' };
     }
 
     return { passed: true };
 }
-
-
-
-
-
-
-
-

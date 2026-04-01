@@ -31,14 +31,14 @@ function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
     if (mode === 'god') {
         return {
             minLiquidity: 36,
-            maxLiquidity: 110,
-            minVolume: 1.4,
-            minHolderCount: 14,
+            maxLiquidity: 125,
+            minVolume: 1.25,
+            minHolderCount: 12,
             maxTop10: 22,
             maxDev: 3,
             minBondingCurve: 1.5,
-            maxBondingCurve: 12,
-            minVelocity: 0.8,
+            maxBondingCurve: 14,
+            minVelocity: 0.7,
             rugCheckStrictness: 'strict',
             requireSocials: false,
             avoidSnipers: true,
@@ -46,39 +46,39 @@ function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
         };
     }
 
-    if (mode === 'sniper' || mode === 'high' || mode === 'first' || mode === 'scalp') {
+    if (mode === 'sniper' || mode === 'first') {
         return {
-            minLiquidity: 1,
-            maxLiquidity: 500,
-            minVolume: 0,
-            minHolderCount: 0,
-            maxTop10: 90,
-            maxDev: 50,
-            minBondingCurve: 0,
-            maxBondingCurve: 10,
-            minVelocity: 0,
-            rugCheckStrictness: 'lenient',
+            minLiquidity: 31.2,
+            maxLiquidity: 70,
+            minVolume: 0.75,
+            minHolderCount: 3,
+            maxTop10: 50,
+            maxDev: 12,
+            minBondingCurve: 0.15,
+            maxBondingCurve: 4.5,
+            minVelocity: 0.2,
+            rugCheckStrictness: 'standard',
             requireSocials: false,
-            avoidSnipers: false,
-            slippage: 30
+            avoidSnipers: true,
+            slippage: 12
         };
     }
 
-    if (mode === 'degen' || mode === 'velocity') {
+    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
         return {
-            minLiquidity: 5,
-            maxLiquidity: 2000,
-            minVolume: 2,
-            minHolderCount: 10,
-            maxTop10: 60,
-            maxDev: 15,
-            minBondingCurve: 1,
-            maxBondingCurve: 60,
-            minVelocity: 1,
+            minLiquidity: 34,
+            maxLiquidity: 140,
+            minVolume: 1.4,
+            minHolderCount: 8,
+            maxTop10: 34,
+            maxDev: 6,
+            minBondingCurve: 2,
+            maxBondingCurve: 14,
+            minVelocity: 0.6,
             rugCheckStrictness: 'standard',
             requireSocials: false,
-            avoidSnipers: false,
-            slippage: 25
+            avoidSnipers: true,
+            slippage: 12
         };
     }
 
@@ -125,53 +125,53 @@ function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
         };
     }
 
-    if (mode === 'sniper' || mode === 'high' || mode === 'first' || mode === 'scalp') {
+    if (mode === 'sniper' || mode === 'first') {
         return {
-            takeProfit: 35,
-            takeProfit2: 70,
-            stopLoss: 10,
-            maxHoldTime: 90,
+            takeProfit: 8,
+            takeProfit2: 14,
+            stopLoss: 4,
+            maxHoldTime: 30,
             trailingStop: false,
-            fastKillLoss: 3.5,
-            fastKillSeconds: 6,
-            givebackPeakTrigger: 5,
-            givebackFloor: 0.5,
-            givebackSeconds: 12,
-            stagnationSeconds: 35,
-            stagnationFloor: -2,
-            tp1SellPercent: 70,
-            tp2SellPercent: 15,
-            postTp1FloorPercent: 1.5,
-            postTp2FloorPercent: 5,
-            runnerMaxHoldTime: 180,
-            runnerTrailingStopPercent: 12,
-            runnerActivationProfit: 20,
-            runnerTimeExitFloor: 4
+            fastKillLoss: 2.2,
+            fastKillSeconds: 4,
+            givebackPeakTrigger: 3.2,
+            givebackFloor: 0.4,
+            givebackSeconds: 7,
+            stagnationSeconds: 12,
+            stagnationFloor: -0.5,
+            tp1SellPercent: 85,
+            tp2SellPercent: 10,
+            postTp1FloorPercent: 1.2,
+            postTp2FloorPercent: 4,
+            runnerMaxHoldTime: 90,
+            runnerTrailingStopPercent: 8,
+            runnerActivationProfit: 8,
+            runnerTimeExitFloor: 2
         };
     }
 
-    if (mode === 'degen' || mode === 'velocity') {
+    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
         return {
-            takeProfit: 35,
-            takeProfit2: 80,
-            stopLoss: 14,
-            maxHoldTime: 120,
+            takeProfit: 8,
+            takeProfit2: 14,
+            stopLoss: 4,
+            maxHoldTime: 40,
             trailingStop: false,
-            fastKillLoss: 4.5,
-            fastKillSeconds: 8,
-            givebackPeakTrigger: 8,
-            givebackFloor: 2,
-            givebackSeconds: 20,
-            stagnationSeconds: 60,
-            stagnationFloor: -1,
-            tp1SellPercent: 60,
-            tp2SellPercent: 20,
-            postTp1FloorPercent: 3,
-            postTp2FloorPercent: 10,
-            runnerMaxHoldTime: 360,
-            runnerTrailingStopPercent: 16,
-            runnerActivationProfit: 25,
-            runnerTimeExitFloor: 8
+            fastKillLoss: 2.2,
+            fastKillSeconds: 5,
+            givebackPeakTrigger: 3.2,
+            givebackFloor: 0.2,
+            givebackSeconds: 6,
+            stagnationSeconds: 10,
+            stagnationFloor: -0.5,
+            tp1SellPercent: 82,
+            tp2SellPercent: 8,
+            postTp1FloorPercent: 1,
+            postTp2FloorPercent: 3,
+            runnerMaxHoldTime: 90,
+            runnerTrailingStopPercent: 6,
+            runnerActivationProfit: 8,
+            runnerTimeExitFloor: 2
         };
     }
 
