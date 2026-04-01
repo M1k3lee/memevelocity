@@ -156,6 +156,9 @@ function calculateGodModeScore(params: {
   stressImpactPercent: number;
   top10Concentration: number;
   creatorHoldings: number;
+  largestTraderVolumeShare: number;
+  topTwoTraderVolumeShare: number;
+  creatorSellCount: number;
 }): number {
   const {
     age,
@@ -168,7 +171,10 @@ function calculateGodModeScore(params: {
     priceChangePercent,
     stressImpactPercent,
     top10Concentration,
-    creatorHoldings
+    creatorHoldings,
+    largestTraderVolumeShare,
+    topTwoTraderVolumeShare,
+    creatorSellCount
   } = params;
 
   const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
@@ -224,6 +230,21 @@ function calculateGodModeScore(params: {
     else if (creatorHoldings > 8) score -= 12;
   }
 
+  if (largestTraderVolumeShare > 0) {
+    if (largestTraderVolumeShare <= 0.22) score += 10;
+    else if (largestTraderVolumeShare <= 0.3) score += 4;
+    else score -= 14;
+  }
+
+  if (topTwoTraderVolumeShare > 0) {
+    if (topTwoTraderVolumeShare <= 0.4) score += 8;
+    else if (topTwoTraderVolumeShare > 0.52) score -= 10;
+  }
+
+  if (creatorSellCount > 0) {
+    score -= 35;
+  }
+
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -237,6 +258,11 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
   const uniqueTraderCount = snapshot?.uniqueTraderCount || 0;
   const buyPressure = snapshot?.buyPressure ?? 0.5;
   const priceChangePercent = snapshot?.priceChangePercent || 0;
+  const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || 0;
+  const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || 0;
+  const creatorVolumeShare = snapshot?.creatorVolumeShare || 0;
+  const creatorBuyCount = snapshot?.creatorBuyCount || 0;
+  const creatorSellCount = snapshot?.creatorSellCount || 0;
   const reasons: string[] = [];
   const warnings: string[] = [];
   const strengths: string[] = [];
@@ -340,6 +366,11 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
       tradeCount,
       uniqueTraderCount,
       priceChangePercent,
+      largestTraderVolumeShare,
+      topTwoTraderVolumeShare,
+      creatorVolumeShare,
+      creatorBuyCount,
+      creatorSellCount,
       contractSecurity: {
         freezeAuthority: false,
         mintAuthority: false,
@@ -1394,6 +1425,10 @@ export default function Home() {
         const buyPressure = snapshot?.buyPressure ?? 0;
         const netFlow = snapshot?.netFlowSol ?? liquidityGrowth;
         const priceChangePercent = snapshot?.priceChangePercent || 0;
+        const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || 0;
+        const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || 0;
+        const creatorVolumeShare = snapshot?.creatorVolumeShare || 0;
+        const creatorSellCount = snapshot?.creatorSellCount || 0;
         const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
         const bondingCurveProgress = calculateBondingCurveProgress(token.vTokensInBondingCurve);
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0;
@@ -1416,8 +1451,28 @@ export default function Home() {
           return;
         }
 
+        if (creatorSellCount > 0 && age <= 180) {
+          addLog(`GOD Reject: ${token.symbol} creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}).`);
+          return;
+        }
+
         if (antiChaseTriggered) {
           addLog(`GOD Reject: ${token.symbol} is already too extended (price ${priceChangePercent.toFixed(1)}%, curve ${bondingCurveProgress.toFixed(1)}%, trades ${tradeCount}, age ${age.toFixed(0)}s).`);
+          return;
+        }
+
+        if (largestTraderVolumeShare > (config.isDemo ? 0.34 : 0.3)) {
+          addLog(`GOD Reject: ${token.symbol} early flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%).`);
+          return;
+        }
+
+        if (topTwoTraderVolumeShare > (config.isDemo ? 0.55 : 0.48) && uniqueTraderCount < 12) {
+          addLog(`GOD Reject: ${token.symbol} top 2 wallets dominate the early tape (${(topTwoTraderVolumeShare * 100).toFixed(0)}%).`);
+          return;
+        }
+
+        if (creatorVolumeShare > (config.isDemo ? 0.3 : 0.24) && age >= 15) {
+          addLog(`GOD Reject: ${token.symbol} creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume).`);
           return;
         }
 
@@ -1425,20 +1480,44 @@ export default function Home() {
           buyCount >= (config.isDemo ? 5 : 6) &&
           tradeCount >= (config.isDemo ? 7 : 9) &&
           uniqueTraderCount >= (config.isDemo ? 5 : 6) &&
-          observedVolume >= (config.isDemo ? 0.9 : 1.25) &&
-          buyPressure >= (config.isDemo ? 0.57 : 0.6) &&
+          observedVolume >= (config.isDemo ? 1.0 : 1.4) &&
+          buyPressure >= (config.isDemo ? 0.58 : 0.61) &&
           netFlow >= (config.isDemo ? 0.35 : 0.5) &&
           traderDiversity >= (config.isDemo ? 0.4 : 0.44);
         const curveReady =
-          bondingCurveProgress >= (config.isDemo ? 0.9 : 1.2) &&
-          bondingCurveProgress <= (config.isDemo ? 16 : 14) &&
-          curveVelocity >= (config.isDemo ? 0.55 : 0.7) &&
-          momentum >= (config.isDemo ? 0.7 : 0.9) &&
+          bondingCurveProgress >= (config.isDemo ? 1.0 : 1.5) &&
+          bondingCurveProgress <= (config.isDemo ? 15 : 12) &&
+          curveVelocity >= (config.isDemo ? 0.6 : 0.8) &&
+          momentum >= (config.isDemo ? 0.8 : 0.95) &&
           priceChangePercent > -0.75;
         const executionReady =
-          capitalEfficiency >= (config.isDemo ? 0.075 : 0.09) &&
-          stressImpactPercent <= (config.isDemo ? 2.4 : 1.85) &&
+          capitalEfficiency >= (config.isDemo ? 0.08 : 0.095) &&
+          stressImpactPercent <= (config.isDemo ? 2.2 : 1.65) &&
           sellCount <= Math.max(2, Math.floor(tradeCount * 0.42));
+
+        const needsShakeoutConfirmation =
+          age >= 18 &&
+          observedVolume >= (config.isDemo ? 1.0 : 1.25) &&
+          tradeCount >= (config.isDemo ? 5 : 7) &&
+          sellCount < 1;
+
+        if (needsShakeoutConfirmation) {
+          if (age < 55) {
+            scheduleRetry(5000, `GOD wait: ${token.symbol} still needs a small shakeout and absorb before entry.`);
+          } else {
+            addLog(`GOD Reject: ${token.symbol} never showed a clean absorb after the first impulse.`);
+          }
+          return;
+        }
+
+        if (age >= 20 && buyPressure > 0.92 && sellCount === 0 && uniqueTraderCount < (config.isDemo ? 8 : 9)) {
+          if (age < 60) {
+            scheduleRetry(5000, `GOD wait: ${token.symbol} order flow is still too one-sided to trust (${(buyPressure * 100).toFixed(0)}% buys, no sells yet).`);
+          } else {
+            addLog(`GOD Reject: ${token.symbol} stayed too one-sided and looks coordinated.`);
+          }
+          return;
+        }
 
         if ((!participationReady || !curveReady || !executionReady) && (age < 105 || waitingOnSnapshot)) {
           scheduleRetry(
@@ -1455,19 +1534,19 @@ export default function Home() {
 
         const godAnalysisConfig = {
           ...config.advanced,
-          minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 30 : 34),
-          maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? 160 : 120),
-          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 0.9 : 1.25),
-          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 10 : 12),
-          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 30 : 25),
-          maxDev: Math.min(config.advanced?.maxDev ?? 100, 4),
-          minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 0.9 : 1.2),
-          maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? 16 : 14),
-          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? 0.55 : 0.7),
+          minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 32 : 36),
+          maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? 150 : 110),
+          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 1.0 : 1.4),
+          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 12 : 14),
+          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 28 : 22),
+          maxDev: Math.min(config.advanced?.maxDev ?? 100, 3),
+          minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 1.0 : 1.5),
+          maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? 15 : 12),
+          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? 0.6 : 0.8),
           rugCheckStrictness: 'strict',
           requireSocials: false,
           avoidSnipers: true,
-          slippage: Math.min(config.advanced?.slippage || 14, config.isDemo ? 18 : 14)
+          slippage: Math.min(config.advanced?.slippage || 12, config.isDemo ? 16 : 12)
         };
         const analysis = await analyzeEnhanced(token, connection, config.heliusKey, 'god', godAnalysisConfig);
 
@@ -1493,9 +1572,12 @@ export default function Home() {
           priceChangePercent,
           stressImpactPercent,
           top10Concentration,
-          creatorHoldings
+          creatorHoldings,
+          largestTraderVolumeShare,
+          topTwoTraderVolumeShare,
+          creatorSellCount
         });
-        const godScoreFloor = config.isDemo ? 68 : 74;
+        const godScoreFloor = config.isDemo ? 72 : 78;
 
         if (godScore < godScoreFloor) {
           if (age < 95) {
@@ -1506,7 +1588,7 @@ export default function Home() {
           return;
         }
 
-        addLog(`GOD setup: ${token.symbol} - score ${godScore}/100 | flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | top10 ${top10Concentration.toFixed(1)}% | creator ${creatorHoldings >= 0 ? `${creatorHoldings.toFixed(1)}%` : 'N/A'} | impact ${stressImpactPercent.toFixed(2)}%`);
+        addLog(`GOD setup: ${token.symbol} - score ${godScore}/100 | flow ${tradeCount} trades | ${(buyPressure * 100).toFixed(0)}% buy pressure | top1 ${(largestTraderVolumeShare * 100).toFixed(0)}% | top10 ${top10Concentration.toFixed(1)}% | creator ${creatorHoldings >= 0 ? `${creatorHoldings.toFixed(1)}%` : 'N/A'} | impact ${stressImpactPercent.toFixed(2)}%`);
 
         const setupPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
           ? calculatePumpPrice(token.vSolInBondingCurve, token.vTokensInBondingCurve)
@@ -1525,9 +1607,16 @@ export default function Home() {
         const priceDeltaPercent = setupPrice > 0 && verifiedPrice > 0 ? ((verifiedPrice - setupPrice) / setupPrice) * 100 : 0;
         const freshBuyPressure = freshSnapshot?.buyPressure ?? buyPressure;
         const freshUniqueTraders = freshSnapshot?.uniqueTraderCount ?? uniqueTraderCount;
+        const freshLargestTraderShare = freshSnapshot?.largestTraderVolumeShare ?? largestTraderVolumeShare;
+        const freshCreatorSellCount = freshSnapshot?.creatorSellCount ?? creatorSellCount;
 
         if (liquidityDeltaPercent < -4 || curveDelta < -0.8 || priceDeltaPercent < -1.8 || freshBuyPressure < 0.57) {
           addLog(`GOD Reject: ${token.symbol} lost too much confirmation (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure).`);
+          return;
+        }
+
+        if (freshLargestTraderShare > (config.isDemo ? 0.34 : 0.3) || freshCreatorSellCount > 0) {
+          addLog(`GOD Reject: ${token.symbol} confirmation stayed too concentrated or creator-led (top1 ${(freshLargestTraderShare * 100).toFixed(0)}%, creator sells ${freshCreatorSellCount}).`);
           return;
         }
 
@@ -1546,28 +1635,28 @@ export default function Home() {
         const starterAmount = Number((godAmount * 0.65).toFixed(4));
         const scaleInAmount = Number(Math.max(0, godAmount - starterAmount).toFixed(4));
         const exitStrategy = {
-          takeProfit: 30,
-          takeProfit2: 95,
-          stopLoss: config.isDemo ? 6 : 5,
-          maxHoldTime: 240,
+          takeProfit: 24,
+          takeProfit2: 55,
+          stopLoss: config.isDemo ? 5 : 4.5,
+          maxHoldTime: 180,
           trailingStop: false,
           momentumExit: false,
           minHoldTime: 10,
-          fastKillLoss: config.isDemo ? 3.5 : 2.8,
+          fastKillLoss: config.isDemo ? 3.2 : 2.5,
           fastKillSeconds: 6,
-          givebackPeakTrigger: 7,
+          givebackPeakTrigger: 6,
           givebackFloor: 1.5,
-          givebackSeconds: 14,
-          stagnationSeconds: 60,
+          givebackSeconds: 15,
+          stagnationSeconds: 35,
           stagnationFloor: 2,
-          tp1SellPercent: 70,
+          tp1SellPercent: 75,
           tp2SellPercent: 15,
           postTp1FloorPercent: 4,
-          postTp2FloorPercent: 14,
-          runnerMaxHoldTime: 900,
-          runnerTrailingStopPercent: 18,
-          runnerActivationProfit: 30,
-          runnerTimeExitFloor: 12
+          postTp2FloorPercent: 10,
+          runnerMaxHoldTime: 420,
+          runnerTrailingStopPercent: 14,
+          runnerActivationProfit: 25,
+          runnerTimeExitFloor: 6
         };
         const scaleInPlan = scaleInAmount >= 0.001 ? {
           pendingSol: scaleInAmount,
@@ -1699,6 +1788,11 @@ export default function Home() {
             tradeCount: 0,
             uniqueTraderCount: 0,
             priceChangePercent: 0,
+            largestTraderVolumeShare: 0,
+            topTwoTraderVolumeShare: 0,
+            creatorVolumeShare: 0,
+            creatorBuyCount: 0,
+            creatorSellCount: 0,
             contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
           }
         };

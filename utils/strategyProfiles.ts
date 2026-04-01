@@ -111,25 +111,25 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'god':
             return {
                 mode: 'god',
-                amount: 0.008,
-                takeProfit: 30,
-                stopLoss: 5,
+                amount: 0.006,
+                takeProfit: 24,
+                stopLoss: 4,
                 maxConcurrentTrades: 1,
                 dynamicSizing: true,
                 advanced: {
-                    minLiquidity: 34,
-                    maxLiquidity: 120,
-                    minVolume: 1.3,
-                    minHolderCount: 12,
-                    maxTop10: 24,
+                    minLiquidity: 36,
+                    maxLiquidity: 110,
+                    minVolume: 1.4,
+                    minHolderCount: 14,
+                    maxTop10: 22,
                     maxDev: 3,
-                    minBondingCurve: 1.2,
-                    maxBondingCurve: 14,
-                    minVelocity: 0.7,
+                    minBondingCurve: 1.5,
+                    maxBondingCurve: 12,
+                    minVelocity: 0.8,
                     rugCheckStrictness: 'strict',
                     requireSocials: false,
                     avoidSnipers: true,
-                    slippage: 14
+                    slippage: 12
                 }
             };
         case 'micro':

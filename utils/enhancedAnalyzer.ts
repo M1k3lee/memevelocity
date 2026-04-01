@@ -76,6 +76,11 @@ export interface EnhancedAnalysis {
         tradeCount: number;
         uniqueTraderCount: number;
         priceChangePercent: number;
+        largestTraderVolumeShare: number;
+        topTwoTraderVolumeShare: number;
+        creatorVolumeShare: number;
+        creatorBuyCount: number;
+        creatorSellCount: number;
         contractSecurity: {
             freezeAuthority: boolean; // true = revoked/null (good)
             mintAuthority: boolean; // true = revoked/null (good)
@@ -124,6 +129,13 @@ export async function analyzeEnhanced(
         const marketSnapshot = getMarketSnapshot(token.mint);
         const observedVolume = marketSnapshot?.observedVolumeSol || 0;
         const buyPressure = marketSnapshot?.buyPressure || 0;
+        const tradeCount = marketSnapshot?.tradeCount || 0;
+        const uniqueTraderCount = marketSnapshot?.uniqueTraderCount || 0;
+        const largestTraderVolumeShare = marketSnapshot?.largestTraderVolumeShare || 0;
+        const topTwoTraderVolumeShare = marketSnapshot?.topTwoTraderVolumeShare || 0;
+        const creatorVolumeShare = marketSnapshot?.creatorVolumeShare || 0;
+        const creatorBuyCount = marketSnapshot?.creatorBuyCount || 0;
+        const creatorSellCount = marketSnapshot?.creatorSellCount || 0;
 
         // Bonding Curve Progress
         const bondingCurveProgress = pumpData.bondingCurveProgress;
@@ -254,6 +266,34 @@ export async function analyzeEnhanced(
             warnings.push('Observed trade-flow history not yet available');
         }
 
+        if (creatorSellCount > 0 && age <= 180 && !isSniperMode) {
+            reasons.push(`Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`);
+            return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+        }
+
+        if (isRunnerMode || isGodMode) {
+            const maxLargestTraderShare = isGodMode ? 0.32 : 0.36;
+            const maxTopTwoTraderShare = isGodMode ? 0.52 : 0.58;
+            const maxCreatorVolumeShare = isGodMode ? 0.26 : 0.32;
+
+            if (largestTraderVolumeShare > maxLargestTraderShare) {
+                reasons.push(`Early flow too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
+                reasons.push(`Early flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+
+            if (creatorVolumeShare > maxCreatorVolumeShare && creatorBuyCount > 0 && age >= 12) {
+                reasons.push(`Creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume)`);
+                return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
+            }
+        } else if (largestTraderVolumeShare > 0.42) {
+            warnings.push(`Wallet concentration is elevated (${(largestTraderVolumeShare * 100).toFixed(0)}% from one wallet)`);
+        }
+
         // === FINAL DECISION ===
         const totalScore = tier0.score + tier1.score + tier2.score + tier3.score + tier4.score;
         let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'medium';
@@ -268,14 +308,24 @@ export async function analyzeEnhanced(
                 bondingCurveProgress >= 1.5 &&
                 observedVolume >= 1.2 &&
                 buyPressure >= 0.58 &&
-                (marketSnapshot?.tradeCount || 0) >= 8 &&
-                (marketSnapshot?.uniqueTraderCount || 0) >= 6 &&
+                tradeCount >= 8 &&
+                uniqueTraderCount >= 6 &&
                 holderMetrics.top10Concentration <= 25 &&
-                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 4);
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 4) &&
+                largestTraderVolumeShare <= 0.32 &&
+                topTwoTraderVolumeShare <= 0.52 &&
+                creatorSellCount === 0;
             riskLevel = passed ? 'low' : 'high';
         } else if (isRunnerMode) {
             // Strict: Must pass Tier 0, Tier 1 is boost, Tier 2 >= 60, Tier 4 >= 50
-            passed = tier0.score >= 100 && tier2.score >= 60 && tier4.score >= 50 && bondingCurveProgress >= 5;
+            passed =
+                tier0.score >= 100 &&
+                tier2.score >= 60 &&
+                tier4.score >= 50 &&
+                bondingCurveProgress >= 5 &&
+                largestTraderVolumeShare <= 0.36 &&
+                topTwoTraderVolumeShare <= 0.58 &&
+                creatorSellCount === 0;
             riskLevel = passed ? 'low' : 'high';
         } else if (isSniperMode) {
             // Sniper: Must pass Tier 0, and be VERY early (< 2 mins)
@@ -356,6 +406,11 @@ export async function analyzeEnhanced(
                 tradeCount: marketSnapshot?.tradeCount || 0,
                 uniqueTraderCount: marketSnapshot?.uniqueTraderCount || 0,
                 priceChangePercent: marketSnapshot?.priceChangePercent || 0,
+                largestTraderVolumeShare,
+                topTwoTraderVolumeShare,
+                creatorVolumeShare,
+                creatorBuyCount,
+                creatorSellCount,
                 contractSecurity
             }
         };
@@ -565,6 +620,7 @@ function createRejectResult(
         metrics: {
             holderCount: 0, deployerHoldings: -1, top10Concentration: 100,
             observedVolume: 0, buyPressure: 0, bondingCurveVelocity: 0, liquidityDepth: 0, tradeCount: 0, uniqueTraderCount: 0, priceChangePercent: 0,
+            largestTraderVolumeShare: 0, topTwoTraderVolumeShare: 0, creatorVolumeShare: 0, creatorBuyCount: 0, creatorSellCount: 0,
             contractSecurity: contractSecurity || { freezeAuthority: false, mintAuthority: false, updateAuthority: false }
         }
     };

@@ -1,397 +1,136 @@
-# 🚀 MemeVelocity - Pump.fun Automated Trading Bot
+# MemeVelocity
 
-<div align="center">
+Pump.fun trading workstation for Solana.
 
-**High-velocity automated trading bot for the Pump.fun ecosystem on Solana**
+MemeVelocity is a Next.js dashboard plus a Node runner for finding new launches, filtering obvious junk, paper trading, and managing live positions with staged exits. It is built for fast launch monitoring, not for passive long-term investing.
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.1-black?logo=next.js)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
-[![Solana](https://img.shields.io/badge/Solana-Mainnet-purple?logo=solana)](https://solana.com/)
+## What It Can Do
 
-[Features](#-features) • [Installation](#-installation) • [Configuration](#-configuration) • [Usage](#-usage) • [Safety](#-safety-warning)
+- Watch PumpPortal token creation and token trade flow in real time
+- Run browser-based paper trading with portfolio, logs, and trade history
+- Run an unattended Node bot with persistent state outside the browser
+- Score launches with technical safety, holder quality, flow, and bonding-curve context
+- Reject common rug patterns such as copycats, creator-led dumps, thin liquidity, and concentrated early flow
+- Manage exits with stop loss, staged take profit, fast-kill rules, giveback protection, and runner trailing logic
+- Record live feed data and replay paper scenarios for strategy testing
 
-</div>
+## Trading Modes
 
----
+- `Conservative`
+  Waits for cleaner second-wave confirmation. Best for avoiding obvious traps and limiting bad entries.
 
-## 📋 Overview
+- `Balanced`
+  Looks for reclaim setups and controlled continuation. More active than Conservative, still selective.
 
-**MemeVelocity** is an advanced automated trading bot designed for the Pump.fun ecosystem on Solana. It provides real-time token detection, intelligent analysis, and automated trading with sophisticated rug pull detection to help you navigate the volatile memecoin market.
+- `Aggressive`
+  Buys earlier continuation when momentum is strong. Faster entries, faster exits, higher failure rate.
 
-### Key Highlights
+- `Experimental`
+  Earliest-entry mode. Useful for paper testing and tiny size only.
 
-- ⚡ **Real-time Detection**: Monitors Pump.fun for new token launches via WebSocket
-- 🛡️ **Advanced Rug Detection**: Multi-layer filtering to avoid scams and duplicate copycat tokens
-- 📊 **Paper Trading Mode**: Test strategies risk-free before going live
-- 🎯 **Multiple Trading Strategies**: Runner, Sniper, Degen, and Custom modes
-- 🔄 **Automated Exit Strategies**: Take-profit, stop-loss, trailing stops, and momentum-based exits
-- 📈 **Live Portfolio Tracking**: Real-time PnL, trade history, and performance statistics
+- `Custom`
+  Manual control over liquidity, holder, curve, velocity, and slippage thresholds.
 
----
+## Core Features
 
-## ✨ Features
+- `Live feed`
+  Real-time PumpPortal subscriptions for launches and per-token trade updates.
 
-### 🎮 Trading Modes
+- `Analyzer`
+  Combines contract safety, holder concentration, creator exposure, buy pressure, and curve velocity.
 
-We've simplified our strategy into **three powerful modes**:
+- `Paper trading`
+  Simulated fills, fees, rent handling, PnL tracking, active trades, and history.
 
-- **🏃 RUNNER (The Profit King)**
-  - **Best for:** Consistent, high-quality trades.
-  - **Strategy:** Uses a **4-Tier Analysis Framework** to find legitimate projects.
-  - **Goal:** Catching the "real" projects that are ready to graduate bonding curves.
+- `Live runner`
+  Node worker that can trade outside the browser and keep state on disk across restarts.
 
-- **🎯 SNIPER (Speed & Precision)**
-  - **Best for:** Being the first one in.
-  - **Strategy:** Filters for "Technical Safety" (Tier 0) only and buys instantly.
-  - **Goal:** Get in during the first 60 seconds, take a quick 50% profit, and get out.
+- `Exit engine`
+  Supports staged profit taking, time exits, fast stop logic, profit lock floors, and moonbag runner logic.
 
-- **🎰 DEGEN (Maximum Chaos)**
-  - **Best for:** High risk, high reward.
-  - **Strategy:** Ignores most safety checks in favor of raw **Momentum** and **Volume**.
-  - **Goal:** Riding the hype wave. Warning: High risk of rug pulls.
+- `Wallet tools`
+  Local wallet creation/import, funding display, balance checks, recovery scans, and empty token-account cleanup.
 
-### 🧠 The 4-Tier Analysis Framework
+- `Research tooling`
+  Deterministic paper replay and live PumpPortal capture for strategy validation.
 
-Under the hood, **MemeVelocity** uses a sophisticated "Runner Detection" engine:
+## How It Works
 
-1.  **Tier 0: Technical Safety** 🛡️
-    - Validates metadata, authorities (freeze/mint), and honeypot risks.
-2.  **Tier 1: Launch Timing** ⏱️
-    - Checks for the "Golden Window" (Fri-Sun, 11-14 UTC).
-3.  **Tier 2: Holder Distribution** 👥
-    - Analyzes top 10 holders and developer ownership (<5%).
-4.  **Tier 3 & 4: Socials & Momentum** 🚀
-    - Verifies social signals and "Golden Velocity" (5-15% curve progress).
+1. New launch or token-trade events arrive from PumpPortal.
+2. Market snapshots are built from observed liquidity, volume, wallet count, and flow concentration.
+3. The analyzer and live entry guard decide whether the setup is tradeable.
+4. Paper or live execution runs with sizing, slippage, and exit rules.
+5. Open trades are managed until stop, take profit, staged exit, or time exit.
 
-**Runner Mode** requires a pass on *all* tiers. **Sniper** only cares about Tier 0. **Degen** focuses on Momentum.
-
-### 📊 Portfolio Management
-
-- **Active Trades Dashboard**: Real-time view of all open positions
-- **Trade History**: Complete log of all trades with PnL
-- **Performance Statistics**: Win rate, total PnL, best/worst trades
-- **Manual Overrides**: Sell buttons for manual intervention
-
-### 🔌 Integration Options
-
-- **Helius RPC**: Enhanced WebSocket support for faster data
-- **Public RPC Fallback**: Works without API keys (slower)
-- **PumpPortal API**: Direct integration with Pump.fun ecosystem
-
----
-
-## 🚀 Installation
-
-### Prerequisites
-
-- Node.js 18+ and npm
-- A Solana wallet (or create one in-app)
-- (Optional) Helius API key for enhanced performance
-
-### Quick Start
+## Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/M1k3lee/memevelocity.git
 cd memevelocity
-
-# Install dependencies
 npm install
-
-# Run development server
 npm run dev
-
-# Open in browser
-# http://localhost:3000
 ```
 
-### Production Build
+Open `http://localhost:3000`.
+
+## Useful Scripts
 
 ```bash
-# Build for production
+# app
+npm run dev
 npm run build
-
-# Start production server
 npm start
 
-# Build and run the unattended trading worker
+# unattended bot
 npm run bot:wallet
 npm run bot:start
+
+# strategy tooling
+npm run paper:replay
+npm run paper:capture -- 10
 ```
 
----
+## Runtime Notes
 
-## ⚙️ Configuration
+- `Helius` is optional for the UI, but strongly recommended for better RPC quality.
+- `TRADER_PRIVATE_KEY` is required for live runner mode.
+- `BOT_DRY_RUN=true` is the correct first live-runner setting.
+- Captured live feed files are written under `runtime/captures`.
+- Runner state is stored under `runtime/`.
 
-### Helius RPC Setup (Recommended)
+## Main Config Knobs
 
-For best performance and reliability, set up a free Helius API key:
+- `BOT_MODE`
+- `BOT_TRADE_AMOUNT_SOL`
+- `BOT_MAX_CONCURRENT_TRADES`
+- `BOT_MIN_MS_BETWEEN_TRADES`
+- `BOT_SLIPPAGE_PCT`
+- `BOT_TAKE_PROFIT_PCT`
+- `BOT_STOP_LOSS_PCT`
+- `BOT_DRY_RUN`
+- `HELIUS_API_KEY`
+- `TRADER_PRIVATE_KEY`
 
-1. Sign up at [helius.dev](https://helius.dev) (free tier available)
-2. Create a new project for Solana Mainnet
-3. Copy your API key
-4. In the app, go to **Wallet** tab → Enter your Helius API key
-5. The bot will automatically use Helius for faster data access
+See [.env.example](./.env.example) and [LIVE_RUNNER.md](./LIVE_RUNNER.md).
 
-**Benefits:**
-- ✅ Faster WebSocket connections
-- ✅ Higher rate limits
-- ✅ More reliable token detection
-- ✅ Better real-time price updates
+## Project Layout
 
-### Trading Configuration
-
-Access bot settings via the **Bot Config** tab:
-
-- **Trading Strategy**: Select Runner/Sniper/Degen/Custom
-- **Trade Amount**: SOL amount per trade (default: 0.01 SOL)
-- **Take Profit**: Target profit % (default: 20%)
-- **Stop Loss**: Maximum loss % (default: 10%)
-- **Max Concurrent Trades**: Maximum open positions (default: 5)
-- **Paper Trading**: Enable to test without real funds
-
-### Live Runner
-
-For unattended trading, use the Node runner instead of relying on a browser tab. It uses the same feed and analyzer core, but keeps wallet funding and open-trade state outside `localStorage`.
-
-- Put your dedicated wallet private key in `TRADER_PRIVATE_KEY`
-- Set `HELIUS_API_KEY` for live mode
-- Run `npm run bot:wallet` to print the funding address
-- Start with `BOT_DRY_RUN=true`
-- Use `npm run bot:start` when ready
-
-### Exit Strategy Customization
-
-Each trade can have custom exit strategies:
-- **Take Profit**: Automatic sell at target profit
-- **Stop Loss**: Automatic exit on loss threshold
-- **Trailing Stop**: Follows price up, locks in profits
-- **Time-based**: Exit after X minutes
-- **Momentum-based**: Exit on momentum reversal
-
----
-
-## 📖 Usage
-
-### First Time Setup
-
-1. **Create/Import Wallet**
-   - Go to **Wallet** tab
-   - Click "Create New Wallet" or "Import Wallet"
-   - **Important**: Save your private key securely!
-
-2. **Fund Your Wallet** (for live trading)
-   - Copy your wallet address
-   - Send SOL from another wallet
-   - Wait for confirmation
-
-3. **Configure Helius** (optional but recommended)
-   - Enter your Helius API key in Wallet tab
-   - This improves connection speed and reliability
-
-4. **Enable Paper Trading** (recommended for testing)
-   - Go to **Bot Config** tab
-   - Toggle "Paper Trading" ON
-   - Start with virtual funds to test strategies
-
-### Starting the Bot
-
-1. **Configure Trading Settings**
-   - Select your risk mode (Safe/Medium/High)
-   - Set trade amount (start small!)
-   - Configure take-profit and stop-loss
-
-2. **Start Trading**
-   - Click "Start Autotrading" button
-   - Watch the Market Feed for new tokens
-   - Monitor Active Trades for positions
-
-3. **Monitor Performance**
-   - Check Dashboard Stats for overall performance
-   - Review Trade History for detailed logs
-   - Use System Logs to see bot decisions
-
-### Manual Controls
-
-- **Sell Button**: Manually close any position
-- **Stop Bot**: Pause trading at any time
-- **Clear Trades**: Reset trade history (paper mode)
-
----
-
-## 🎯 Detailed Strategy Breakdown
-
-### 🏃 Runner Mode (Recommended)
-This is the "set it and forget it" mode for most users. It trades less often but filters steadily for quality.
-- **Entry:** Strict 4-Tier pass.
-- **Exit:** Takes profit at 30%, but keeps a **Trailing Stop** active to catch moonshots.
-- **Stop Loss:** Tight 10% to protect capital.
-
-### 🎯 Sniper Mode
-For those who believe "early bird gets the worm." Monitors for new contract creations and filters out obvious scams.
-- **Entry:** Instant, as long as the contract is safe (Tier 0).
-- **Exit:** Fast 50% take profit. Hit and run.
-- **Stop Loss:** 15%.
-
-### 🎰 Degen Mode
-For when the market is irrational and you want to ride the hype.
-- **Entry:** Momentum-based. If liquidity is pouring in, Degen buys.
-- **Exit:** 100% Take Profit (doubles your money).
-- **Stop Loss:** 25% (gives the token room to breathe).
-- **Special Feature:** "Momentum Exit" - automatically sells if pressure drops.
-
----
-
-## 🛡️ Safety Warning
-
-### ⚠️ CRITICAL DISCLAIMERS
-
-**This software is HIGH RISK. Use at your own risk.**
-
-1. **Memecoin Trading is Extremely Risky**
-   - 98.6% of Pump.fun tokens are scams/rugs
-   - Even "Safe" mode can lose money
-   - Only trade what you can afford to lose
-
-2. **No Guarantees**
-   - The bot cannot guarantee profits
-   - Rug detection is not 100% accurate
-   - Market conditions change rapidly
-
-3. **Best Practices**
-   - ✅ Start with paper trading
-   - ✅ Use small amounts initially
-   - ✅ Never invest more than you can lose
-   - ✅ Monitor actively, don't set and forget
-   - ✅ Keep private keys secure
-   - ✅ Use a dedicated trading wallet
-
-4. **The Developer is NOT Responsible**
-   - For any financial losses
-   - For bugs or errors in the software
-   - For your trading decisions
-
-### Security Notes
-
-- **Private Keys**: Stored locally in browser, never sent to servers
-- **API Keys**: Helius keys are stored locally, optional to use
-- **Transactions**: All transactions are signed locally
-- **Runner Option**: Unattended trading now uses the separate Node runner; the browser app remains the dashboard
-
----
-
-## 📁 Project Structure
-
-```
-memevelocity/
-├── app/
-│   ├── page.tsx          # Main trading interface
-│   ├── layout.tsx        # App layout
-│   └── globals.css       # Global styles
-├── components/
-│   ├── LiveFeed.tsx      # Real-time token feed
-│   ├── ActiveTrades.tsx  # Open positions dashboard
-│   ├── BotControls.tsx   # Trading controls
-│   ├── WalletManager.tsx # Wallet management
-│   ├── TradeHistory.tsx  # Trade history log
-│   └── DashboardStats.tsx # Performance stats
-├── hooks/
-│   └── usePumpTrader.ts  # Core trading logic
-├── utils/
-│   ├── rugDetector.ts    # Rug pull detection
-│   ├── tokenAnalyzer.ts  # Token analysis
-│   ├── enhancedAnalyzer.ts # Advanced analysis
-│   ├── solanaManager.ts  # Solana RPC management
-│   └── pumpPortal.ts     # Pump.fun API integration
-└── README.md
+```text
+app/        Next.js UI
+bot/        Unattended runner and paper tools
+components/ Dashboard UI
+hooks/      Trading state and execution hook
+types/      Shared types
+utils/      Feed, analyzer, execution, exits, and market math
 ```
 
----
+## Docs
 
-## 🔧 Troubleshooting
+- [HELIUS_SETUP.md](./HELIUS_SETUP.md)
+- [LIVE_RUNNER.md](./LIVE_RUNNER.md)
+- [PAPER_TRADING_STATUS.md](./PAPER_TRADING_STATUS.md)
+- [NETWORK_TROUBLESHOOTING.md](./NETWORK_TROUBLESHOOTING.md)
 
-### Market Feed Not Showing Tokens
+## Risk
 
-- **Check Connection**: Look for "connected" status (green dot)
-- **Helius Key**: Verify your Helius API key is valid
-- **Low Activity**: Pump.fun may have low activity - this is normal
-- **Console Logs**: Check browser console for connection errors
-
-### Trades Not Executing
-
-- **Wallet Balance**: Ensure you have enough SOL
-- **Paper Trading**: Check if paper trading is enabled
-- **Max Trades**: You may have hit the concurrent trade limit
-- **Score Threshold**: Token may not meet your mode's requirements
-
-### Price Updates Not Working
-
-- **RPC Connection**: Check Helius key or public RPC status
-- **Network Issues**: Try refreshing the page
-- **Token Rugged**: Price may have dropped to zero (check logs)
-
-### Performance Issues
-
-- **Use Helius**: Public RPC is slower
-- **Reduce Concurrent Trades**: Lower max trades for better performance
-- **Close Old Tabs**: Multiple instances can slow things down
-
----
-
-## 📚 Additional Documentation
-
-- [Helius Setup Guide](./HELIUS_SETUP.md) - Detailed Helius configuration
-- [Live Runner Guide](./LIVE_RUNNER.md) - Funding and running the unattended worker
-- [Network Troubleshooting](./NETWORK_TROUBLESHOOTING.md) - Connection issues
-- [Paper Trading Guide](./PAPER_TRADING_STATUS.md) - Paper trading details
-- [Speed Trading Guide](./SPEED_TRADING_GUIDE.md) - High-frequency strategies
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-**Areas for Contribution:**
-- Improved rug detection algorithms
-- Additional trading strategies
-- UI/UX improvements
-- Performance optimizations
-- Documentation improvements
-
----
-
-## 📝 License
-
-This project is provided as-is for educational and research purposes. Use at your own risk.
-
----
-
-## 🙏 Acknowledgments
-
-- Built for the Pump.fun ecosystem on Solana
-- Uses [Solana Web3.js](https://solana-labs.github.io/solana-web3.js/)
-- Powered by [Next.js](https://nextjs.org/)
-- Enhanced with [Helius RPC](https://helius.dev)
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/M1k3lee/memevelocity/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/M1k3lee/memevelocity/discussions)
-
----
-
-<div align="center">
-
-**⚠️ Remember: Only trade what you can afford to lose. Memecoin trading is extremely risky. ⚠️**
-
-Made with ❤️ for the Solana community
-
-</div>
+This app trades one of the worst microstructure environments in crypto. Most launches are low quality, many are manipulated, and no strategy here should be treated as guaranteed profitable. Paper trade first, keep size small, and use a dedicated wallet.

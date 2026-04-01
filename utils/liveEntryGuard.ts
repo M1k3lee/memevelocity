@@ -39,6 +39,9 @@ function calculateRunnerSetupScore(params: {
     stressImpactPercent: number;
     top10Concentration: number;
     creatorHoldings: number;
+    largestTraderVolumeShare: number;
+    topTwoTraderVolumeShare: number;
+    creatorSellCount: number;
 }): number {
     const {
         age,
@@ -51,7 +54,10 @@ function calculateRunnerSetupScore(params: {
         priceChangePercent,
         stressImpactPercent,
         top10Concentration,
-        creatorHoldings
+        creatorHoldings,
+        largestTraderVolumeShare,
+        topTwoTraderVolumeShare,
+        creatorSellCount
     } = params;
 
     const capitalEfficiency = observedVolume / Math.max(1, tradeCount);
@@ -105,6 +111,21 @@ function calculateRunnerSetupScore(params: {
     if (creatorHoldings >= 0) {
         if (creatorHoldings <= 4) score += 8;
         else if (creatorHoldings > 8) score -= 12;
+    }
+
+    if (largestTraderVolumeShare > 0) {
+        if (largestTraderVolumeShare <= 0.22) score += 10;
+        else if (largestTraderVolumeShare <= 0.3) score += 4;
+        else score -= 14;
+    }
+
+    if (topTwoTraderVolumeShare > 0) {
+        if (topTwoTraderVolumeShare <= 0.4) score += 8;
+        else if (topTwoTraderVolumeShare > 0.52) score -= 10;
+    }
+
+    if (creatorSellCount > 0) {
+        score -= 35;
     }
 
     return Math.max(0, Math.min(100, Math.round(score)));
@@ -284,8 +305,19 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
     const netFlow = snapshot?.netFlowSol || 0;
     const priceChangePercent = snapshot?.priceChangePercent || analysis.metrics.priceChangePercent || 0;
+    const largestTraderVolumeShare = snapshot?.largestTraderVolumeShare || analysis.metrics.largestTraderVolumeShare || 0;
+    const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || analysis.metrics.topTwoTraderVolumeShare || 0;
+    const creatorVolumeShare = snapshot?.creatorVolumeShare || analysis.metrics.creatorVolumeShare || 0;
+    const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
     const isGodMode = mode === 'god';
+
+    if (creatorSellCount > 0 && age <= 180) {
+        return {
+            status: 'reject',
+            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+        };
+    }
 
     if (sellCount > Math.max(2, Math.floor(tradeCount * 0.45)) && age <= 90) {
         return {
@@ -318,7 +350,60 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const minimumWallets = isGodMode ? 6 : 4;
     const minimumVolume = isGodMode ? 1.25 : 1.0;
     const minimumBuyPressure = isGodMode ? 0.6 : 0.57;
-    const maximumImpact = isGodMode ? 1.8 : 2.4;
+    const maximumImpact = isGodMode ? 1.65 : 2.15;
+    const maxLargestTraderShare = isGodMode ? 0.3 : 0.35;
+    const maxTopTwoTraderShare = isGodMode ? 0.48 : 0.56;
+    const maxCreatorVolumeShare = isGodMode ? 0.24 : 0.3;
+
+    if (largestTraderVolumeShare > maxLargestTraderShare) {
+        return {
+            status: 'reject',
+            reason: `One wallet is driving too much of the tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
+        return {
+            status: 'reject',
+            reason: `Too much early flow is coming from the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (creatorVolumeShare > maxCreatorVolumeShare && age >= 15) {
+        return {
+            status: 'reject',
+            reason: `Creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume)`
+        };
+    }
+
+    const needsShakeoutConfirmation =
+        age >= 18 &&
+        observedVolume >= minimumVolume &&
+        tradeCount >= Math.max(4, minimumTrades - 2) &&
+        sellCount < 1;
+    if (needsShakeoutConfirmation) {
+        return age < 55
+            ? {
+                status: 'wait',
+                reason: `Waiting for the first shakeout and absorb (${tradeCount} trades, no sells yet)`
+            }
+            : {
+                status: 'reject',
+                reason: `Runner never showed a clean absorb after the first impulse`
+            };
+    }
+
+    if (age >= 20 && buyPressure > 0.92 && sellCount === 0 && uniqueTraderCount < minimumWallets + 3) {
+        return age < 60
+            ? {
+                status: 'wait',
+                reason: `Order flow is still too one-sided to trust (${(buyPressure * 100).toFixed(0)}% buy pressure, no sells yet)`
+            }
+            : {
+                status: 'reject',
+                reason: `Launch stayed too one-sided and looked coordinated`
+            };
+    }
 
     if (impact > maximumImpact) {
         return {
@@ -355,9 +440,12 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         priceChangePercent,
         stressImpactPercent: impact,
         top10Concentration: analysis.metrics.top10Concentration,
-        creatorHoldings: analysis.metrics.deployerHoldings
+        creatorHoldings: analysis.metrics.deployerHoldings,
+        largestTraderVolumeShare,
+        topTwoTraderVolumeShare,
+        creatorSellCount
     });
-    const scoreFloor = isGodMode ? 74 : 68;
+    const scoreFloor = isGodMode ? 78 : 70;
 
     if (score < scoreFloor) {
         return age < 95

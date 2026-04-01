@@ -22,27 +22,27 @@ function parseNumber(value: string | undefined, fallback: number): number {
 }
 
 function resolveMode(rawMode: string | undefined): BotMode {
-    if (!rawMode) return 'runner';
+    if (!rawMode) return 'god';
     const normalized = rawMode.trim().toLowerCase() as BotMode;
-    return SUPPORTED_MODES.includes(normalized) ? normalized : 'runner';
+    return SUPPORTED_MODES.includes(normalized) ? normalized : 'god';
 }
 
 function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
     if (mode === 'god') {
         return {
-            minLiquidity: 34,
-            maxLiquidity: 120,
-            minVolume: 1.3,
-            minHolderCount: 12,
-            maxTop10: 24,
+            minLiquidity: 36,
+            maxLiquidity: 110,
+            minVolume: 1.4,
+            minHolderCount: 14,
+            maxTop10: 22,
             maxDev: 3,
-            minBondingCurve: 1.2,
-            maxBondingCurve: 14,
-            minVelocity: 0.7,
+            minBondingCurve: 1.5,
+            maxBondingCurve: 12,
+            minVelocity: 0.8,
             rugCheckStrictness: 'strict',
             requireSocials: false,
             avoidSnipers: true,
-            slippage: 14
+            slippage: 12
         };
     }
 
@@ -102,26 +102,26 @@ function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
 function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
     if (mode === 'god') {
         return {
-            takeProfit: 30,
-            takeProfit2: 95,
-            stopLoss: 5,
-            maxHoldTime: 240,
+            takeProfit: 24,
+            takeProfit2: 55,
+            stopLoss: 4.5,
+            maxHoldTime: 180,
             trailingStop: false,
-            fastKillLoss: 2.8,
+            fastKillLoss: 2.5,
             fastKillSeconds: 6,
-            givebackPeakTrigger: 7,
+            givebackPeakTrigger: 6,
             givebackFloor: 1.5,
-            givebackSeconds: 14,
-            stagnationSeconds: 60,
+            givebackSeconds: 15,
+            stagnationSeconds: 35,
             stagnationFloor: 2,
-            tp1SellPercent: 70,
+            tp1SellPercent: 75,
             tp2SellPercent: 15,
             postTp1FloorPercent: 4,
-            postTp2FloorPercent: 14,
-            runnerMaxHoldTime: 900,
-            runnerTrailingStopPercent: 18,
-            runnerActivationProfit: 30,
-            runnerTimeExitFloor: 12
+            postTp2FloorPercent: 10,
+            runnerMaxHoldTime: 420,
+            runnerTrailingStopPercent: 14,
+            runnerActivationProfit: 25,
+            runnerTimeExitFloor: 6
         };
     }
 
