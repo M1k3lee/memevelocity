@@ -19,6 +19,7 @@ import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pump
 import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
 import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
+import { getStrategyPresetConfig, normalizeStrategyProfile, STRATEGY_PRESET_VERSION } from '../utils/strategyProfiles';
 import {
   getProfitLockFloor,
   getRunnerActivationProfit,
@@ -44,6 +45,7 @@ const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
 const MIN_VIABLE_LIVE_TRADE_SOL = 0.0025;
 const MICRO_WALLET_MAX_SOL = 0.05;
 const BOT_CONFIG_STORAGE_KEY = 'pump_bot_config';
+const BOT_CONFIG_PRESET_VERSION = STRATEGY_PRESET_VERSION;
 
 type DecisionSignalKind = 'wait' | 'reject' | 'approve' | 'buy' | 'retry' | 'info';
 
@@ -82,6 +84,25 @@ type RiskRails = {
   rejectRate: number;
   approvalRate: number;
 };
+
+function migrateStoredBotConfig(savedConfig: any) {
+  const migratedConfig = { ...savedConfig };
+  const normalizedMode = normalizeStrategyProfile(migratedConfig?.mode);
+  const savedPresetVersion = Number.isFinite(Number(migratedConfig?.presetVersion))
+    ? Number(migratedConfig?.presetVersion)
+    : 0;
+
+  if ((!migratedConfig.advanced || savedPresetVersion < BOT_CONFIG_PRESET_VERSION) && normalizedMode !== 'custom') {
+    migratedConfig.advanced = getStrategyPresetConfig(normalizedMode).advanced;
+  }
+
+  if (!migratedConfig.advanced && normalizedMode === 'custom') {
+    migratedConfig.advanced = getStrategyPresetConfig('custom').advanced;
+  }
+
+  migratedConfig.presetVersion = BOT_CONFIG_PRESET_VERSION;
+  return migratedConfig;
+}
 
 function isMicroWalletBalance(balance: number | null | undefined): boolean {
   return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 && balance <= MICRO_WALLET_MAX_SOL;
@@ -616,7 +637,8 @@ function buildPaperTradeFallbackAnalysis(token: TokenData, age: number, momentum
       contractSecurity: {
         freezeAuthority: false,
         mintAuthority: false,
-        updateAuthority: false
+        updateAuthority: false,
+        verified: false
       }
     }
   };
@@ -663,7 +685,8 @@ export default function Home() {
       isSimulating: false,
       heliusKey: savedKey || '',
       maxConcurrentTrades: 1,
-      dynamicSizing: true
+      dynamicSizing: true,
+      presetVersion: BOT_CONFIG_PRESET_VERSION
     };
 
     if (typeof window === 'undefined') {
@@ -676,7 +699,7 @@ export default function Home() {
         return defaultConfig;
       }
 
-      const savedConfig = JSON.parse(savedConfigRaw);
+      const savedConfig = migrateStoredBotConfig(JSON.parse(savedConfigRaw));
       return {
         ...defaultConfig,
         ...savedConfig,
@@ -727,6 +750,42 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!mounted) return;
+
+    const normalizedMode = normalizeStrategyProfile(config?.mode);
+    const savedPresetVersion = Number.isFinite(Number(config?.presetVersion))
+      ? Number(config.presetVersion)
+      : 0;
+    const needsPresetRefresh =
+      (!config?.advanced || savedPresetVersion < BOT_CONFIG_PRESET_VERSION) &&
+      normalizedMode !== 'custom';
+
+    if (!needsPresetRefresh) {
+      return;
+    }
+
+    setConfig((prev: any) => {
+      const prevMode = normalizeStrategyProfile(prev?.mode);
+      const prevPresetVersion = Number.isFinite(Number(prev?.presetVersion))
+        ? Number(prev.presetVersion)
+        : 0;
+      const stillNeedsRefresh =
+        (!prev?.advanced || prevPresetVersion < BOT_CONFIG_PRESET_VERSION) &&
+        prevMode !== 'custom';
+
+      if (!stillNeedsRefresh) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        advanced: getStrategyPresetConfig(prevMode).advanced,
+        presetVersion: BOT_CONFIG_PRESET_VERSION
+      };
+    });
+  }, [config?.advanced, config?.mode, config?.presetVersion, mounted]);
+
   // Use Helius for RPC if key is present to bypass public node limits/blocks
   // Initialize connection with Helius key from config (which is loaded from localStorage)
   const [connection, setConnection] = useState(() => {
@@ -754,7 +813,10 @@ export default function Home() {
     if (!mounted) return;
 
     const { heliusKey: _heliusKey, isRunning: _isRunning, ...persistedConfig } = config;
-    localStorage.setItem(BOT_CONFIG_STORAGE_KEY, JSON.stringify(persistedConfig));
+    localStorage.setItem(BOT_CONFIG_STORAGE_KEY, JSON.stringify({
+      ...persistedConfig,
+      presetVersion: BOT_CONFIG_PRESET_VERSION
+    }));
   }, [config, mounted]);
 
   const {
@@ -828,7 +890,7 @@ export default function Home() {
   }, []);
 
   const handleConfigChange = useCallback((newConfig: any) => {
-    setConfig(newConfig);
+    setConfig({ ...newConfig, presetVersion: BOT_CONFIG_PRESET_VERSION });
     setDemoMode(newConfig.isDemo);
   }, [setDemoMode]);
 
@@ -2069,7 +2131,7 @@ export default function Home() {
             creatorBuyCount: 0,
             creatorSellCount: 0,
             launchFlags: createEmptyPumpLaunchFlags(),
-            contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true }
+            contractSecurity: { freezeAuthority: true, mintAuthority: true, updateAuthority: true, verified: true }
           }
         };
       } else {
@@ -2109,7 +2171,7 @@ export default function Home() {
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 35;
       else if (config.mode === 'micro') minScore = 45;
-      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 38 : 42);
+      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 35 : 38);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -2134,7 +2196,7 @@ export default function Home() {
           buyCount >= 4 &&
           tradeCount >= 6 &&
           uniqueTraderCount >= 4 &&
-          observedVolume >= 1.4 &&
+          observedVolume >= 1.2 &&
           buyPressure >= 0.64;
         const steadyTapeConfirmation =
           tradeCount >= 20 &&
@@ -2149,11 +2211,11 @@ export default function Home() {
           momentum >= 1.55 &&
           buyPressure >= 0.55;
         const curveReady =
-          (analysis.bondingCurveProgress >= 3 && analysis.bondingCurveProgress <= 16) ||
+          (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 18) ||
           (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
         const deepLiquidityConfirmation =
-          analysis.marketCap >= 55 &&
-          observedVolume >= 1.5 &&
+          analysis.marketCap >= 48 &&
+          observedVolume >= 1.3 &&
           uniqueTraderCount >= 4 &&
           (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
         const waitingOnSnapshot =
@@ -2163,7 +2225,7 @@ export default function Home() {
           observedVolume <= 0.2 &&
           liquidityGrowth > 0.25;
 
-        if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 35)) {
+        if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 32)) {
           scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }

@@ -14,6 +14,9 @@ export type InternalMode =
 
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 
+// Bump this when preset defaults change and saved UI configs should refresh.
+export const STRATEGY_PRESET_VERSION = 2;
+
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
     maxLiquidity: number;
@@ -165,15 +168,15 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 34,
+                    minLiquidity: 32,
                     maxLiquidity: 140,
-                    minVolume: 1.4,
-                    minHolderCount: 8,
-                    maxTop10: 34,
-                    maxDev: 6,
-                    minBondingCurve: 2,
-                    maxBondingCurve: 14,
-                    minVelocity: 0.6,
+                    minVolume: 1.2,
+                    minHolderCount: 6,
+                    maxTop10: 42,
+                    maxDev: 8,
+                    minBondingCurve: 1.5,
+                    maxBondingCurve: 18,
+                    minVelocity: 0.45,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,

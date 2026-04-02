@@ -404,7 +404,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
-    if (liquidity < 34) {
+    if (liquidity < 32) {
         return age < 55
             ? {
                 status: 'wait',

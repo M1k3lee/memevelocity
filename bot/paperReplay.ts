@@ -262,7 +262,8 @@ function buildAnalysis(token: TokenData, quality: Scenario['quality']): Enhanced
             contractSecurity: {
                 freezeAuthority: true,
                 mintAuthority: true,
-                updateAuthority: true
+                updateAuthority: true,
+                verified: true
             }
         }
     };

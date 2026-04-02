@@ -10,6 +10,7 @@ type ContractSecurity = {
     freezeAuthority: boolean;
     mintAuthority: boolean;
     updateAuthority: boolean;
+    verified: boolean;
 };
 
 const contractSecurityCache = new Map<string, ContractSecurity>();
@@ -94,6 +95,7 @@ export interface EnhancedAnalysis {
             freezeAuthority: boolean; // true = revoked/null (good)
             mintAuthority: boolean; // true = revoked/null (good)
             updateAuthority: boolean; // true = verified immutable, false = active or unverified
+            verified: boolean; // true when RPC confirmed the authority state
         };
     };
 }
@@ -174,7 +176,10 @@ export async function analyzeEnhanced(
 
         // === TIER 0: METADATA & TECHNICAL SETUP ===
         // Must pass 100 points (All checks)
-        const tier0 = calculateTier0(token, metadata, contractSecurity, liquidity);
+        const tier0PassFloor = isDegenMode || isSniperMode ? 80 : 100;
+        const tier0 = calculateTier0(token, metadata, contractSecurity, liquidity, {
+            allowUnknownAuthorityState: isDegenMode || isSniperMode
+        });
         if (tier0.score < 100) {
             // IMMEDIATE REJECT for Runner Mode
             if (isRunnerMode) {
@@ -446,7 +451,7 @@ export async function analyzeEnhanced(
             }
 
             passed =
-                tier0.score >= 100 &&
+                tier0.score >= tier0PassFloor &&
                 age < 75 &&
                 curveWindow &&
                 healthyDistribution &&
@@ -485,7 +490,7 @@ export async function analyzeEnhanced(
             const healthyDistribution =
                 holderMetrics.top10Concentration <= 42 &&
                 (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 10);
-            const enoughLiquidity = liquidity >= 34;
+            const enoughLiquidity = liquidity >= 32;
             const healthyFlowShape =
                 largestTraderVolumeShare <= 0.38 &&
                 topTwoTraderVolumeShare <= 0.64 &&
@@ -512,7 +517,7 @@ export async function analyzeEnhanced(
             }
 
             passed =
-                tier0.score >= 100 &&
+                tier0.score >= tier0PassFloor &&
                 enoughLiquidity &&
                 healthyCurve &&
                 healthyDistribution &&
@@ -585,7 +590,13 @@ export async function analyzeEnhanced(
 // TIER CALCULATORS
 // ==============================================================================
 
-function calculateTier0(token: TokenData, metadata: any, security: any, liquidity: number) {
+function calculateTier0(
+    token: TokenData,
+    metadata: any,
+    security: ContractSecurity,
+    liquidity: number,
+    options?: { allowUnknownAuthorityState?: boolean }
+) {
     let score = 0;
     const reasons: string[] = [];
     const warnings: string[] = [];
@@ -593,6 +604,7 @@ function calculateTier0(token: TokenData, metadata: any, security: any, liquidit
     const effectiveName = hasUsableMetadataValue(metadata?.name) ? metadata.name : token.name;
     const effectiveSymbol = hasUsableMetadataValue(metadata?.symbol) ? metadata.symbol : token.symbol;
     const usedFeedFallback = !hasUsableMetadataValue(metadata?.name) || !hasUsableMetadataValue(metadata?.symbol);
+    const allowUnknownAuthorityState = !!options?.allowUnknownAuthorityState && !security.verified;
 
     // 1. Metadata URL Present?
     // Some metadata objects return empty uri, so we check name/symbol validity too
@@ -610,20 +622,36 @@ function calculateTier0(token: TokenData, metadata: any, security: any, liquidit
     score += 20; // Assume legacy for now
 
     // 3. Freeze Authority Revoked?
-    if (security.freezeAuthority) {
+    if (security.verified) {
+        if (security.freezeAuthority) {
+            score += 20;
+            strengths.push("Freeze Authority Revoked");
+        } else {
+            reasons.push("Freeze Authority Active (Honeypot Risk)");
+            score -= 1000;
+        }
+    } else if (allowUnknownAuthorityState) {
         score += 20;
-        strengths.push("Freeze Authority Revoked");
+        warnings.push("Freeze authority could not be verified on RPC - using provisional fast-mode pass");
     } else {
-        reasons.push("Freeze Authority Active (Honeypot Risk)");
+        reasons.push("Freeze Authority Unverified");
         score -= 1000;
     }
 
     // 4. Mint Authority Revoked?
-    if (security.mintAuthority) {
+    if (security.verified) {
+        if (security.mintAuthority) {
+            score += 20;
+            strengths.push("Mint Authority Revoked");
+        } else {
+            reasons.push("Mint Authority Active");
+            score -= 1000;
+        }
+    } else if (allowUnknownAuthorityState) {
         score += 20;
-        strengths.push("Mint Authority Revoked");
+        warnings.push("Mint authority could not be verified on RPC - using provisional fast-mode pass");
     } else {
-        reasons.push("Mint Authority Active");
+        reasons.push("Mint Authority Unverified");
         score -= 1000;
     }
 
@@ -765,10 +793,12 @@ function createRejectResult(
     strengths: string[],
     bondingCurveProgress: number = 0,
     marketCap: number = 0,
-    contractSecurity?: any,
+    contractSecurity?: ContractSecurity,
     launchFlags: PumpLaunchFlags = createEmptyPumpLaunchFlags()
 ): EnhancedAnalysis {
-    reasons.push(reason);
+    if (reasons[reasons.length - 1] !== reason) {
+        reasons.push(reason);
+    }
     return {
         score: 0,
         riskLevel: 'critical',
@@ -785,7 +815,7 @@ function createRejectResult(
             maxPriceChangePercent: 0, minPriceChangePercent: 0, peakLiquiditySol: 0, peakPrice: 0,
             largestTraderVolumeShare: 0, topTwoTraderVolumeShare: 0, creatorVolumeShare: 0, creatorNetFlowSol: 0, creatorBuyCount: 0, creatorSellCount: 0,
             launchFlags,
-            contractSecurity: contractSecurity || { freezeAuthority: false, mintAuthority: false, updateAuthority: false }
+            contractSecurity: contractSecurity || { freezeAuthority: false, mintAuthority: false, updateAuthority: false, verified: false }
         }
     };
 }
@@ -803,17 +833,20 @@ async function checkContractSecurity(mintAddress: string, connection: Connection
         const mint = new PublicKey(mintAddress);
         const mintInfo = await connection.getParsedAccountInfo(mint);
         if (!mintInfo.value || !mintInfo.value.data || typeof mintInfo.value.data === 'string') {
-            return { freezeAuthority: false, mintAuthority: false, updateAuthority: false };
+            return { freezeAuthority: false, mintAuthority: false, updateAuthority: false, verified: false };
         }
         const parsed = mintInfo.value.data as any;
         const result = {
             freezeAuthority: parsed.parsed?.info?.freezeAuthority === null,
             mintAuthority: parsed.parsed?.info?.mintAuthority === null,
-            updateAuthority: false
+            updateAuthority: false,
+            verified: true
         };
         contractSecurityCache.set(mintAddress, result);
         return result;
-    } catch { return { freezeAuthority: false, mintAuthority: false, updateAuthority: false }; }
+    } catch {
+        return { freezeAuthority: false, mintAuthority: false, updateAuthority: false, verified: false };
+    }
 }
 
 async function checkSocials(uri: string): Promise<boolean | null> {

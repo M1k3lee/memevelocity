@@ -74,7 +74,8 @@ function buildFeedOnlyAnalysis(token: TokenData): EnhancedAnalysis {
             contractSecurity: {
                 freezeAuthority: true,
                 mintAuthority: true,
-                updateAuthority: true
+                updateAuthority: true,
+                verified: true
             }
         }
     };
