@@ -154,6 +154,14 @@ export async function analyzeEnhanced(
         const minPriceChangePercent = marketSnapshot?.minPriceChangePercent || marketSnapshot?.priceChangePercent || 0;
         const peakLiquiditySol = marketSnapshot?.peakLiquiditySol || liquidity;
         const peakPrice = marketSnapshot?.peakPrice || 0;
+        const probeConcentrationSampleReady =
+            tradeCount >= 3 ||
+            uniqueTraderCount >= 2 ||
+            observedVolume >= 0.35;
+        const degenConcentrationSampleReady =
+            tradeCount >= 4 ||
+            uniqueTraderCount >= 3 ||
+            observedVolume >= 0.6;
 
         // Bonding Curve Progress
         const bondingCurveProgress = pumpData.bondingCurveProgress;
@@ -332,12 +340,12 @@ export async function analyzeEnhanced(
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
         } else if (isDegenMode) {
-            if (largestTraderVolumeShare > 0.38) {
+            if (degenConcentrationSampleReady && largestTraderVolumeShare > 0.38) {
                 reasons.push(`Aggressive flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
 
-            if (topTwoTraderVolumeShare > 0.64 && uniqueTraderCount < 10) {
+            if (degenConcentrationSampleReady && topTwoTraderVolumeShare > 0.64 && uniqueTraderCount < 10) {
                 reasons.push(`Aggressive flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
@@ -352,12 +360,12 @@ export async function analyzeEnhanced(
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
         } else if (isSniperMode) {
-            if (largestTraderVolumeShare > 0.44) {
+            if (probeConcentrationSampleReady && largestTraderVolumeShare > 0.44) {
                 reasons.push(`Probe flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
 
-            if (topTwoTraderVolumeShare > 0.7 && uniqueTraderCount < 8) {
+            if (probeConcentrationSampleReady && topTwoTraderVolumeShare > 0.7 && uniqueTraderCount < 8) {
                 reasons.push(`Probe flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }

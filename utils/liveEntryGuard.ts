@@ -154,6 +154,10 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || 0;
     const creatorVolumeShare = snapshot?.creatorVolumeShare || 0;
     const creatorSellCount = snapshot?.creatorSellCount || 0;
+    const concentrationSampleReady =
+        tradeCount >= 3 ||
+        uniqueTraderCount >= 2 ||
+        observedVolume >= 0.35;
 
     if (age > 60) {
         return {
@@ -167,6 +171,18 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
             status: 'reject',
             reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
         };
+    }
+
+    if (!concentrationSampleReady) {
+        return age < 20
+            ? {
+                status: 'wait',
+                reason: `Waiting for a second wallet to join (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
+            }
+            : {
+                status: 'reject',
+                reason: `Probe never broadened beyond the opening wallet (${tradeCount} trades, ${uniqueTraderCount} wallets)`
+            };
     }
 
     if (largestTraderVolumeShare > 0.46) {
@@ -301,6 +317,10 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     const creatorSellCount = snapshot?.creatorSellCount || analysis.metrics.creatorSellCount || 0;
     const repeatTraderRatio = snapshot?.repeatTraderRatio || analysis.metrics.repeatTraderRatio || 0;
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
+    const concentrationSampleReady =
+        tradeCount >= 4 ||
+        uniqueTraderCount >= 3 ||
+        observedVolume >= 0.6;
 
     if (age > 60) {
         return {
@@ -346,6 +366,18 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
             status: 'reject',
             reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})`
         };
+    }
+
+    if (!concentrationSampleReady) {
+        return age < 24
+            ? {
+                status: 'wait',
+                reason: `Waiting for broader aggressive flow (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive flow never broadened beyond the opening wallets (${tradeCount} trades, ${uniqueTraderCount} wallets)`
+            };
     }
 
     if (largestTraderVolumeShare > 0.4) {
