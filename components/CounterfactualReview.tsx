@@ -4,6 +4,7 @@ import React from 'react';
 import { FlaskConical, ArrowUpRight, ArrowDownRight, ShieldCheck, Clock3 } from 'lucide-react';
 
 type CounterfactualReviewProps = {
+    className?: string;
     review: {
         summary: {
             saved: number;
@@ -33,9 +34,9 @@ function verdictStyles(verdict: CounterfactualReviewProps['review']['items'][num
     return 'border-white/10 bg-white/[0.04] text-gray-400';
 }
 
-export default function CounterfactualReview({ review }: CounterfactualReviewProps) {
+export default function CounterfactualReview({ review, className = '' }: CounterfactualReviewProps) {
     return (
-        <div className="glass-panel p-5">
+        <div className={`glass-panel p-5 h-full flex flex-col ${className}`}>
             <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                     <h3 className="font-bold flex items-center gap-2 text-gray-300 text-base">
@@ -67,7 +68,7 @@ export default function CounterfactualReview({ review }: CounterfactualReviewPro
                 </div>
             </div>
 
-            <div className="mt-5 space-y-2.5">
+            <div className="mt-5 flex-1 overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
                 {review.items.length > 0 ? review.items.map((item, index) => (
                     <div key={`${item.token}-${item.action}-${index}`} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
                         <div className="flex items-start justify-between gap-3">

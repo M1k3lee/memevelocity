@@ -4,6 +4,7 @@ import React from 'react';
 import { Radar, Link2, ShieldAlert } from 'lucide-react';
 
 type WalletRadarProps = {
+    className?: string;
     radar: {
         summary: {
             trackedLaunches: number;
@@ -38,9 +39,9 @@ function formatWallet(wallet: string): string {
     return `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
 }
 
-export default function WalletRadar({ radar }: WalletRadarProps) {
+export default function WalletRadar({ radar, className = '' }: WalletRadarProps) {
     return (
-        <div className="glass-panel p-5">
+        <div className={`glass-panel p-5 h-full flex flex-col ${className}`}>
             <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                     <h3 className="font-bold flex items-center gap-2 text-gray-300 text-base">
@@ -72,7 +73,7 @@ export default function WalletRadar({ radar }: WalletRadarProps) {
                 </div>
             </div>
 
-            <div className="mt-5 space-y-4">
+            <div className="mt-5 flex-1 overflow-y-auto pr-1 space-y-4 custom-scrollbar">
                 <div>
                     <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Recurring Wallets</div>
                     <div className="space-y-2">

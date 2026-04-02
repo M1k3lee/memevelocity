@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { createConnection, getPumpData } from '../utils/solanaManager';
 import { usePumpTrader } from '../hooks/usePumpTrader';
 import type { TokenData } from '../types/token';
-import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings, Activity } from 'lucide-react';
+import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings, Activity, Radar, FlaskConical, Shield } from 'lucide-react';
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
@@ -959,6 +959,7 @@ function evaluateLiveSniperConfirmation(token: TokenData, age: number): { decisi
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [wallet, setWallet] = useState<any>(null);
+  const [intelView, setIntelView] = useState<'radar' | 'review' | 'rails'>('radar');
   // Initialize config with Helius key from localStorage if available (client-side only)
   const [config, setConfig] = useState<any>(() => {
     const savedKey = typeof window !== 'undefined' ? localStorage.getItem('helius_api_key') : '';
@@ -3278,200 +3279,123 @@ export default function Home() {
           {/* Main Center Area (Stats & Active Trades) */}
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
-              <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-                <div className="glass-panel p-5">
-                  <div className="mb-4 flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold flex items-center gap-2 text-gray-300 text-base">
-                        <Activity size={16} /> Decision Pulse
-                      </h3>
-                      <p className="mt-1 text-xs text-gray-500">Live view of waits, rejections, approvals, and entries as the tape evolves.</p>
+              <div className="glass-panel p-5">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="font-bold flex items-center gap-2 text-gray-300 text-base">
+                      <Activity size={16} /> Decision Pulse
+                    </h3>
+                    <p className="mt-1 text-xs text-gray-500">Live view of waits, rejections, approvals, and entries as the tape evolves.</p>
+                  </div>
+                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-gray-500">
+                    {decisionPulse.totalSignals} parsed
+                  </span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wide text-amber-300/70">Waits</div>
+                    <div className="mt-1 text-2xl font-semibold text-amber-300">{decisionPulse.counts.wait}</div>
+                  </div>
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wide text-red-300/70">Rejects</div>
+                    <div className="mt-1 text-2xl font-semibold text-red-300">{decisionPulse.counts.reject}</div>
+                  </div>
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wide text-emerald-300/70">Approvals</div>
+                    <div className="mt-1 text-2xl font-semibold text-emerald-300">{decisionPulse.counts.approve}</div>
+                  </div>
+                  <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wide text-sky-300/70">Entries</div>
+                    <div className="mt-1 text-2xl font-semibold text-sky-300">{decisionPulse.counts.buy}</div>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_1fr]">
+                  <div>
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Mode Breakdown</div>
+                    <div className="space-y-2.5">
+                      {decisionPulse.modeStats.length > 0 ? decisionPulse.modeStats.map((mode) => {
+                        const modePressure = Math.max(1, mode.total);
+                        const waitWidth = (mode.waits / modePressure) * 100;
+                        const rejectWidth = (mode.rejects / modePressure) * 100;
+                        const approveWidth = ((mode.approvals + mode.buys) / modePressure) * 100;
+
+                        return (
+                          <div key={mode.mode} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-gray-300">{mode.mode}</span>
+                              <span className="text-gray-500">{mode.total} signals</span>
+                            </div>
+                            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-white/5">
+                              <div className="h-full bg-amber-400/80" style={{ width: `${waitWidth}%` }} />
+                              <div className="h-full bg-red-400/80" style={{ width: `${rejectWidth}%` }} />
+                              <div className="h-full bg-emerald-400/80" style={{ width: `${approveWidth}%` }} />
+                            </div>
+                            <div className="mt-2 flex justify-between text-[10px] uppercase tracking-wide text-gray-500">
+                              <span>Wait {mode.waits}</span>
+                              <span>Reject {mode.rejects}</span>
+                              <span>Approve {mode.approvals + mode.buys}</span>
+                            </div>
+                          </div>
+                        );
+                      }) : (
+                        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
+                          No structured signals yet.
+                        </div>
+                      )}
                     </div>
-                    <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-gray-500">
-                      {decisionPulse.totalSignals} parsed
-                    </span>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-4">
-                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-amber-300/70">Waits</div>
-                      <div className="mt-1 text-2xl font-semibold text-amber-300">{decisionPulse.counts.wait}</div>
-                    </div>
-                    <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-red-300/70">Rejects</div>
-                      <div className="mt-1 text-2xl font-semibold text-red-300">{decisionPulse.counts.reject}</div>
-                    </div>
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-emerald-300/70">Approvals</div>
-                      <div className="mt-1 text-2xl font-semibold text-emerald-300">{decisionPulse.counts.approve}</div>
-                    </div>
-                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-sky-300/70">Entries</div>
-                      <div className="mt-1 text-2xl font-semibold text-sky-300">{decisionPulse.counts.buy}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_1fr]">
+                  <div className="space-y-5">
                     <div>
-                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Mode Breakdown</div>
-                      <div className="space-y-2.5">
-                        {decisionPulse.modeStats.length > 0 ? decisionPulse.modeStats.map((mode) => {
-                          const modePressure = Math.max(1, mode.total);
-                          const waitWidth = (mode.waits / modePressure) * 100;
-                          const rejectWidth = (mode.rejects / modePressure) * 100;
-                          const approveWidth = ((mode.approvals + mode.buys) / modePressure) * 100;
-
+                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Top Reasons</div>
+                      <div className="space-y-2">
+                        {decisionPulse.topReasons.length > 0 ? decisionPulse.topReasons.map((reason) => {
+                          const width = decisionPulse.topReasons[0]?.count ? (reason.count / decisionPulse.topReasons[0].count) * 100 : 0;
                           return (
-                            <div key={mode.mode} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                            <div key={reason.label} className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <span className="font-semibold text-gray-300">{mode.mode}</span>
-                                <span className="text-gray-500">{mode.total} signals</span>
+                                <span className="truncate text-gray-300">{reason.label}</span>
+                                <span className="text-gray-500">{reason.count}</span>
                               </div>
-                              <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-white/5">
-                                <div className="h-full bg-amber-400/80" style={{ width: `${waitWidth}%` }} />
-                                <div className="h-full bg-red-400/80" style={{ width: `${rejectWidth}%` }} />
-                                <div className="h-full bg-emerald-400/80" style={{ width: `${approveWidth}%` }} />
-                              </div>
-                              <div className="mt-2 flex justify-between text-[10px] uppercase tracking-wide text-gray-500">
-                                <span>Wait {mode.waits}</span>
-                                <span>Reject {mode.rejects}</span>
-                                <span>Approve {mode.approvals + mode.buys}</span>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                                <div className="h-full rounded-full bg-[var(--primary)]/70" style={{ width: `${width}%` }} />
                               </div>
                             </div>
                           );
                         }) : (
                           <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
-                            No structured signals yet.
+                            Waiting for enough logs to classify.
                           </div>
                         )}
                       </div>
                     </div>
 
-                    <div className="space-y-5">
-                      <div>
-                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Top Reasons</div>
-                        <div className="space-y-2">
-                          {decisionPulse.topReasons.length > 0 ? decisionPulse.topReasons.map((reason) => {
-                            const width = decisionPulse.topReasons[0]?.count ? (reason.count / decisionPulse.topReasons[0].count) * 100 : 0;
-                            return (
-                              <div key={reason.label} className="space-y-1.5">
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="truncate text-gray-300">{reason.label}</span>
-                                  <span className="text-gray-500">{reason.count}</span>
-                                </div>
-                                <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
-                                  <div className="h-full rounded-full bg-[var(--primary)]/70" style={{ width: `${width}%` }} />
-                                </div>
-                              </div>
-                            );
-                          }) : (
-                            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
-                              Waiting for enough logs to classify.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Recent Signals</div>
-                        <div className="flex flex-wrap gap-2">
-                          {decisionPulse.recentSignals.length > 0 ? decisionPulse.recentSignals.map((signal, index) => (
-                            <div
-                              key={`${signal.raw}-${index}`}
-                              className={`rounded-full border px-3 py-1.5 text-[10px] font-mono ${
-                                signal.kind === 'reject'
-                                  ? 'border-red-500/20 bg-red-500/10 text-red-300'
-                                  : signal.kind === 'wait'
-                                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
-                                    : signal.kind === 'buy' || signal.kind === 'approve'
-                                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                                      : 'border-white/10 bg-white/[0.04] text-gray-400'
-                              }`}
-                              title={signal.reason}
-                            >
-                              {signal.mode} {signal.token}
-                            </div>
-                          )) : (
-                            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
-                              Live decisions will appear here.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <WalletRadar radar={walletRadar} />
-
-                <CounterfactualReview review={counterfactualReview} />
-
-                <div className="glass-panel p-5">
-                  <div className="mb-4">
-                    <h3 className="font-bold text-gray-300 text-base">Risk Rails</h3>
-                    <p className="mt-1 text-xs text-gray-500">{riskRails.posture}</p>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Open Exposure</div>
-                      <div className="mt-1 text-xl font-semibold text-white">{riskRails.openExposureSol.toFixed(4)} SOL</div>
-                    </div>
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent 5 PnL</div>
-                      <div className={`mt-1 text-xl font-semibold ${riskRails.recentRealizedSol >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                        {riskRails.recentRealizedSol >= 0 ? '+' : ''}{riskRails.recentRealizedSol.toFixed(4)} SOL
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Loss Streak</div>
-                      <div className={`mt-1 text-xl font-semibold ${riskRails.lossStreak >= 2 ? 'text-red-300' : 'text-gray-200'}`}>{riskRails.lossStreak}</div>
-                    </div>
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent Win Rate</div>
-                      <div className="mt-1 text-xl font-semibold text-white">{(riskRails.winRate * 100).toFixed(0)}%</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 space-y-3">
                     <div>
-                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Guard Pressure</div>
-                      <div className="space-y-2 text-xs">
-                        <div>
-                          <div className="mb-1 flex items-center justify-between text-gray-400">
-                            <span>Wait Rate</span>
-                            <span>{(riskRails.waitRate * 100).toFixed(0)}%</span>
+                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Recent Signals</div>
+                      <div className="flex flex-wrap gap-2">
+                        {decisionPulse.recentSignals.length > 0 ? decisionPulse.recentSignals.map((signal, index) => (
+                          <div
+                            key={`${signal.raw}-${index}`}
+                            className={`rounded-full border px-3 py-1.5 text-[10px] font-mono ${
+                              signal.kind === 'reject'
+                                ? 'border-red-500/20 bg-red-500/10 text-red-300'
+                                : signal.kind === 'wait'
+                                  ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                                  : signal.kind === 'buy' || signal.kind === 'approve'
+                                    ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                                    : 'border-white/10 bg-white/[0.04] text-gray-400'
+                            }`}
+                            title={signal.reason}
+                          >
+                            {signal.mode} {signal.token}
                           </div>
-                          <div className="h-1.5 rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-amber-400/80" style={{ width: `${riskRails.waitRate * 100}%` }} />
+                        )) : (
+                          <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-4 text-xs text-gray-500">
+                            Live decisions will appear here.
                           </div>
-                        </div>
-                        <div>
-                          <div className="mb-1 flex items-center justify-between text-gray-400">
-                            <span>Reject Rate</span>
-                            <span>{(riskRails.rejectRate * 100).toFixed(0)}%</span>
-                          </div>
-                          <div className="h-1.5 rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-red-400/80" style={{ width: `${riskRails.rejectRate * 100}%` }} />
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-1 flex items-center justify-between text-gray-400">
-                            <span>Approval Rate</span>
-                            <span>{(riskRails.approvalRate * 100).toFixed(0)}%</span>
-                          </div>
-                          <div className="h-1.5 rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${riskRails.approvalRate * 100}%` }} />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Mode</div>
-                      <div className="mt-1 text-sm font-semibold text-gray-200">{riskRails.modeLabel}</div>
-                      <div className="mt-2 text-xs text-gray-500">
-                        {config.dynamicSizing ? 'Dynamic sizing is active.' : 'Static sizing is active.'} {config.isDemo ? 'Paper mode is forgiving; live mode should stay on the stricter path.' : 'Live mode should only add size when the tape stays diverse.'}
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3485,7 +3409,121 @@ export default function Home() {
 
           {/* Right Feed Column */}
           <div className={`col-span-12 xl:col-span-3 ${activeTab === 'dashboard' ? 'block' : 'hidden'}`}>
-            <LiveFeed onTokenDetected={onTokenDetected} isDemo={config.isDemo} isSimulating={config.isSimulating} heliusKey={config.heliusKey} />
+            <div className="space-y-6">
+              <div className="glass-panel p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-gray-300 text-sm">Intel Dock</h3>
+                    <p className="mt-1 text-xs text-gray-500">Secondary research stays here so trading controls stay visible.</p>
+                  </div>
+                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-gray-500">
+                    Sidecar
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setIntelView('radar')}
+                    className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${intelView === 'radar' ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300' : 'border-white/10 bg-white/[0.03] text-gray-400 hover:text-gray-200'}`}
+                  >
+                    <Radar size={12} /> Radar
+                  </button>
+                  <button
+                    onClick={() => setIntelView('review')}
+                    className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${intelView === 'review' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-white/10 bg-white/[0.03] text-gray-400 hover:text-gray-200'}`}
+                  >
+                    <FlaskConical size={12} /> Review
+                  </button>
+                  <button
+                    onClick={() => setIntelView('rails')}
+                    className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${intelView === 'rails' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-white/10 bg-white/[0.03] text-gray-400 hover:text-gray-200'}`}
+                  >
+                    <Shield size={12} /> Rails
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-[460px]">
+                {intelView === 'radar' ? (
+                  <WalletRadar radar={walletRadar} />
+                ) : intelView === 'review' ? (
+                  <CounterfactualReview review={counterfactualReview} />
+                ) : (
+                  <div className="glass-panel p-5 h-full flex flex-col">
+                    <div className="mb-4">
+                      <h3 className="font-bold text-gray-300 text-base">Risk Rails</h3>
+                      <p className="mt-1 text-xs text-gray-500">{riskRails.posture}</p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500">Open Exposure</div>
+                        <div className="mt-1 text-xl font-semibold text-white">{riskRails.openExposureSol.toFixed(4)} SOL</div>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent 5 PnL</div>
+                        <div className={`mt-1 text-xl font-semibold ${riskRails.recentRealizedSol >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                          {riskRails.recentRealizedSol >= 0 ? '+' : ''}{riskRails.recentRealizedSol.toFixed(4)} SOL
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500">Loss Streak</div>
+                        <div className={`mt-1 text-xl font-semibold ${riskRails.lossStreak >= 2 ? 'text-red-300' : 'text-gray-200'}`}>{riskRails.lossStreak}</div>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500">Recent Win Rate</div>
+                        <div className="mt-1 text-xl font-semibold text-white">{(riskRails.winRate * 100).toFixed(0)}%</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex-1 overflow-y-auto pr-1 space-y-3 custom-scrollbar">
+                      <div>
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-gray-500">Guard Pressure</div>
+                        <div className="space-y-2 text-xs">
+                          <div>
+                            <div className="mb-1 flex items-center justify-between text-gray-400">
+                              <span>Wait Rate</span>
+                              <span>{(riskRails.waitRate * 100).toFixed(0)}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-white/5">
+                              <div className="h-full rounded-full bg-amber-400/80" style={{ width: `${riskRails.waitRate * 100}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="mb-1 flex items-center justify-between text-gray-400">
+                              <span>Reject Rate</span>
+                              <span>{(riskRails.rejectRate * 100).toFixed(0)}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-white/5">
+                              <div className="h-full rounded-full bg-red-400/80" style={{ width: `${riskRails.rejectRate * 100}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="mb-1 flex items-center justify-between text-gray-400">
+                              <span>Approval Rate</span>
+                              <span>{(riskRails.approvalRate * 100).toFixed(0)}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-white/5">
+                              <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${riskRails.approvalRate * 100}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500">Mode</div>
+                        <div className="mt-1 text-sm font-semibold text-gray-200">{riskRails.modeLabel}</div>
+                        <div className="mt-2 text-xs text-gray-500">
+                          {config.dynamicSizing ? 'Dynamic sizing is active.' : 'Static sizing is active.'} {config.isDemo ? 'Paper mode is forgiving; live mode should stay on the stricter path.' : 'Live mode should only add size when the tape stays diverse.'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <LiveFeed onTokenDetected={onTokenDetected} isDemo={config.isDemo} isSimulating={config.isSimulating} heliusKey={config.heliusKey} />
+            </div>
           </div>
 
           {/* Logic for Tab Switching Views */}
