@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 2;
+export const STRATEGY_PRESET_VERSION = 3;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;

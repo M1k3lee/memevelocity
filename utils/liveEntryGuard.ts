@@ -325,8 +325,8 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         buyPressure >= 0.6 &&
         netFlow >= 0.45;
     const curveReady =
-        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 16) ||
-        (analysis.bondingCurveProgress >= 1.5 && liquidityGrowth >= 0.9);
+        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 18) ||
+        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -376,7 +376,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
-    if (waitingOnSnapshot && (analysis.marketCap >= 35 || liquidityGrowth >= 0.8)) {
+    if (waitingOnSnapshot && (analysis.marketCap >= 32 || liquidityGrowth >= 0.8)) {
         return {
             status: 'wait',
             reason: `Early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`

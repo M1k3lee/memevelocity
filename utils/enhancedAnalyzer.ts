@@ -186,7 +186,8 @@ export async function analyzeEnhanced(
                 reasons.push(tier0.reasons[0] || 'Failed Tier 0 Checks');
                 return createRejectResult(`TIER 0 FAIL: ${tier0.reasons[0]}`, reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
             } else {
-                warnings.push(`TIER 0 FAIL: ${tier0.reasons.join(', ')}`);
+                const tier0Label = tier0.score >= tier0PassFloor ? 'TIER 0 WARN' : 'TIER 0 FAIL';
+                warnings.push(`${tier0Label}: ${tier0.reasons.join(', ')}`);
             }
         }
         warnings.push(...tier0.warnings);

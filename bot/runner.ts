@@ -36,8 +36,8 @@ function calculatePrice(liquiditySol: number, virtualTokens: number): number {
 }
 
 function getRugMode(mode: BotMode): 'safe' | 'medium' | 'high' {
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high') return 'high';
-    if (mode === 'sniper' || mode === 'first' || mode === 'scalp') return 'medium';
+    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') return 'high';
+    if (mode === 'sniper' || mode === 'first') return 'medium';
     return 'safe';
 }
 

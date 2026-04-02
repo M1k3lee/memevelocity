@@ -92,12 +92,28 @@ function migrateStoredBotConfig(savedConfig: any) {
     ? Number(migratedConfig?.presetVersion)
     : 0;
 
-  if ((!migratedConfig.advanced || savedPresetVersion < BOT_CONFIG_PRESET_VERSION) && normalizedMode !== 'custom') {
+  if (savedPresetVersion < BOT_CONFIG_PRESET_VERSION && normalizedMode !== 'custom') {
+    const preset = getStrategyPresetConfig(normalizedMode);
+    migratedConfig.mode = preset.mode;
+    migratedConfig.amount = preset.amount;
+    migratedConfig.takeProfit = preset.takeProfit;
+    migratedConfig.stopLoss = preset.stopLoss;
+    migratedConfig.maxConcurrentTrades = preset.maxConcurrentTrades;
+    migratedConfig.dynamicSizing = preset.dynamicSizing;
+    migratedConfig.advanced = preset.advanced;
+  } else if (!migratedConfig.advanced && normalizedMode !== 'custom') {
     migratedConfig.advanced = getStrategyPresetConfig(normalizedMode).advanced;
   }
 
   if (!migratedConfig.advanced && normalizedMode === 'custom') {
-    migratedConfig.advanced = getStrategyPresetConfig('custom').advanced;
+    const preset = getStrategyPresetConfig('custom');
+    migratedConfig.mode = migratedConfig.mode || preset.mode;
+    migratedConfig.amount = migratedConfig.amount ?? preset.amount;
+    migratedConfig.takeProfit = migratedConfig.takeProfit ?? preset.takeProfit;
+    migratedConfig.stopLoss = migratedConfig.stopLoss ?? preset.stopLoss;
+    migratedConfig.maxConcurrentTrades = migratedConfig.maxConcurrentTrades ?? preset.maxConcurrentTrades;
+    migratedConfig.dynamicSizing = migratedConfig.dynamicSizing ?? preset.dynamicSizing;
+    migratedConfig.advanced = preset.advanced;
   }
 
   migratedConfig.presetVersion = BOT_CONFIG_PRESET_VERSION;
@@ -778,9 +794,16 @@ export default function Home() {
         return prev;
       }
 
+      const preset = getStrategyPresetConfig(prevMode);
       return {
         ...prev,
-        advanced: getStrategyPresetConfig(prevMode).advanced,
+        mode: prevMode,
+        amount: preset.amount,
+        takeProfit: preset.takeProfit,
+        stopLoss: preset.stopLoss,
+        maxConcurrentTrades: preset.maxConcurrentTrades,
+        dynamicSizing: preset.dynamicSizing,
+        advanced: preset.advanced,
         presetVersion: BOT_CONFIG_PRESET_VERSION
       };
     });
