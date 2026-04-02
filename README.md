@@ -12,7 +12,7 @@ MemeVelocity is a Next.js dashboard plus a Node runner for finding new launches,
 - Score launches with technical safety, holder quality, flow, and bonding-curve context
 - Reject common rug patterns such as copycats, creator-led dumps, thin liquidity, and concentrated early flow
 - Manage exits with stop loss, staged take profit, fast-kill rules, giveback protection, and runner trailing logic
-- Record live feed data and replay paper scenarios for strategy testing
+- Record live feed data and replay captured launch packs for strategy testing
 
 ## Trading Modes
 
@@ -52,7 +52,7 @@ MemeVelocity is a Next.js dashboard plus a Node runner for finding new launches,
   Local wallet creation/import, funding display, balance checks, recovery scans, and empty token-account cleanup.
 
 - `Research tooling`
-  Deterministic paper replay and live PumpPortal capture for strategy validation.
+  Real captured-launch replay, mode regression, and live PumpPortal capture for strategy validation.
 
 ## How It Works
 
@@ -89,6 +89,7 @@ npm run bot:start
 npm run verify:modes
 npm run paper:replay
 npm run paper:capture -- 10
+npm run paper:captured
 ```
 
 ## Runtime Notes
@@ -97,6 +98,7 @@ npm run paper:capture -- 10
 - `TRADER_PRIVATE_KEY` is required for live runner mode.
 - `BOT_DRY_RUN=true` is the correct first live-runner setting.
 - Captured live feed files are written under `runtime/captures`.
+- The bundled replay pack lives at `bot/fixtures/realLaunchPack.json`.
 - Runner state is stored under `runtime/`.
 
 ## Main Config Knobs

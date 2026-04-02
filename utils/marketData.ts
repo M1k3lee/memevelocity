@@ -38,6 +38,13 @@ export interface MarketSnapshot {
     creatorVolumeShare: number;
     creatorBuyCount: number;
     creatorSellCount: number;
+    topTraders: Array<{
+        wallet: string;
+        volumeSol: number;
+        tradeCount: number;
+        volumeShare: number;
+        isCreator: boolean;
+    }>;
 }
 
 interface InternalMarketSnapshot extends MarketSnapshot {
@@ -173,6 +180,7 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
         creatorVolumeShare: 0,
         creatorBuyCount: nextCreatorBuyCount,
         creatorSellCount: nextCreatorSellCount,
+        topTraders: [],
         traderKeys,
         firstObservedPrice: existing?.firstObservedPrice || currentPrice,
         creatorWallet,
@@ -184,6 +192,16 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
     snapshot.creatorVolumeShare = snapshot.observedVolumeSol > 0
         ? (snapshot.creatorBuyVolumeSol + snapshot.creatorSellVolumeSol) / snapshot.observedVolumeSol
         : 0;
+    snapshot.topTraders = [...traderVolumes.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([wallet, volumeSol]) => ({
+            wallet,
+            volumeSol,
+            tradeCount: traderTradeCounts.get(wallet) || 0,
+            volumeShare: totalTraderVolume > 0 ? volumeSol / totalTraderVolume : 0,
+            isCreator: !!creatorWallet && wallet === creatorWallet
+        }));
     snapshot.repeatTraderRatio = snapshot.uniqueTraderCount > 0 ? repeatedTraderCount / snapshot.uniqueTraderCount : 0;
     snapshot.averageTradeSizeSol = snapshot.tradeCount > 0 ? snapshot.observedVolumeSol / snapshot.tradeCount : snapshot.observedVolumeSol;
 
@@ -203,6 +221,13 @@ export function recordMarketEvent(token: TokenData): MarketSnapshot {
 export function getMarketSnapshot(mint: string): MarketSnapshot | null {
     const snapshot = snapshots.get(mint);
     return snapshot ? cloneSnapshot(snapshot) : null;
+}
+
+export function getAllMarketSnapshots(limit: number = MAX_TRACKED_MINTS): MarketSnapshot[] {
+    return [...snapshots.values()]
+        .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+        .slice(0, Math.max(1, limit))
+        .map((snapshot) => cloneSnapshot(snapshot));
 }
 
 export function clearMarketSnapshot(mint: string): void {

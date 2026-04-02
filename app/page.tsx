@@ -9,7 +9,7 @@ import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings, Activity } f
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
-import { getMarketSnapshot } from '../utils/marketData';
+import { getAllMarketSnapshots, getMarketSnapshot, type MarketSnapshot } from '../utils/marketData';
 import { getLatestToken } from '../utils/liveTokenStore';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { getTokenIdentityKey, hasUsableTokenIdentity } from '../utils/tokenIdentity';
@@ -39,6 +39,8 @@ const LiveFeed = dynamic(() => import('../components/LiveFeed'), { ssr: false })
 const ActiveTrades = dynamic(() => import('../components/ActiveTrades'), { ssr: false });
 const DashboardStats = dynamic(() => import('../components/DashboardStats'), { ssr: false });
 const TradeHistory = dynamic(() => import('../components/TradeHistory'), { ssr: false });
+const WalletRadar = dynamic(() => import('../components/WalletRadar'), { ssr: false });
+const CounterfactualReview = dynamic(() => import('../components/CounterfactualReview'), { ssr: false });
 
 const PAPER_TRADE_EXIT_WARMUP_SECONDS = 10;
 const LIVE_TRADE_SETTLEMENT_WARMUP_SECONDS = 20;
@@ -83,6 +85,55 @@ type RiskRails = {
   waitRate: number;
   rejectRate: number;
   approvalRate: number;
+};
+
+type WalletRadarSummary = {
+  trackedLaunches: number;
+  recurringWallets: number;
+  creatorLedLaunches: number;
+  coordinatedLaunches: number;
+};
+
+type WalletRadarEntry = {
+  wallet: string;
+  tokenCount: number;
+  cumulativeVolumeSol: number;
+  averageShare: number;
+  maxShare: number;
+  creatorCount: number;
+  dominanceCount: number;
+  symbols: string[];
+  tags: string[];
+};
+
+type WalletRadarData = {
+  summary: WalletRadarSummary;
+  wallets: WalletRadarEntry[];
+  linkedTokens: Array<{
+    symbol: string;
+    wallet: string;
+    share: number;
+    liquiditySol: number;
+    creatorSelling: boolean;
+  }>;
+};
+
+type CounterfactualVerdict = 'saved' | 'missed' | 'mixed' | 'pending';
+
+type CounterfactualReviewData = {
+  summary: Record<CounterfactualVerdict, number>;
+  items: Array<{
+    token: string;
+    mode: string;
+    action: string;
+    verdict: CounterfactualVerdict;
+    headline: string;
+    reasonLabel: string;
+    peakMove: number;
+    currentMove: number;
+    creatorSells: number;
+    liquiditySol: number;
+  }>;
 };
 
 function migrateStoredBotConfig(savedConfig: any) {
@@ -332,6 +383,226 @@ function buildRiskRails(params: {
     waitRate,
     rejectRate,
     approvalRate
+  };
+}
+
+function formatTrackedTokenLabel(snapshot: MarketSnapshot): string {
+  const symbol = (snapshot.symbol || '').trim();
+  if (symbol) return symbol.toUpperCase();
+
+  const name = (snapshot.name || '').trim();
+  if (name) return name.toUpperCase();
+
+  return snapshot.mint.slice(0, 6).toUpperCase();
+}
+
+function normalizeTokenLookupLabel(label: string): string {
+  return label.replace(/[^a-zA-Z0-9$#]/g, '').toUpperCase();
+}
+
+function findSnapshotForSignal(tokenLabel: string, snapshots: MarketSnapshot[]): MarketSnapshot | null {
+  const normalizedLabel = normalizeTokenLookupLabel(tokenLabel);
+  if (!normalizedLabel) return null;
+
+  return snapshots.find((snapshot) => {
+    const symbol = normalizeTokenLookupLabel(snapshot.symbol || '');
+    const name = normalizeTokenLookupLabel(snapshot.name || '');
+    return symbol === normalizedLabel || name === normalizedLabel;
+  }) || null;
+}
+
+function buildWalletRadar(snapshots: MarketSnapshot[]): WalletRadarData {
+  const recentSnapshots = snapshots.slice(0, 24);
+  const walletMap = new Map<string, {
+    wallet: string;
+    tokenCount: number;
+    cumulativeVolumeSol: number;
+    shareTotal: number;
+    maxShare: number;
+    creatorCount: number;
+    dominanceCount: number;
+    symbols: Set<string>;
+  }>();
+  const linkedTokens: WalletRadarData['linkedTokens'] = [];
+
+  let creatorLedLaunches = 0;
+  let coordinatedLaunches = 0;
+
+  for (const snapshot of recentSnapshots) {
+    if (snapshot.creatorSellCount > 0) {
+      creatorLedLaunches += 1;
+    }
+    if (snapshot.topTwoTraderVolumeShare >= 0.68 || snapshot.repeatTraderRatio >= 0.35) {
+      coordinatedLaunches += 1;
+    }
+
+    const notableTraders = snapshot.topTraders.filter((trader) => trader.volumeShare >= 0.14).slice(0, 3);
+    for (const trader of notableTraders) {
+      const current = walletMap.get(trader.wallet) || {
+        wallet: trader.wallet,
+        tokenCount: 0,
+        cumulativeVolumeSol: 0,
+        shareTotal: 0,
+        maxShare: 0,
+        creatorCount: 0,
+        dominanceCount: 0,
+        symbols: new Set<string>()
+      };
+
+      current.tokenCount += 1;
+      current.cumulativeVolumeSol += trader.volumeSol;
+      current.shareTotal += trader.volumeShare;
+      current.maxShare = Math.max(current.maxShare, trader.volumeShare);
+      current.creatorCount += trader.isCreator ? 1 : 0;
+      current.dominanceCount += trader.volumeShare >= 0.35 ? 1 : 0;
+      current.symbols.add(formatTrackedTokenLabel(snapshot));
+      walletMap.set(trader.wallet, current);
+
+      if (trader.volumeShare >= 0.3 || trader.isCreator) {
+        linkedTokens.push({
+          symbol: formatTrackedTokenLabel(snapshot),
+          wallet: trader.wallet,
+          share: trader.volumeShare,
+          liquiditySol: snapshot.currentLiquiditySol,
+          creatorSelling: snapshot.creatorSellCount > 0
+        });
+      }
+    }
+  }
+
+  const wallets = [...walletMap.values()]
+    .filter((wallet) => wallet.tokenCount >= 2 || wallet.creatorCount > 0 || wallet.cumulativeVolumeSol >= 4)
+    .map((wallet) => {
+      const averageShare = wallet.tokenCount > 0 ? wallet.shareTotal / wallet.tokenCount : 0;
+      const tags: string[] = [];
+
+      if (wallet.creatorCount > 0) tags.push('Creator');
+      if (wallet.tokenCount >= 2) tags.push('Recurring');
+      if (wallet.maxShare >= 0.4 || wallet.dominanceCount >= 2) tags.push('Dominant');
+      if (wallet.cumulativeVolumeSol >= 6) tags.push('Heavy flow');
+
+      return {
+        wallet: wallet.wallet,
+        tokenCount: wallet.tokenCount,
+        cumulativeVolumeSol: wallet.cumulativeVolumeSol,
+        averageShare,
+        maxShare: wallet.maxShare,
+        creatorCount: wallet.creatorCount,
+        dominanceCount: wallet.dominanceCount,
+        symbols: [...wallet.symbols].slice(0, 4),
+        tags: tags.length > 0 ? tags : ['Watch']
+      };
+    })
+    .sort((a, b) => {
+      if (b.creatorCount !== a.creatorCount) return b.creatorCount - a.creatorCount;
+      if (b.tokenCount !== a.tokenCount) return b.tokenCount - a.tokenCount;
+      return b.cumulativeVolumeSol - a.cumulativeVolumeSol;
+    })
+    .slice(0, 6);
+
+  return {
+    summary: {
+      trackedLaunches: recentSnapshots.length,
+      recurringWallets: wallets.filter((wallet) => wallet.tokenCount >= 2).length,
+      creatorLedLaunches,
+      coordinatedLaunches
+    },
+    wallets,
+    linkedTokens: linkedTokens
+      .sort((a, b) => b.share - a.share)
+      .slice(0, 6)
+  };
+}
+
+function buildCounterfactualReview(logs: string[], snapshots: MarketSnapshot[]): CounterfactualReviewData {
+  const actionableSignals = logs
+    .map((log) => parseDecisionSignal(log))
+    .filter((signal): signal is ParsedDecisionSignal => !!signal)
+    .filter((signal) => signal.kind === 'wait' || signal.kind === 'reject');
+  const seenSignals = new Set<string>();
+  const items: CounterfactualReviewData['items'] = [];
+
+  for (const signal of actionableSignals) {
+    const dedupeKey = `${signal.kind}:${signal.token}`;
+    if (seenSignals.has(dedupeKey)) continue;
+    seenSignals.add(dedupeKey);
+
+    const snapshot = findSnapshotForSignal(signal.token, snapshots);
+    if (!snapshot) {
+      items.push({
+        token: signal.token,
+        mode: signal.mode,
+        action: signal.kind.toUpperCase(),
+        verdict: 'pending',
+        headline: 'Still waiting on enough tape to grade this skip.',
+        reasonLabel: classifyDecisionReason(signal.reason),
+        peakMove: 0,
+        currentMove: 0,
+        creatorSells: 0,
+        liquiditySol: 0
+      });
+      continue;
+    }
+
+    const creatorUnload = snapshot.creatorSellCount > 0;
+    const deadTape = snapshot.maxPriceChangePercent <= 8 && snapshot.netFlowSol <= 1.2;
+    const hardReversal =
+      snapshot.priceChangePercent <= -8 ||
+      (snapshot.maxPriceChangePercent >= 18 && (snapshot.maxPriceChangePercent - snapshot.priceChangePercent) >= 20 && snapshot.priceChangePercent < 0);
+    const runner = snapshot.maxPriceChangePercent >= 30 && snapshot.netFlowSol > 0 && snapshot.peakLiquiditySol >= 34;
+    const continuation = snapshot.maxPriceChangePercent >= 18 && snapshot.priceChangePercent >= 4 && snapshot.netFlowSol > 0.5;
+
+    let verdict: CounterfactualVerdict = 'mixed';
+    let headline = 'Tape stayed noisy after the skip.';
+
+    if (creatorUnload) {
+      verdict = 'saved';
+      headline = `Skip avoided creator-led selling (${snapshot.creatorSellCount} sells).`;
+    } else if (hardReversal) {
+      verdict = 'saved';
+      headline = `Skip avoided a reversal after +${snapshot.maxPriceChangePercent.toFixed(1)}%.`;
+    } else if (deadTape) {
+      verdict = 'saved';
+      headline = 'Skip stayed dead and never built enough displacement.';
+    } else if (runner) {
+      verdict = 'missed';
+      headline = `Tape became a runner and peaked at +${snapshot.maxPriceChangePercent.toFixed(1)}%.`;
+    } else if (continuation) {
+      verdict = 'missed';
+      headline = `Tape extended into a real continuation (+${snapshot.maxPriceChangePercent.toFixed(1)}%).`;
+    } else if (snapshot.priceChangePercent > 0) {
+      verdict = 'mixed';
+      headline = 'Tape is still alive, but not decisively enough to call the skip wrong.';
+    }
+
+    items.push({
+      token: signal.token,
+      mode: signal.mode,
+      action: signal.kind.toUpperCase(),
+      verdict,
+      headline,
+      reasonLabel: classifyDecisionReason(signal.reason),
+      peakMove: snapshot.maxPriceChangePercent,
+      currentMove: snapshot.priceChangePercent,
+      creatorSells: snapshot.creatorSellCount,
+      liquiditySol: snapshot.currentLiquiditySol
+    });
+  }
+
+  const trimmedItems = items.slice(0, 6);
+  const summary = trimmedItems.reduce<Record<CounterfactualVerdict, number>>((acc, item) => {
+    acc[item.verdict] += 1;
+    return acc;
+  }, {
+    saved: 0,
+    missed: 0,
+    mixed: 0,
+    pending: 0
+  });
+
+  return {
+    summary,
+    items: trimmedItems
   };
 }
 
@@ -887,6 +1158,9 @@ export default function Home() {
     return acc;
   }, { totalProfit: 0, walletDelta: 0, rentRecovered: 0, wins: 0, losses: 0 });
   const decisionPulse = buildDecisionPulse(logs);
+  const liveSnapshots = getAllMarketSnapshots(48);
+  const walletRadar = buildWalletRadar(liveSnapshots);
+  const counterfactualReview = buildCounterfactualReview(logs, liveSnapshots);
   const riskRails = buildRiskRails({
     config,
     activeTrades: displayedActiveTrades,
@@ -3004,7 +3278,7 @@ export default function Home() {
           {/* Main Center Area (Stats & Active Trades) */}
           <div className={`${activeTab === 'dashboard' ? 'col-span-12 lg:col-span-8 xl:col-span-6' : 'hidden'}`}>
             <div className="space-y-6">
-              <div className="grid gap-6 xl:grid-cols-[1.9fr_1fr]">
+              <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
                 <div className="glass-panel p-5">
                   <div className="mb-4 flex items-start justify-between gap-4">
                     <div>
@@ -3127,6 +3401,10 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                <WalletRadar radar={walletRadar} />
+
+                <CounterfactualReview review={counterfactualReview} />
 
                 <div className="glass-panel p-5">
                   <div className="mb-4">

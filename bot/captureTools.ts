@@ -24,9 +24,16 @@ export type ReplayScenario = {
         top10Concentration: number;
     };
     events: ReplayTapeEvent[];
-    source?: 'synthetic' | 'capture';
+    source?: 'capture' | 'capture-pack';
     outcomeLabel?: string;
     capturePath?: string;
+};
+
+export type ReplayScenarioPack = {
+    source: 'capture-pack';
+    generatedAt?: string;
+    capturePath?: string;
+    scenarios: ReplayScenario[];
 };
 
 type ParsedCaptureRecord = {
@@ -187,6 +194,34 @@ export function resolveCapturePath(input?: string): string | null {
         .sort((a, b) => b.mtime - a.mtime)[0];
 
     return latest ? path.join(captureDir, latest.file) : null;
+}
+
+export function resolveBundledReplayPackPath(input?: string): string | null {
+    const resolved = input
+        ? path.resolve(process.cwd(), input)
+        : path.resolve(process.cwd(), 'bot', 'fixtures', 'realLaunchPack.json');
+
+    return fs.existsSync(resolved) ? resolved : null;
+}
+
+export function loadReplayScenariosFromSource(sourcePath: string, maxLaunches: number = 80): ReplayScenario[] {
+    const extension = path.extname(sourcePath).toLowerCase();
+    if (extension === '.json') {
+        const raw = JSON.parse(fs.readFileSync(sourcePath, 'utf8')) as ReplayScenarioPack | ReplayScenario[];
+        const scenarios = Array.isArray(raw) ? raw : raw.scenarios;
+        if (!Array.isArray(scenarios) || scenarios.length === 0) {
+            return [];
+        }
+
+        return scenarios
+            .map((scenario) => ({
+                ...scenario,
+                source: 'capture-pack' as const
+            }))
+            .slice(0, maxLaunches);
+    }
+
+    return loadCaptureReplayScenarios(sourcePath, maxLaunches);
 }
 
 export function loadCaptureReplayScenarios(capturePath: string, maxLaunches: number = 80): ReplayScenario[] {

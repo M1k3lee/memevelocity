@@ -1,0 +1,1027 @@
+{
+  "source": "capture-pack",
+  "generatedAt": "2026-04-02T20:58:20.417Z",
+  "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl",
+  "scenarios": [
+    {
+      "id": "wig-fvyutt",
+      "description": "Creator selling appeared during the launch (3 sells, peak 94.4%).",
+      "creator": "8xG22H83NgKZHrLFGh53H3fJE5xF5kxNPJ8ZeuMYrR8c",
+      "quality": {
+        "holderCount": 60,
+        "deployerHoldings": 4,
+        "top10Concentration": 32
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "8xG22H83NgKZHrLFGh53H3fJE5xF5kxNPJ8ZeuMYrR8c",
+          "liquiditySol": 32.99999999899999,
+          "progress": 12.299262957495273,
+          "initialBuy": 0.097545454515895
+        },
+        {
+          "t": 0,
+          "txType": "buy",
+          "trader": "ADkquSiH1zS6LmGoJxzwE6x44gpE6S3KWLALqNc3sTDs",
+          "liquiditySol": 37.687149395749856,
+          "progress": 27.595851820066454
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "6ED9YuJXMRjUCEYWQGbbsy8fXW9ae9WtpDHYGEoKstjV",
+          "liquiditySol": 39.25002884621902,
+          "progress": 31.88415259176283
+        },
+        {
+          "t": 2,
+          "txType": "buy",
+          "trader": "DrKitw8ciVX2r3oWyhdUkKr98k6dcUKx2LWRUTNzcdft",
+          "liquiditySol": 39.35521198420081,
+          "progress": 32.16052641963712
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "DdGthLAYun6uk3XdGUuJypifMSRBPboDd8D1hhyWAvsH",
+          "liquiditySol": 39.378542773196145,
+          "progress": 32.22162914140096
+        },
+        {
+          "t": 3,
+          "txType": "sell",
+          "trader": "6ED9YuJXMRjUCEYWQGbbsy8fXW9ae9WtpDHYGEoKstjV",
+          "liquiditySol": 39.33975228209283,
+          "progress": 32.119997943827386
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "4ccSLtueKUaRT3Gc37YnaJ7gET8GyQRD2yfvU6UZqowp",
+          "liquiditySol": 39.365656057086966,
+          "progress": 32.1878881255718
+        },
+        {
+          "t": 3,
+          "txType": "sell",
+          "trader": "EkuXDEQKrBTqfadB1SecQ4WTLoVj4n2zNua9wUi7z5Wr",
+          "liquiditySol": 39.47690983907839,
+          "progress": 32.47845571254974
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "EG82qK5o9dQTsE88VH8Yh3jB1stWBifndYmGCXSLfVMj",
+          "liquiditySol": 40.143522720877066,
+          "progress": 34.185748864424156
+        },
+        {
+          "t": 3,
+          "txType": "sell",
+          "trader": "8xG22H83NgKZHrLFGh53H3fJE5xF5kxNPJ8ZeuMYrR8c",
+          "liquiditySol": 38.594214975579966,
+          "progress": 30.12699208845076
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "8xSN35okqVhnxJuGEE3VDL4NBF91EMNAYSPx8sBvjmuY",
+          "liquiditySol": 38.742705533528316,
+          "progress": 30.53006137683811
+        },
+        {
+          "t": 4,
+          "txType": "buy",
+          "trader": "J8R8m9Qnb4xMkugmUt9qhGbcgqgveK873MBw226oMVq9",
+          "liquiditySol": 39.9361248187241,
+          "progress": 33.660680340745174
+        },
+        {
+          "t": 4,
+          "txType": "sell",
+          "trader": "8xG22H83NgKZHrLFGh53H3fJE5xF5kxNPJ8ZeuMYrR8c",
+          "liquiditySol": 38.96287157964637,
+          "progress": 31.122035151447992
+        },
+        {
+          "t": 4,
+          "txType": "buy",
+          "trader": "haqqiUUXB5gp7gDbSjpEkw3phAjQb25r86uXJsZQgWq",
+          "liquiditySol": 38.97298557290029,
+          "progress": 31.14906857523478
+        },
+        {
+          "t": 5,
+          "txType": "sell",
+          "trader": "DDSShi5Q9cEQh22AvnhYzMYZzWU5URJ4Us7CdfHePJtf",
+          "liquiditySol": 38.671773896443526,
+          "progress": 30.337907579842017
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "CHqtqbfUz6SvuWiUfAfqDtockfePFyspgz6yn33kH8dU",
+          "liquiditySol": 38.188734721826336,
+          "progress": 29.01037246632278
+        },
+        {
+          "t": 5,
+          "txType": "sell",
+          "trader": "ADkquSiH1zS6LmGoJxzwE6x44gpE6S3KWLALqNc3sTDs",
+          "liquiditySol": 37.88148913045356,
+          "progress": 28.14835438712697
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "5tZNmWcEXXJeDSnJsMbEuUjKibeWMF7NbDE9MbXXNsJK",
+          "liquiditySol": 37.901242214442846,
+          "progress": 28.20419464947851
+        },
+        {
+          "t": 5,
+          "txType": "sell",
+          "trader": "Ae1W8GJeGNzzyj3HSrSJPXksJk4krZ4WhYx635JLeQze",
+          "liquiditySol": 37.607504596529054,
+          "progress": 27.367774216016382
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "DqHmuHLMmMnDohgo9QvTgWDeRrnEw3u8DNyDwbCxdhxq",
+          "liquiditySol": 37.62173846313218,
+          "progress": 27.40860639354759
+        },
+        {
+          "t": 6,
+          "txType": "buy",
+          "trader": "7XXFMKUdWFWnUc97NMzSRCeTtB7b8mSePCfDNEYi7whE",
+          "liquiditySol": 37.639730673197306,
+          "progress": 27.460175804718943
+        },
+        {
+          "t": 6,
+          "txType": "sell",
+          "trader": "CHqtqbfUz6SvuWiUfAfqDtockfePFyspgz6yn33kH8dU",
+          "liquiditySol": 36.84855198148091,
+          "progress": 25.144910970391372
+        },
+        {
+          "t": 6,
+          "txType": "buy",
+          "trader": "9nyEoHpNFym6phsT6B8DJhXMRCdARNWM4pZKmgzTYCHT",
+          "liquiditySol": 36.92097735142877,
+          "progress": 25.360978812131002
+        },
+        {
+          "t": 7,
+          "txType": "buy",
+          "trader": "D8ADvLKbwQ9nQ5bNGp9JmwP4HnACkRAFLhvioCgGWXDr",
+          "liquiditySol": 37.165421795246225,
+          "progress": 26.084016511548857
+        },
+        {
+          "t": 7,
+          "txType": "sell",
+          "trader": "FMdL2mr1qVgxata25DLtR1Um7zdfKRC2vV4oV9HPJcb",
+          "liquiditySol": 40.01387771716044,
+          "progress": 33.85816485795562
+        },
+        {
+          "t": 7,
+          "txType": "buy",
+          "trader": "G68agYo4XJNE9NT4pd97NYcxyPSDdDsc2HccNYBcC7NV",
+          "liquiditySol": 40.111655494080175,
+          "progress": 34.105423772566255
+        },
+        {
+          "t": 8,
+          "txType": "buy",
+          "trader": "FwKoeMEU1Ay9PpULpfGELwkBtgXcYnBjrxin7vBx8yyq",
+          "liquiditySol": 40.79010902152291,
+          "progress": 35.788437579938225
+        },
+        {
+          "t": 8,
+          "txType": "sell",
+          "trader": "9ozGrcC5L8RrbDA19rfGtm1G15ANoswG67e2yEkkr3jR",
+          "liquiditySol": 41.075261752932356,
+          "progress": 36.479210584544816
+        },
+        {
+          "t": 8,
+          "txType": "buy",
+          "trader": "4fLxjgkKEpPpFoWj92AfLBggKyZiHeawpGR5Dktx464f",
+          "liquiditySol": 41.277555243735016,
+          "progress": 36.96347284903884
+        },
+        {
+          "t": 9,
+          "txType": "buy",
+          "trader": "PxEVHdHo7DhvxqR58SgAeHJk564UMMHj1dD2eRnU4Wi",
+          "liquiditySol": 41.849986684162715,
+          "progress": 38.3084261787163
+        },
+        {
+          "t": 10,
+          "txType": "buy",
+          "trader": "ERjTeYQsZeXckaqTTT3UdyY7Co7vryVxTLR7CUFehskN",
+          "liquiditySol": 43.922376932041395,
+          "progress": 42.88439870117072
+        },
+        {
+          "t": 10,
+          "txType": "sell",
+          "trader": "G68agYo4XJNE9NT4pd97NYcxyPSDdDsc2HccNYBcC7NV",
+          "liquiditySol": 45.66138221235434,
+          "progress": 46.40372098180229
+        },
+        {
+          "t": 10,
+          "txType": "buy",
+          "trader": "DnYxk43kdKfoThhxjywZVeeZajfivfZnXiFohv1VunWb",
+          "liquiditySol": 46.016251839968504,
+          "progress": 47.08921167456298
+        },
+        {
+          "t": 10,
+          "txType": "sell",
+          "trader": "77WYYf8id6n1wMBaD3FT4gtwDUPem8hu78bEKYFh9tqE",
+          "liquiditySol": 43.03180748888931,
+          "progress": 40.971969380553396
+        },
+        {
+          "t": 10,
+          "txType": "buy",
+          "trader": "6fkxpzB3RUPzdNEdN33AKnuhcH4ukbnVUxokZQX8unoJ",
+          "liquiditySol": 43.201795588699206,
+          "progress": 41.343094337266294
+        },
+        {
+          "t": 10,
+          "txType": "sell",
+          "trader": "DP5qsinTzFyn7FSCnjiRenfVDJpkUCazRb7odaNyo1yQ",
+          "liquiditySol": 42.999553995260435,
+          "progress": 40.901221041114496
+        },
+        {
+          "t": 11,
+          "txType": "sell",
+          "trader": "E6c2hREwqWeL4yWX1sN1MnPWp8cNJtU9ij6JytxSXGRn",
+          "liquiditySol": 42.99585049390719,
+          "progress": 40.89309058257635
+        },
+        {
+          "t": 11,
+          "txType": "buy",
+          "trader": "DdGthLAYun6uk3XdGUuJypifMSRBPboDd8D1hhyWAvsH",
+          "liquiditySol": 43.04267960585261,
+          "progress": 40.995793576591225
+        },
+        {
+          "t": 11,
+          "txType": "sell",
+          "trader": "DP5qsinTzFyn7FSCnjiRenfVDJpkUCazRb7odaNyo1yQ",
+          "liquiditySol": 42.841740925566356,
+          "progress": 40.55352084725722
+        },
+        {
+          "t": 11,
+          "txType": "buy",
+          "trader": "2NVLJFTnheLbkU6qrh6WNx4oknxo5ChngYtEKUmeA8hW",
+          "liquiditySol": 42.95724467442766,
+          "progress": 40.808254063466144
+        },
+        {
+          "t": 12,
+          "txType": "buy",
+          "trader": "2JMChGU67tzWco15u9S8prtttPNrpUx6pjK2h2jiv3AR",
+          "liquiditySol": 43.52533284273236,
+          "progress": 42.04144479700606
+        },
+        {
+          "t": 12,
+          "txType": "sell",
+          "trader": "DqHmuHLMmMnDohgo9QvTgWDeRrnEw3u8DNyDwbCxdhxq",
+          "liquiditySol": 44.51054194328455,
+          "progress": 44.105476951388226
+        },
+        {
+          "t": 13,
+          "txType": "sell",
+          "trader": "DP5qsinTzFyn7FSCnjiRenfVDJpkUCazRb7odaNyo1yQ",
+          "liquiditySol": 44.27683327728911,
+          "progress": 43.62416304579624
+        },
+        {
+          "t": 13,
+          "txType": "buy",
+          "trader": "5zbPSY5kV6X3Thkeu7ch78xAZXC28beLjmdUmJripJme",
+          "liquiditySol": 42.525211431909845,
+          "progress": 39.84835118853965
+        },
+        {
+          "t": 14,
+          "txType": "buy",
+          "trader": "3wjtcNqCYzzy2t4bUdyJLfXAakijSvunTJDk5haYmqch",
+          "liquiditySol": 42.763154121562394,
+          "progress": 40.379418024314454
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "creator-exit",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    },
+    {
+      "id": "sword-hkc82o",
+      "description": "Captured launch broke out cleanly (peak 69.1%, 79 trades).",
+      "creator": "MteLWm6F5EbDMn6qnBPncz8WXmqjaaKxdffC8nxEZGL",
+      "quality": {
+        "holderCount": 58,
+        "deployerHoldings": 2,
+        "top10Concentration": 29
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "MteLWm6F5EbDMn6qnBPncz8WXmqjaaKxdffC8nxEZGL",
+          "liquiditySol": 40.592686002522065,
+          "progress": 35.3045013239188,
+          "initialBuy": 0.28
+        },
+        {
+          "t": 0,
+          "txType": "buy",
+          "trader": "7nMy8MrVpsZSJ7vWuV8Z8KkaQ6rhijBu5HxYMxoCitfx",
+          "liquiditySol": 40.64268419368958,
+          "progress": 35.42750473280317
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg",
+          "liquiditySol": 41.25116053957625,
+          "progress": 36.90055705430539
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "2aErPyKRhuNeaoZsQXe4tpbfJJvJvxd6a7fKLdhfA5NK",
+          "liquiditySol": 41.39881899041472,
+          "progress": 37.25149248031472
+        },
+        {
+          "t": 5,
+          "txType": "sell",
+          "trader": "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg",
+          "liquiditySol": 40.90644477245111,
+          "progress": 36.07142010802182
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "HRi5Ka6iCaeY1dm6cquyAZBQuHFEVRrzxdGwAB2YZ3YS",
+          "liquiditySol": 40.92840512148763,
+          "progress": 36.12465736953839
+        },
+        {
+          "t": 9,
+          "txType": "buy",
+          "trader": "ms2gUFtX7BeLUo2PRrCGyGpx13F5wkFJHJDVSdXAeK8",
+          "liquiditySol": 41.00465198165204,
+          "progress": 36.30905572314147
+        },
+        {
+          "t": 12,
+          "txType": "buy",
+          "trader": "HUfBmsBpqvkE6b79La7VwC87tCGEDn8psYbXo6S1eLg7",
+          "liquiditySol": 41.06331864664291,
+          "progress": 36.450471300857274
+        },
+        {
+          "t": 14,
+          "txType": "buy",
+          "trader": "AhrKnXKZHXNj8qJk23PpwWcGZq1h3QPMoNHwr8RjtDpC",
+          "liquiditySol": 41.16109642362776,
+          "progress": 36.68526811838104
+        },
+        {
+          "t": 18,
+          "txType": "buy",
+          "trader": "42BGuamCxmV2iw3JbyEvS2HHmS7LDGgRdGRkEFXeGazd",
+          "liquiditySol": 41.5522075345672,
+          "progress": 37.61340524333463
+        },
+        {
+          "t": 23,
+          "txType": "buy",
+          "trader": "AhrKnXKZHXNj8qJk23PpwWcGZq1h3QPMoNHwr8RjtDpC",
+          "liquiditySol": 42.5299853114158,
+          "progress": 39.85906447618497
+        },
+        {
+          "t": 24,
+          "txType": "buy",
+          "trader": "4gT3NDMFkuhmRpdrMSVvqTnftUN8mxG1Gc9Qx61CwKd9",
+          "liquiditySol": 45.74257523976734,
+          "progress": 46.56149740157976
+        },
+        {
+          "t": 25,
+          "txType": "buy",
+          "trader": "AWFww5aBT6ahCx5ocuReh4QBox2psR3YN6eCFHCdj5Hf",
+          "liquiditySol": 46.28934022299175,
+          "progress": 47.60957181339743
+        },
+        {
+          "t": 27,
+          "txType": "buy",
+          "trader": "7kpo1KSt1TVNUWNNQs67tdzkJzEo3zxJkZjbX2oDFnMq",
+          "liquiditySol": 47.28960249173221,
+          "progress": 49.464214535488594
+        },
+        {
+          "t": 31,
+          "txType": "buy",
+          "trader": "EaEf6TH8Nd2SThZrPKLkR11U6NojWZEExVL4HiQ1XXuw",
+          "liquiditySol": 48.88090968948431,
+          "progress": 52.258315600623504
+        },
+        {
+          "t": 32,
+          "txType": "buy",
+          "trader": "GUDP1dP2C4S3M6dYrSXMFPumWg1Gt1s1N1FqAThsiXWZ",
+          "liquiditySol": 49.248014427303964,
+          "progress": 52.87726480820692
+        },
+        {
+          "t": 33,
+          "txType": "buy",
+          "trader": "HC4L99A1Sj3FwDvjFMAYx6mEW4ymkf1tVgxQoUKN8yQh",
+          "liquiditySol": 50.123973715682006,
+          "progress": 54.31753087926252
+        },
+        {
+          "t": 34,
+          "txType": "buy",
+          "trader": "JDQMncBWPBcvYafb4DGBk8qJVUYT3VtkyGvqePvfeunJ",
+          "liquiditySol": 52.781894319204845,
+          "progress": 58.39513034930979
+        },
+        {
+          "t": 34,
+          "txType": "sell",
+          "trader": "HUfBmsBpqvkE6b79La7VwC87tCGEDn8psYbXo6S1eLg7",
+          "liquiditySol": 52.73833431975837,
+          "progress": 58.33161634259867
+        },
+        {
+          "t": 35,
+          "txType": "sell",
+          "trader": "2aErPyKRhuNeaoZsQXe4tpbfJJvJvxd6a7fKLdhfA5NK",
+          "liquiditySol": 52.62630916364281,
+          "progress": 58.16779168727941
+        },
+        {
+          "t": 36,
+          "txType": "sell",
+          "trader": "4GdyYjLjq2rKR9XfiXrjgffoVXXncKEzTEyVvYuM2num",
+          "liquiditySol": 52.02587588370224,
+          "progress": 57.27769851593014
+        },
+        {
+          "t": 37,
+          "txType": "sell",
+          "trader": "nya666pQkP3PzWxi7JngU3rRMHuc7zbLK8c8wxQ4qpT",
+          "liquiditySol": 51.62052663085597,
+          "progress": 56.66509346641646
+        },
+        {
+          "t": 39,
+          "txType": "buy",
+          "trader": "7yFfvyQw8TGM2fBQyMa4xDit4wfeX3mSoyS5661knL1f",
+          "liquiditySol": 51.689419351830374,
+          "progress": 56.76988888102774
+        },
+        {
+          "t": 41,
+          "txType": "sell",
+          "trader": "7kpo1KSt1TVNUWNNQs67tdzkJzEo3zxJkZjbX2oDFnMq",
+          "liquiditySol": 50.86479061682111,
+          "progress": 55.49687665016921
+        },
+        {
+          "t": 47,
+          "txType": "sell",
+          "trader": "GUDP1dP2C4S3M6dYrSXMFPumWg1Gt1s1N1FqAThsiXWZ",
+          "liquiditySol": 48.21519442997623,
+          "progress": 51.111857105623
+        },
+        {
+          "t": 51,
+          "txType": "buy",
+          "trader": "D1mki22kNT1JY4DdixG8u5aczNFPEsEkvH5jxCzZbmRr",
+          "liquiditySol": 48.26457714395261,
+          "progress": 51.19798732492712
+        },
+        {
+          "t": 52,
+          "txType": "sell",
+          "trader": "5su4QavVkSkYk4iaM47F6pTVqMMaiuDvyVAV9vjXqU9n",
+          "liquiditySol": 48.260448721644444,
+          "progress": 51.190793542780355
+        },
+        {
+          "t": 60,
+          "txType": "buy",
+          "trader": "5zLq1adDufxCrDcXpY3RPsnHCk9VBXDhCeKWG8VA27nA",
+          "liquiditySol": 48.262448721644446,
+          "progress": 51.19427869951229
+        },
+        {
+          "t": 62,
+          "txType": "buy",
+          "trader": "BbHLVpzZVXZjmv6nwi3n3ejSXSkCoE9N6kzArLx6yApL",
+          "liquiditySol": 49.0446709432335,
+          "progress": 52.53556657217325
+        },
+        {
+          "t": 64,
+          "txType": "sell",
+          "trader": "42BGuamCxmV2iw3JbyEvS2HHmS7LDGgRdGRkEFXeGazd",
+          "liquiditySol": 48.76653053327273,
+          "progress": 52.06356501312987
+        },
+        {
+          "t": 67,
+          "txType": "buy",
+          "trader": "EAAizm5oRwVfid9SBEwta8nGhKBTBDwa79TgZbJybo1g",
+          "liquiditySol": 48.91319719919528,
+          "progress": 52.31312590901387
+        },
+        {
+          "t": 74,
+          "txType": "buy",
+          "trader": "7kpo1KSt1TVNUWNNQs67tdzkJzEo3zxJkZjbX2oDFnMq",
+          "liquiditySol": 49.47569791188745,
+          "progress": 53.256530799838984
+        },
+        {
+          "t": 75,
+          "txType": "buy",
+          "trader": "7Jy5ZQbxX2GBaThR7dsctheqnX29DixyiVf2esLPXT24",
+          "liquiditySol": 49.96668223461825,
+          "progress": 54.062629478779975
+        },
+        {
+          "t": 76,
+          "txType": "buy",
+          "trader": "Mzx5PSndtrjg2ZhbVN45kb4zHhwYAAqTtXBmrGFHGg9",
+          "liquiditySol": 50.67779333822094,
+          "progress": 55.202438991372084
+        },
+        {
+          "t": 77,
+          "txType": "buy",
+          "trader": "7Jy5ZQbxX2GBaThR7dsctheqnX29DixyiVf2esLPXT24",
+          "liquiditySol": 51.31334889183484,
+          "progress": 56.19440888048002
+        },
+        {
+          "t": 78,
+          "txType": "sell",
+          "trader": "Mzx5PSndtrjg2ZhbVN45kb4zHhwYAAqTtXBmrGFHGg9",
+          "liquiditySol": 52.36779521405291,
+          "progress": 57.7870680794369
+        },
+        {
+          "t": 78,
+          "txType": "buy",
+          "trader": "EAAizm5oRwVfid9SBEwta8nGhKBTBDwa79TgZbJybo1g",
+          "liquiditySol": 52.514461879963385,
+          "progress": 58.00352986526832
+        },
+        {
+          "t": 80,
+          "txType": "buy",
+          "trader": "7Jy5ZQbxX2GBaThR7dsctheqnX29DixyiVf2esLPXT24",
+          "liquiditySol": 52.563350767933535,
+          "progress": 58.07541535298234
+        },
+        {
+          "t": 96,
+          "txType": "buy",
+          "trader": "ENY5B79UavvLJfbfy9Y8m1Bh7ns9vZhrxNiGVASQrAs3",
+          "liquiditySol": 52.60630142768108,
+          "progress": 58.138459105346485
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "breakout",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    },
+    {
+      "id": "retardick-bpdnih",
+      "description": "Captured launch never built enough displacement (peak 7.3%, net flow -0.41 SOL).",
+      "creator": "BVT4ttDwUHvV28P8UNNAKAyyhwBCCVREK16bfT2UyzWF",
+      "quality": {
+        "holderCount": 14,
+        "deployerHoldings": 5,
+        "top10Concentration": 50
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "BVT4ttDwUHvV28P8UNNAKAyyhwBCCVREK16bfT2UyzWF",
+          "liquiditySol": 30.987654319999976,
+          "progress": 4.312092189401204,
+          "initialBuy": 0.034199203154141
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "BTNej7KTH2y7wVmrejzMuMaPsmRqiWPEc2w4PoMpbhqU",
+          "liquiditySol": 31.01765431999997,
+          "progress": 4.43877468998562
+        },
+        {
+          "t": 2,
+          "txType": "buy",
+          "trader": "96R7AD9hCc3z1d4o6NBZZXvZgpoDoac6NbucA99JSn37",
+          "liquiditySol": 31.115432096999964,
+          "progress": 4.849970232450755
+        },
+        {
+          "t": 4,
+          "txType": "sell",
+          "trader": "96R7AD9hCc3z1d4o6NBZZXvZgpoDoac6NbucA99JSn37",
+          "liquiditySol": 31.01765431999997,
+          "progress": 4.43877468998562
+        },
+        {
+          "t": 21,
+          "txType": "buy",
+          "trader": "FcL37VniCKVkAXPnBVCV6mUimoaxwWyDTg5GsZyHjLtB",
+          "liquiditySol": 30.517006145482124,
+          "progress": 2.2920577320371955
+        },
+        {
+          "t": 26,
+          "txType": "buy",
+          "trader": "HYGmkcnnMQJ1X5v42yv7rb4WDCUJMHXsU799erHThTqt",
+          "liquiditySol": 30.764286768469795,
+          "progress": 3.361098671109059
+        },
+        {
+          "t": 27,
+          "txType": "buy",
+          "trader": "AowTUid5daQr9EqwazF7hDm3jBTQSisv6LaHGhQL8k92",
+          "liquiditySol": 31.907837143085775,
+          "progress": 8.08938871827991
+        },
+        {
+          "t": 65,
+          "txType": "buy",
+          "trader": "HZUsSGX862ocH77xAsExDGxFEjJfY37gb61JiBVHkUD6",
+          "liquiditySol": 32.10536800205841,
+          "progress": 8.87201235456311
+        },
+        {
+          "t": 66,
+          "txType": "sell",
+          "trader": "BTNej7KTH2y7wVmrejzMuMaPsmRqiWPEc2w4PoMpbhqU",
+          "liquiditySol": 32.07322817522648,
+          "progress": 8.74532996898752
+        },
+        {
+          "t": 100,
+          "txType": "sell",
+          "trader": "FcL37VniCKVkAXPnBVCV6mUimoaxwWyDTg5GsZyHjLtB",
+          "liquiditySol": 31.53364672651962,
+          "progress": 6.579954737534741
+        },
+        {
+          "t": 110,
+          "txType": "sell",
+          "trader": "9q2PcxJy2cf58SLCZrLkT36HR1K8dwQaJGvfPN85SyHs",
+          "liquiditySol": 30.637614716170283,
+          "progress": 2.8156272112733554
+        },
+        {
+          "t": 136,
+          "txType": "sell",
+          "trader": "HZUsSGX862ocH77xAsExDGxFEjJfY37gb61JiBVHkUD6",
+          "liquiditySol": 30.54766068351978,
+          "progress": 2.4255228945053537
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "dead",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    },
+    {
+      "id": "bookie-8hdq1u",
+      "description": "Captured launch broke out cleanly (peak 59.6%, 20 trades).",
+      "creator": "Cd4nWyueqfK9fZq3zGvyvXTsv6ceT1iixxgJtzq6wnbx",
+      "quality": {
+        "holderCount": 19,
+        "deployerHoldings": 2,
+        "top10Concentration": 51
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "Cd4nWyueqfK9fZq3zGvyvXTsv6ceT1iixxgJtzq6wnbx",
+          "liquiditySol": 30.869135801999978,
+          "progress": 3.8092102192345245,
+          "initialBuy": 0.030210846248749
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "HGrakn1EamKC5CqtdD5BYEhTg8Yp27KngcPZE6HNFRa7",
+          "liquiditySol": 36.08859258599985,
+          "progress": 22.82541809037271
+        },
+        {
+          "t": 2,
+          "txType": "buy",
+          "trader": "BTNej7KTH2y7wVmrejzMuMaPsmRqiWPEc2w4PoMpbhqU",
+          "liquiditySol": 36.11860902006807,
+          "progress": 22.91888355340676
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "ms2gUFtX7BeLUo2PRrCGyGpx13F5wkFJHJDVSdXAeK8",
+          "liquiditySol": 36.29196086519088,
+          "progress": 23.45564343055932
+        },
+        {
+          "t": 4,
+          "txType": "sell",
+          "trader": "96R7AD9hCc3z1d4o6NBZZXvZgpoDoac6NbucA99JSn37",
+          "liquiditySol": 36.19377514260948,
+          "progress": 23.15225637326504
+        },
+        {
+          "t": 6,
+          "txType": "buy",
+          "trader": "HRi5Ka6iCaeY1dm6cquyAZBQuHFEVRrzxdGwAB2YZ3YS",
+          "liquiditySol": 36.215833491549446,
+          "progress": 23.220558410987895
+        },
+        {
+          "t": 41,
+          "txType": "sell",
+          "trader": "HGrakn1EamKC5CqtdD5BYEhTg8Yp27KngcPZE6HNFRa7",
+          "liquiditySol": 36.2120229121942,
+          "progress": 23.20876518106229
+        },
+        {
+          "t": 67,
+          "txType": "buy",
+          "trader": "Gxcqzb5FLkfGqThMt5bYDnzgiFuCuSRxRXckAxgkTJ1r",
+          "liquiditySol": 37.34268884204413,
+          "progress": 26.602430109414065
+        },
+        {
+          "t": 68,
+          "txType": "buy",
+          "trader": "7AC7bX1HUZzpRdSY1EaDRWnWrQrtxeDtKcygJqNwj1mm",
+          "liquiditySol": 38.89760738783773,
+          "progress": 30.94725418130551
+        },
+        {
+          "t": 70,
+          "txType": "sell",
+          "trader": "BTNej7KTH2y7wVmrejzMuMaPsmRqiWPEc2w4PoMpbhqU",
+          "liquiditySol": 38.96307377844969,
+          "progress": 31.122575740741144
+        },
+        {
+          "t": 79,
+          "txType": "sell",
+          "trader": "umHpySyWRGLSQFKG13npiANEvVoAJTeBeuDh3VvHQ4k",
+          "liquiditySol": 37.84455978218203,
+          "progress": 28.04380194789925
+        },
+        {
+          "t": 80,
+          "txType": "sell",
+          "trader": "HRi5Ka6iCaeY1dm6cquyAZBQuHFEVRrzxdGwAB2YZ3YS",
+          "liquiditySol": 36.712952153040995,
+          "progress": 24.73808147473307
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "breakout",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    },
+    {
+      "id": "milkers-6amhge",
+      "description": "Captured launch reversed hard after the early move (peak 35.1%, now -17.4%).",
+      "creator": "2TgEQbZme2C89qwusu7Yg5PZteH1G5zAp8CZw5VHoa9t",
+      "quality": {
+        "holderCount": 14,
+        "deployerHoldings": 2,
+        "top10Concentration": 55
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "2TgEQbZme2C89qwusu7Yg5PZteH1G5zAp8CZw5VHoa9t",
+          "liquiditySol": 32.999999999999986,
+          "progress": 12.299262961222295,
+          "initialBuy": 0.09754545454545399
+        },
+        {
+          "t": 0,
+          "txType": "buy",
+          "trader": "ADkquSiH1zS6LmGoJxzwE6x44gpE6S3KWLALqNc3sTDs",
+          "liquiditySol": 37.939259257999886,
+          "progress": 28.31150190207174
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "CozH3NJkvqK4NoDReVxq6z4pGHQKYHJf7N8FCpDqeuTU",
+          "liquiditySol": 38.3609876489784,
+          "progress": 29.487609994932424
+        },
+        {
+          "t": 1,
+          "txType": "sell",
+          "trader": "CozH3NJkvqK4NoDReVxq6z4pGHQKYHJf7N8FCpDqeuTU",
+          "liquiditySol": 34.0510671168767,
+          "progress": 16.095722794915265
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "GpWzQoGQRY5Lcb4NTeZvb2HjCcG5y8Wy46TBejzZu18g",
+          "liquiditySol": 34.24740684111377,
+          "progress": 16.779072142006186
+        },
+        {
+          "t": 4,
+          "txType": "sell",
+          "trader": "EkuXDEQKrBTqfadB1SecQ4WTLoVj4n2zNua9wUi7z5Wr",
+          "liquiditySol": 34.255555132523604,
+          "progress": 16.807262518514182
+        },
+        {
+          "t": 5,
+          "txType": "sell",
+          "trader": "haqqiUUXB5gp7gDbSjpEkw3phAjQb25r86uXJsZQgWq",
+          "liquiditySol": 34.24740684111377,
+          "progress": 16.779072142006186
+        },
+        {
+          "t": 6,
+          "txType": "sell",
+          "trader": "4J4cGrMniRg27i4EXdbQeEGDsmYsn6PCRTX5GpYXxqW3",
+          "liquiditySol": 33.25111367441483,
+          "progress": 13.22810797526567
+        },
+        {
+          "t": 8,
+          "txType": "buy",
+          "trader": "AZKA6Skte1XFM1dQwUfcaXmX6MWKyJkitjgzXedU7EBT",
+          "liquiditySol": 30.23339810771526,
+          "progress": 1.0444367385815136
+        },
+        {
+          "t": 10,
+          "txType": "sell",
+          "trader": "ADkquSiH1zS6LmGoJxzwE6x44gpE6S3KWLALqNc3sTDs",
+          "liquiditySol": 30.043053679195438,
+          "progress": 0.19388221326630078
+        },
+        {
+          "t": 30,
+          "txType": "sell",
+          "trader": "BWJxBMRtqqHhGtJmtUo7whFW2TBd9LPqxWDy6tJdSo8u",
+          "liquiditySol": 30.024500030830886,
+          "progress": 0.11039835920047976
+        },
+        {
+          "t": 39,
+          "txType": "sell",
+          "trader": "AZKA6Skte1XFM1dQwUfcaXmX6MWKyJkitjgzXedU7EBT",
+          "liquiditySol": 30,
+          "progress": 0
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "ruggy",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    },
+    {
+      "id": "milkers-7qikkz",
+      "description": "Captured launch reversed hard after the early move (peak 68.3%, now -6.3%).",
+      "creator": "2TgEQbZme2C89qwusu7Yg5PZteH1G5zAp8CZw5VHoa9t",
+      "quality": {
+        "holderCount": 13,
+        "deployerHoldings": 2,
+        "top10Concentration": 42
+      },
+      "events": [
+        {
+          "t": 0,
+          "txType": "create",
+          "trader": "2TgEQbZme2C89qwusu7Yg5PZteH1G5zAp8CZw5VHoa9t",
+          "liquiditySol": 30.999999999999986,
+          "progress": 4.3642545991433614,
+          "initialBuy": 0.034612903225806
+        },
+        {
+          "t": 1,
+          "txType": "buy",
+          "trader": "haqqiUUXB5gp7gDbSjpEkw3phAjQb25r86uXJsZQgWq",
+          "liquiditySol": 34.33441661634877,
+          "progress": 17.07940559410553
+        },
+        {
+          "t": 2,
+          "txType": "buy",
+          "trader": "AMCKH5jLAaBxEupYfSTNKuuEKQG4P75fJANuaK1uN6h3",
+          "liquiditySol": 34.790539251326834,
+          "progress": 18.62923472031749
+        },
+        {
+          "t": 3,
+          "txType": "buy",
+          "trader": "G71oekSMVXRn2Y44MzJhaT3HkA6XCeoimDMj9WcXoTwg",
+          "liquiditySol": 37.26774995120763,
+          "progress": 26.383874715720207
+        },
+        {
+          "t": 3,
+          "txType": "sell",
+          "trader": "haqqiUUXB5gp7gDbSjpEkw3phAjQb25r86uXJsZQgWq",
+          "liquiditySol": 39.13831728216411,
+          "progress": 31.58899834980973
+        },
+        {
+          "t": 5,
+          "txType": "buy",
+          "trader": "E38ZVkwM6qNtsDKuNQTsGvGH7WQmnjSexhkDKwxDRQye",
+          "liquiditySol": 37.2660529294912,
+          "progress": 26.378915261823987
+        },
+        {
+          "t": 8,
+          "txType": "buy",
+          "trader": "AMCKH5jLAaBxEupYfSTNKuuEKQG4P75fJANuaK1uN6h3",
+          "liquiditySol": 38.7332888262743,
+          "progress": 30.50459203184655
+        },
+        {
+          "t": 11,
+          "txType": "buy",
+          "trader": "2aErPyKRhuNeaoZsQXe4tpbfJJvJvxd6a7fKLdhfA5NK",
+          "liquiditySol": 40.21405292905537,
+          "progress": 34.36307586442794
+        },
+        {
+          "t": 14,
+          "txType": "sell",
+          "trader": "E38ZVkwM6qNtsDKuNQTsGvGH7WQmnjSexhkDKwxDRQye",
+          "liquiditySol": 40.20255221877053,
+          "progress": 34.33420324275841
+        },
+        {
+          "t": 15,
+          "txType": "sell",
+          "trader": "FP6HBvVyG71pzUqy67tZYRYBvMgQo9Q6wAo1ijwpwqvx",
+          "liquiditySol": 37.964587828940374,
+          "progress": 28.382875267866474
+        },
+        {
+          "t": 19,
+          "txType": "sell",
+          "trader": "EaVboaPxFCYanjoNWdkxTbPvt57nhXGu5i6m9m6ZS2kK",
+          "liquiditySol": 31.32250706246984,
+          "progress": 5.712329573952841
+        },
+        {
+          "t": 25,
+          "txType": "sell",
+          "trader": "2aErPyKRhuNeaoZsQXe4tpbfJJvJvxd6a7fKLdhfA5NK",
+          "liquiditySol": 30,
+          "progress": 0
+        }
+      ],
+      "source": "capture",
+      "outcomeLabel": "ruggy",
+      "capturePath": "C:/Users/mike/memecash/pump-fun-trader/runtime/captures/2026-04-02T20-54-26-330Z.jsonl"
+    }
+  ]
+}

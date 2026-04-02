@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import type { EnhancedAnalysis } from '../utils/enhancedAnalyzer';
 import { estimatePaperBuyExecution, estimatePaperSellExecution, PAPER_TOKEN_ACCOUNT_RENT_SOL } from '../utils/paperTrading';
 import {
@@ -23,7 +21,13 @@ import {
     hasTp2Sell
 } from '../utils/tradeExit';
 import type { TokenData } from '../types/token';
-import { loadCaptureReplayScenarios, resolveCapturePath, type ReplayScenario as Scenario, type ReplayTapeEvent as ScenarioEvent } from './captureTools';
+import {
+    loadReplayScenariosFromSource,
+    resolveBundledReplayPackPath,
+    resolveCapturePath,
+    type ReplayScenario as Scenario,
+    type ReplayTapeEvent as ScenarioEvent
+} from './captureTools';
 
 const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000;
 const PUMP_CURVE_SALE_TOKENS = 793_100_000;
@@ -132,9 +136,9 @@ type Position = {
     entryAgeSeconds: number;
 };
 
-type StrategyName = 'legacy' | 'strict' | 'aggressive' | 'probe';
+export type StrategyName = 'legacy' | 'strict' | 'aggressive' | 'probe';
 
-type StrategyConfig = {
+export type StrategyConfig = {
     name: StrategyName;
     label: string;
     amountSol: number;
@@ -144,7 +148,7 @@ type StrategyConfig = {
     useLegacyEntry?: boolean;
 };
 
-type RunResult = {
+export type RunResult = {
     strategy: StrategyName;
     entered: boolean;
     entryAgeSeconds?: number;
@@ -152,7 +156,7 @@ type RunResult = {
     closeReason: string;
 };
 
-const STRATEGIES: StrategyConfig[] = [
+export const STRATEGIES: StrategyConfig[] = [
     {
         name: 'legacy',
         label: 'legacy',
@@ -522,7 +526,7 @@ function getStrategyConfig(strategy: StrategyName): StrategyConfig {
     return config;
 }
 
-function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
+export function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     clearAllMarketSnapshots();
 
     const originalDateNow = Date.now;
@@ -612,211 +616,74 @@ function runScenario(strategy: StrategyName, scenario: Scenario): RunResult {
     };
 }
 
-const syntheticScenarios: Scenario[] = [
-    {
-        id: 'organic',
-        description: 'Diversified follow-through, small shakeout, then trend continuation.',
-        creator: 'creator-organic',
-        quality: { holderCount: 34, deployerHoldings: 2.4, top10Concentration: 18 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-organic', liquiditySol: 30.35, progress: 0.5, initialBuy: 0.35 },
-            { t: 6, txType: 'buy', trader: 'w1', liquiditySol: 30.7, progress: 0.9 },
-            { t: 10, txType: 'buy', trader: 'w2', liquiditySol: 31.1, progress: 1.4 },
-            { t: 14, txType: 'sell', trader: 'w3', liquiditySol: 30.95, progress: 1.3 },
-            { t: 19, txType: 'buy', trader: 'w4', liquiditySol: 31.55, progress: 2.1 },
-            { t: 25, txType: 'buy', trader: 'w5', liquiditySol: 32.2, progress: 3.0 },
-            { t: 32, txType: 'buy', trader: 'w6', liquiditySol: 33.0, progress: 4.1 },
-            { t: 42, txType: 'sell', trader: 'w7', liquiditySol: 32.8, progress: 3.9 },
-            { t: 55, txType: 'buy', trader: 'w8', liquiditySol: 34.0, progress: 5.3 },
-            { t: 75, txType: 'buy', trader: 'w9', liquiditySol: 36.9, progress: 8.8 },
-            { t: 110, txType: 'buy', trader: 'w10', liquiditySol: 40.8, progress: 13.4 },
-            { t: 145, txType: 'sell', trader: 'w11', liquiditySol: 39.6, progress: 11.8 }
-        ]
-    },
-    {
-        id: 'breakout',
-        description: 'Clean second-wave continuation that should pay the conservative runner quickly.',
-        creator: 'creator-breakout',
-        quality: { holderCount: 42, deployerHoldings: 2.1, top10Concentration: 17 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-breakout', liquiditySol: 30.32, progress: 0.4, initialBuy: 0.32 },
-            { t: 5, txType: 'buy', trader: 'w1', liquiditySol: 30.72, progress: 0.9 },
-            { t: 9, txType: 'buy', trader: 'w2', liquiditySol: 31.08, progress: 1.3 },
-            { t: 13, txType: 'sell', trader: 'w3', liquiditySol: 30.92, progress: 1.1 },
-            { t: 17, txType: 'buy', trader: 'w4', liquiditySol: 31.55, progress: 2.0 },
-            { t: 22, txType: 'buy', trader: 'w5', liquiditySol: 32.25, progress: 3.0 },
-            { t: 28, txType: 'buy', trader: 'w6', liquiditySol: 33.15, progress: 4.2 },
-            { t: 35, txType: 'sell', trader: 'w7', liquiditySol: 32.95, progress: 3.9 },
-            { t: 46, txType: 'buy', trader: 'w8', liquiditySol: 35.1, progress: 6.8 },
-            { t: 60, txType: 'buy', trader: 'w9', liquiditySol: 38.6, progress: 10.4 },
-            { t: 78, txType: 'buy', trader: 'w10', liquiditySol: 44.8, progress: 17.8 },
-            { t: 105, txType: 'sell', trader: 'w11', liquiditySol: 43.2, progress: 15.9 }
-        ]
-    },
-    {
-        id: 'dominated',
-        description: 'Looks active, but most early flow is concentrated in two wallets before the dump.',
-        creator: 'creator-dominated',
-        quality: { holderCount: 18, deployerHoldings: 3.1, top10Concentration: 23 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-dominated', liquiditySol: 30.3, progress: 0.4, initialBuy: 0.3 },
-            { t: 6, txType: 'buy', trader: 'whale-1', liquiditySol: 30.95, progress: 1.1 },
-            { t: 10, txType: 'buy', trader: 'whale-1', liquiditySol: 31.55, progress: 1.9 },
-            { t: 14, txType: 'buy', trader: 'whale-2', liquiditySol: 32.25, progress: 2.9 },
-            { t: 18, txType: 'buy', trader: 'whale-1', liquiditySol: 33.05, progress: 4.1 },
-            { t: 20, txType: 'buy', trader: 'w3', liquiditySol: 33.15, progress: 4.2 },
-            { t: 23, txType: 'buy', trader: 'w4', liquiditySol: 33.25, progress: 4.3 },
-            { t: 26, txType: 'buy', trader: 'w5', liquiditySol: 33.35, progress: 4.4 },
-            { t: 29, txType: 'buy', trader: 'w6', liquiditySol: 33.45, progress: 4.5 },
-            { t: 40, txType: 'sell', trader: 'whale-1', liquiditySol: 31.6, progress: 2.7 },
-            { t: 55, txType: 'sell', trader: 'whale-2', liquiditySol: 30.7, progress: 1.0 }
-        ]
-    },
-    {
-        id: 'onesided',
-        description: 'Many wallets print buys, but no shakeout ever comes and the tape air-pockets.',
-        creator: 'creator-onesided',
-        quality: { holderCount: 22, deployerHoldings: 2.8, top10Concentration: 21 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-onesided', liquiditySol: 30.25, progress: 0.3, initialBuy: 0.25 },
-            { t: 5, txType: 'buy', trader: 'w1', liquiditySol: 30.6, progress: 0.8 },
-            { t: 9, txType: 'buy', trader: 'w2', liquiditySol: 30.95, progress: 1.2 },
-            { t: 12, txType: 'buy', trader: 'w3', liquiditySol: 31.35, progress: 1.8 },
-            { t: 16, txType: 'buy', trader: 'w4', liquiditySol: 31.8, progress: 2.5 },
-            { t: 20, txType: 'buy', trader: 'w5', liquiditySol: 32.25, progress: 3.1 },
-            { t: 24, txType: 'buy', trader: 'w6', liquiditySol: 32.7, progress: 3.7 },
-            { t: 28, txType: 'buy', trader: 'w7', liquiditySol: 33.05, progress: 4.1 },
-            { t: 45, txType: 'sell', trader: 'w8', liquiditySol: 31.6, progress: 2.3 },
-            { t: 60, txType: 'sell', trader: 'w9', liquiditySol: 30.95, progress: 1.4 }
-        ]
-    },
-    {
-        id: 'creatorx',
-        description: 'Flow is otherwise clean, but the creator starts unloading during the confirmation window.',
-        creator: 'creator-x',
-        quality: { holderCount: 26, deployerHoldings: 3.5, top10Concentration: 20 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-x', liquiditySol: 30.3, progress: 0.4, initialBuy: 0.3 },
-            { t: 6, txType: 'buy', trader: 'w1', liquiditySol: 30.7, progress: 0.9 },
-            { t: 10, txType: 'buy', trader: 'w2', liquiditySol: 31.15, progress: 1.5 },
-            { t: 14, txType: 'sell', trader: 'w3', liquiditySol: 30.95, progress: 1.3 },
-            { t: 18, txType: 'buy', trader: 'w4', liquiditySol: 31.7, progress: 2.3 },
-            { t: 22, txType: 'buy', trader: 'w5', liquiditySol: 32.3, progress: 3.1 },
-            { t: 26, txType: 'buy', trader: 'w6', liquiditySol: 32.85, progress: 3.9 },
-            { t: 31, txType: 'sell', trader: 'creator-x', liquiditySol: 32.15, progress: 3.0 },
-            { t: 44, txType: 'sell', trader: 'w7', liquiditySol: 31.4, progress: 2.0 },
-            { t: 58, txType: 'sell', trader: 'creator-x', liquiditySol: 30.75, progress: 1.0 }
-        ]
-    },
-    {
-        id: 'stall',
-        description: 'Entry looks valid, but the token never really expands after the first leg.',
-        creator: 'creator-stall',
-        quality: { holderCount: 24, deployerHoldings: 2.9, top10Concentration: 19 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-stall', liquiditySol: 30.28, progress: 0.3, initialBuy: 0.28 },
-            { t: 7, txType: 'buy', trader: 'w1', liquiditySol: 30.7, progress: 0.9 },
-            { t: 11, txType: 'buy', trader: 'w2', liquiditySol: 31.05, progress: 1.3 },
-            { t: 15, txType: 'sell', trader: 'w3', liquiditySol: 30.9, progress: 1.2 },
-            { t: 20, txType: 'buy', trader: 'w4', liquiditySol: 31.45, progress: 1.9 },
-            { t: 25, txType: 'buy', trader: 'w5', liquiditySol: 32.0, progress: 2.7 },
-            { t: 31, txType: 'buy', trader: 'w6', liquiditySol: 32.35, progress: 3.2 },
-            { t: 45, txType: 'sell', trader: 'w7', liquiditySol: 32.1, progress: 2.9 },
-            { t: 70, txType: 'buy', trader: 'w8', liquiditySol: 32.45, progress: 3.3 },
-            { t: 105, txType: 'sell', trader: 'w9', liquiditySol: 31.95, progress: 2.6 },
-            { t: 160, txType: 'sell', trader: 'w10', liquiditySol: 31.55, progress: 2.1 }
-        ]
-    },
-    {
-        id: 'probepop',
-        description: 'Multi-wallet early flow prints, a small shakeout hits, then the launch extends just enough for probe exits.',
-        creator: 'creator-probepop',
-        quality: { holderCount: 20, deployerHoldings: 2.7, top10Concentration: 18 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-probepop', liquiditySol: 30.24, progress: 0.3, initialBuy: 0.24 },
-            { t: 4, txType: 'buy', trader: 'w1', liquiditySol: 30.58, progress: 0.7 },
-            { t: 8, txType: 'buy', trader: 'w2', liquiditySol: 30.95, progress: 1.2 },
-            { t: 11, txType: 'buy', trader: 'w3', liquiditySol: 31.28, progress: 1.6 },
-            { t: 14, txType: 'sell', trader: 'w4', liquiditySol: 31.08, progress: 1.4 },
-            { t: 18, txType: 'buy', trader: 'w5', liquiditySol: 31.85, progress: 2.3 },
-            { t: 24, txType: 'buy', trader: 'w6', liquiditySol: 32.65, progress: 3.3 },
-            { t: 33, txType: 'sell', trader: 'w7', liquiditySol: 32.38, progress: 3.0 },
-            { t: 42, txType: 'buy', trader: 'w8', liquiditySol: 33.82, progress: 4.7 },
-            { t: 60, txType: 'sell', trader: 'w9', liquiditySol: 33.05, progress: 3.8 }
-        ]
-    },
-    {
-        id: 'probetrap',
-        description: 'Early prints look busy, but the tape is concentrated and creator selling starts before any real continuation.',
-        creator: 'creator-probetrap',
-        quality: { holderCount: 14, deployerHoldings: 4.2, top10Concentration: 27 },
-        events: [
-            { t: 0, txType: 'create', trader: 'creator-probetrap', liquiditySol: 30.22, progress: 0.2, initialBuy: 0.22 },
-            { t: 5, txType: 'buy', trader: 'whale-1', liquiditySol: 30.82, progress: 0.9 },
-            { t: 8, txType: 'buy', trader: 'whale-1', liquiditySol: 31.46, progress: 1.7 },
-            { t: 11, txType: 'buy', trader: 'whale-2', liquiditySol: 32.02, progress: 2.5 },
-            { t: 14, txType: 'sell', trader: 'creator-probetrap', liquiditySol: 31.15, progress: 1.4 },
-            { t: 18, txType: 'sell', trader: 'whale-1', liquiditySol: 30.55, progress: 0.7 },
-            { t: 25, txType: 'sell', trader: 'whale-2', liquiditySol: 30.08, progress: 0.1 }
-        ]
-    }
-];
-
 function formatSol(value: number): string {
     return `${value >= 0 ? '+' : ''}${value.toFixed(4)} SOL`;
 }
 
-function resolveReplayScenarios(): { scenarios: Scenario[]; capturePath: string | null } {
-    const rawArgs = process.argv.slice(2);
+export type ReplaySourceInfo = {
+    scenarios: Scenario[];
+    sourcePath: string;
+    sourceKind: 'capture' | 'capture-pack';
+};
+
+export function resolveReplayScenarios(rawArgs: string[] = process.argv.slice(2)): ReplaySourceInfo {
     const latestCaptureRequested = rawArgs.includes('--latest-capture');
     const captureFlagIndex = rawArgs.indexOf('--capture');
     const captureArgument = captureFlagIndex >= 0 ? rawArgs[captureFlagIndex + 1] : undefined;
+    const packFlagIndex = rawArgs.indexOf('--pack');
+    const packArgument = packFlagIndex >= 0 ? rawArgs[packFlagIndex + 1] : undefined;
 
     if (latestCaptureRequested) {
-        const captureDir = path.resolve(process.cwd(), 'runtime', 'captures');
-        if (fs.existsSync(captureDir)) {
-            const files = fs.readdirSync(captureDir)
-                .filter((file) => file.endsWith('.jsonl'))
-                .map((file) => path.join(captureDir, file))
-                .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-
-            for (const filePath of files) {
-                const capturedScenarios = loadCaptureReplayScenarios(filePath);
-                if (capturedScenarios.length > 0) {
-                    return {
-                        scenarios: capturedScenarios,
-                        capturePath: filePath
-                    };
-                }
+        const capturePath = resolveCapturePath('--latest-capture');
+        if (capturePath) {
+            const scenarios = loadReplayScenariosFromSource(capturePath);
+            if (scenarios.length > 0) {
+                return {
+                    scenarios,
+                    sourcePath: capturePath,
+                    sourceKind: 'capture'
+                };
             }
         }
     }
 
     const capturePath = captureArgument ? resolveCapturePath(captureArgument) : null;
     if (capturePath) {
-        const capturedScenarios = loadCaptureReplayScenarios(capturePath);
-        if (capturedScenarios.length > 0) {
+        const scenarios = loadReplayScenariosFromSource(capturePath);
+        if (scenarios.length > 0) {
             return {
-                scenarios: capturedScenarios,
-                capturePath
+                scenarios,
+                sourcePath: capturePath,
+                sourceKind: 'capture'
             };
         }
     }
 
+    const packPath = resolveBundledReplayPackPath(packArgument);
+    if (!packPath) {
+        throw new Error('No bundled real replay pack found. Add bot/fixtures/realLaunchPack.json or run paper:capture.');
+    }
+
+    const scenarios = loadReplayScenariosFromSource(packPath);
+    if (scenarios.length === 0) {
+        throw new Error(`Bundled replay pack did not contain any scenarios: ${packPath}`);
+    }
+
     return {
-        scenarios: syntheticScenarios,
-        capturePath: null
+        scenarios,
+        sourcePath: packPath,
+        sourceKind: 'capture-pack'
     };
 }
 
 function printOutcomeSummary(scenarios: Scenario[]): void {
     const labels = new Map<string, number>();
     for (const scenario of scenarios) {
-        const label = scenario.outcomeLabel || 'synthetic';
+        const label = scenario.outcomeLabel || 'unlabeled';
         labels.set(label, (labels.get(label) || 0) + 1);
     }
 
-    if (labels.size <= 1 && labels.has('synthetic')) {
+    if (labels.size === 0) {
         return;
     }
 
@@ -827,8 +694,7 @@ function printOutcomeSummary(scenarios: Scenario[]): void {
     console.log('');
 }
 
-function main(): void {
-    const { scenarios, capturePath } = resolveReplayScenarios();
+export function runReplaySet(scenarios: Scenario[]): Map<StrategyName, RunResult[]> {
     const resultsByStrategy = new Map<StrategyName, RunResult[]>();
     for (const strategy of STRATEGIES) {
         resultsByStrategy.set(
@@ -837,13 +703,17 @@ function main(): void {
         );
     }
 
-    if (capturePath) {
-        console.log(`Paper Replay - Captured Launches (${capturePath})`);
-        printOutcomeSummary(scenarios);
-    } else {
-        console.log('Paper Replay - Conservative vs Aggressive vs Experimental');
-        console.log('');
-    }
+    return resultsByStrategy;
+}
+
+function main(): void {
+    const { scenarios, sourcePath, sourceKind } = resolveReplayScenarios();
+    const resultsByStrategy = runReplaySet(scenarios);
+
+    console.log(sourceKind === 'capture'
+        ? `Paper Replay - Captured Launches (${sourcePath})`
+        : `Paper Replay - Bundled Real Launch Pack (${sourcePath})`);
+    printOutcomeSummary(scenarios);
 
     for (let index = 0; index < scenarios.length; index++) {
         const scenario = scenarios[index];
@@ -868,4 +738,6 @@ function main(): void {
     }
 }
 
-main();
+if (require.main === module) {
+    main();
+}
