@@ -156,8 +156,7 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     const creatorSellCount = snapshot?.creatorSellCount || 0;
     const concentrationSampleReady =
         tradeCount >= 3 ||
-        uniqueTraderCount >= 2 ||
-        observedVolume >= 0.35;
+        uniqueTraderCount >= 2;
 
     if (age > 60) {
         return {
@@ -319,8 +318,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
     const concentrationSampleReady =
         tradeCount >= 4 ||
-        uniqueTraderCount >= 3 ||
-        observedVolume >= 0.6;
+        uniqueTraderCount >= 3;
 
     if (age > 60) {
         return {
@@ -532,6 +530,9 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const impact = estimateCurveBuyImpactPercent(liquidity, amountSol);
     const isGodMode = mode === 'god';
     const traderDiversity = calculateTraderDiversity(uniqueTraderCount, tradeCount);
+    const concentrationSampleReady =
+        tradeCount >= 4 ||
+        uniqueTraderCount >= 3;
 
     if (analysis.metrics.launchFlags.hardBlock) {
         return {
@@ -653,28 +654,28 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.56 : 0.48) : 0.56;
     const maxCreatorVolumeShare = isGodMode ? 0.24 : 0.3;
 
-    if (largestTraderVolumeShare > maxLargestTraderShare) {
+    if (concentrationSampleReady && largestTraderVolumeShare > maxLargestTraderShare) {
         return {
             status: 'reject',
             reason: `One wallet is driving too much of the tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
+    if (concentrationSampleReady && topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
         return {
             status: 'reject',
             reason: `Too much early flow is coming from the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (repeatTraderRatio > (isGodMode ? 0.42 : 0.5) && tradeCount >= 6) {
+    if (concentrationSampleReady && repeatTraderRatio > (isGodMode ? 0.42 : 0.5) && tradeCount >= 6) {
         return {
             status: 'reject',
             reason: `Too much of the tape is being recycled by the same wallets (${(repeatTraderRatio * 100).toFixed(0)}%)`
         };
     }
 
-    if (creatorVolumeShare > maxCreatorVolumeShare && age >= 15) {
+    if (concentrationSampleReady && creatorVolumeShare > maxCreatorVolumeShare && age >= 15) {
         return {
             status: 'reject',
             reason: `Creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume)`

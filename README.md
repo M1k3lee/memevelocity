@@ -86,6 +86,7 @@ npm run bot:wallet
 npm run bot:start
 
 # strategy tooling
+npm run verify:modes
 npm run paper:replay
 npm run paper:capture -- 10
 ```

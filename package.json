@@ -12,7 +12,8 @@
     "bot:wallet": "npm run bot:build && node dist/bot/bot/wallet.js",
     "paper:replay": "npm run bot:build && node dist/bot/bot/paperReplay.js",
     "paper:captured": "npm run bot:build && node dist/bot/bot/paperReplay.js --latest-capture",
-    "paper:capture": "npm run bot:build && node dist/bot/bot/captureFeed.js"
+    "paper:capture": "npm run bot:build && node dist/bot/bot/captureFeed.js",
+    "verify:modes": "npm run bot:build && node dist/bot/bot/modeRegression.js"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.14",

@@ -156,12 +156,13 @@ export async function analyzeEnhanced(
         const peakPrice = marketSnapshot?.peakPrice || 0;
         const probeConcentrationSampleReady =
             tradeCount >= 3 ||
-            uniqueTraderCount >= 2 ||
-            observedVolume >= 0.35;
+            uniqueTraderCount >= 2;
         const degenConcentrationSampleReady =
             tradeCount >= 4 ||
-            uniqueTraderCount >= 3 ||
-            observedVolume >= 0.6;
+            uniqueTraderCount >= 3;
+        const runnerConcentrationSampleReady =
+            tradeCount >= 4 ||
+            uniqueTraderCount >= 3;
 
         // Bonding Curve Progress
         const bondingCurveProgress = pumpData.bondingCurveProgress;
@@ -320,22 +321,22 @@ export async function analyzeEnhanced(
             const maxCreatorVolumeShare = isGodMode ? 0.26 : 0.32;
             const maxRepeatTraderRatio = isGodMode ? 0.42 : 0.5;
 
-            if (largestTraderVolumeShare > maxLargestTraderShare) {
+            if (runnerConcentrationSampleReady && largestTraderVolumeShare > maxLargestTraderShare) {
                 reasons.push(`Early flow too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
 
-            if (topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
+            if (runnerConcentrationSampleReady && topTwoTraderVolumeShare > maxTopTwoTraderShare && uniqueTraderCount < 12) {
                 reasons.push(`Early flow is dominated by too few wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}% from top 2)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
 
-            if (creatorVolumeShare > maxCreatorVolumeShare && creatorBuyCount > 0 && age >= 12) {
+            if (runnerConcentrationSampleReady && creatorVolumeShare > maxCreatorVolumeShare && creatorBuyCount > 0 && age >= 12) {
                 reasons.push(`Creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }
 
-            if (repeatTraderRatio > maxRepeatTraderRatio && tradeCount >= 6) {
+            if (runnerConcentrationSampleReady && repeatTraderRatio > maxRepeatTraderRatio && tradeCount >= 6) {
                 reasons.push(`Too much flow is being recycled by the same wallets (${(repeatTraderRatio * 100).toFixed(0)}% repeat traders)`);
                 return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity, launchFlags);
             }

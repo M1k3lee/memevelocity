@@ -3,6 +3,7 @@ import { config as loadEnv } from 'dotenv';
 import bs58 from 'bs58';
 import { Keypair } from '@solana/web3.js';
 import type { AdvancedConfig } from '../utils/enhancedAnalyzer';
+import { getStrategyPresetConfig, normalizeStrategyProfile } from '../utils/strategyProfiles';
 import type { BotMode, ManagedExitStrategy, RunnerConfig } from './types';
 
 loadEnv({ path: path.resolve(process.cwd(), '.env.local'), quiet: true });
@@ -27,75 +28,9 @@ function resolveMode(rawMode: string | undefined): BotMode {
     return SUPPORTED_MODES.includes(normalized) ? normalized : 'god';
 }
 
-function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
-    if (mode === 'god') {
-        return {
-            minLiquidity: 36,
-            maxLiquidity: 125,
-            minVolume: 1.25,
-            minHolderCount: 12,
-            maxTop10: 22,
-            maxDev: 3,
-            minBondingCurve: 1.5,
-            maxBondingCurve: 14,
-            minVelocity: 0.7,
-            rugCheckStrictness: 'strict',
-            requireSocials: false,
-            avoidSnipers: true,
-            slippage: 12
-        };
-    }
-
-    if (mode === 'sniper' || mode === 'first') {
-        return {
-            minLiquidity: 31.2,
-            maxLiquidity: 70,
-            minVolume: 0.75,
-            minHolderCount: 3,
-            maxTop10: 50,
-            maxDev: 12,
-            minBondingCurve: 0.15,
-            maxBondingCurve: 4.5,
-            minVelocity: 0.2,
-            rugCheckStrictness: 'standard',
-            requireSocials: false,
-            avoidSnipers: true,
-            slippage: 12
-        };
-    }
-
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
-        return {
-            minLiquidity: 32,
-            maxLiquidity: 140,
-            minVolume: 1.2,
-            minHolderCount: 6,
-            maxTop10: 42,
-            maxDev: 8,
-            minBondingCurve: 1.5,
-            maxBondingCurve: 18,
-            minVelocity: 0.45,
-            rugCheckStrictness: 'standard',
-            requireSocials: false,
-            avoidSnipers: true,
-            slippage: 12
-        };
-    }
-
+export function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
     return {
-        minLiquidity: 10,
-        maxLiquidity: 1000,
-        minVolume: 5,
-        minHolderCount: 20,
-        maxTop10: 40,
-        maxDev: 5,
-        minBondingCurve: 5,
-        maxBondingCurve: 20,
-        minVelocity: 0.5,
-        rugCheckStrictness: 'strict',
-        requireSocials: true,
-        avoidSnipers: true,
-        slippage: 20
+        ...getStrategyPresetConfig(normalizeStrategyProfile(mode)).advanced
     };
 }
 
