@@ -9,7 +9,12 @@ import { getTokenAgeSeconds } from './tokenTiming';
 
 const recentTokenNames = new Map<string, { timestamp: number; mint: string }>();
 const quarantinedIdentities = new Map<string, { timestamp: number; mint: string; reason: string }>();
-const NAME_COOLDOWN = 5 * 60 * 1000;
+const recentMetadataUris = new Map<string, { timestamp: number; mint: string }>();
+type CreatorStats = { launches: number; suspiciousLaunches: number; firstSeen: number; lastSeen: number };
+const creatorReputation = new Map<string, CreatorStats>();
+const NAME_COOLDOWN = 20 * 60 * 1000; // 20 min — scammers often wait out a 5-min window
+const METADATA_URI_COOLDOWN = 30 * 60 * 1000; // 30 min — metadata re-use is a strong copycat signal
+const CREATOR_REPUTATION_WINDOW = 24 * 60 * 60 * 1000; // 24h
 
 const SUSPICIOUS_PATTERNS = [
     /^real$/i,
@@ -45,7 +50,40 @@ setInterval(() => {
             quarantinedIdentities.delete(name);
         }
     }
+    for (const [uri, data] of recentMetadataUris.entries()) {
+        if (now - data.timestamp > METADATA_URI_COOLDOWN) {
+            recentMetadataUris.delete(uri);
+        }
+    }
+    for (const [creator, stats] of creatorReputation.entries()) {
+        if (now - stats.lastSeen > CREATOR_REPUTATION_WINDOW) {
+            creatorReputation.delete(creator);
+        }
+    }
 }, 60000);
+
+/**
+ * Record that a creator is known to have launched at least one suspicious
+ * token — copycat name, reused metadata, hard-rug signal, etc. Subsequent
+ * launches from the same address will trigger a reputation warning.
+ */
+export function markCreatorSuspicious(creator: string | null | undefined): void {
+    if (!creator) return;
+    const stats = creatorReputation.get(creator) || { launches: 0, suspiciousLaunches: 0, firstSeen: Date.now(), lastSeen: Date.now() };
+    stats.suspiciousLaunches += 1;
+    stats.lastSeen = Date.now();
+    creatorReputation.set(creator, stats);
+}
+
+function recordCreatorLaunch(creator: string | null | undefined): CreatorStats | null {
+    if (!creator) return null;
+    const now = Date.now();
+    const stats = creatorReputation.get(creator) || { launches: 0, suspiciousLaunches: 0, firstSeen: now, lastSeen: now };
+    stats.launches += 1;
+    stats.lastSeen = now;
+    creatorReputation.set(creator, stats);
+    return stats;
+}
 
 function quarantineIdentity(identityText: string, mint: string, reason: string) {
     if (!identityText) return;
@@ -79,6 +117,47 @@ export function detectRug(
     const age = getTokenAgeSeconds(token);
     const liquidity = token.vSolInBondingCurve || 30;
     const liquidityGrowth = liquidity - 30;
+    const creator = token.creatorPublicKey || null;
+
+    // Creator reputation check — if this creator has previously launched a
+    // token that we flagged as suspicious, treat new launches from them as
+    // rug candidates. Legitimate creators occasionally launch a second token,
+    // but serial launches from the same wallet are overwhelmingly rugs.
+    const creatorStats = recordCreatorLaunch(creator);
+    if (creatorStats && creatorStats.suspiciousLaunches >= 1 && riskMode !== 'high') {
+        isRug = true;
+        confidence = 92;
+        reason = `BAD CREATOR: ${creator!.slice(0, 8)}… has ${creatorStats.suspiciousLaunches} prior flagged launch${creatorStats.suspiciousLaunches === 1 ? '' : 'es'}`;
+    } else if (creatorStats && creatorStats.launches >= 4 && (Date.now() - creatorStats.firstSeen) < 6 * 60 * 60 * 1000) {
+        // Four+ launches in 6 hours from the same wallet — serial launcher.
+        warnings.push(`Serial launcher: ${creatorStats.launches} launches in the last ${Math.round((Date.now() - creatorStats.firstSeen) / 3_600_000)}h`);
+        confidence = Math.max(confidence, 55);
+        if (riskMode !== 'high') {
+            isRug = true;
+            reason = `SERIAL LAUNCHER: ${creatorStats.launches} tokens from ${creator!.slice(0, 8)}… in the last few hours`;
+        }
+    }
+
+    // Metadata-URI reuse — pump.fun scammers commonly reuse the same image/uri
+    // from a rugged token to trick people who liked the previous art. If we've
+    // seen this exact URI within the last 30 minutes from a different mint,
+    // quarantine it.
+    const uri = (token.uri || '').trim();
+    if (!isRug && uri && uri.length > 12) {
+        const lastUri = recentMetadataUris.get(uri);
+        if (lastUri && lastUri.mint !== token.mint) {
+            const age = Date.now() - lastUri.timestamp;
+            if (age < METADATA_URI_COOLDOWN) {
+                isRug = true;
+                confidence = 94;
+                reason = `COPYCAT ART: metadata URI reused from mint ${lastUri.mint.slice(0, 6)}… (${Math.round(age / 1000)}s ago)`;
+                markCreatorSuspicious(creator);
+            }
+        }
+        if (!isRug) {
+            recentMetadataUris.set(uri, { timestamp: Date.now(), mint: token.mint });
+        }
+    }
 
     if (identityText) {
         const lastSeen = recentTokenNames.get(identityText);
@@ -91,6 +170,7 @@ export function detectRug(
                         confidence = 95;
                         reason = `COPYCAT SCAM: ${identityLabel} "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`;
                         quarantineIdentity(identityText, token.mint, reason);
+                        markCreatorSuspicious(creator);
                     } else {
                         warnings.push(`Duplicate ${identityLabel.toLowerCase()}: "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`);
                         confidence = 40;
@@ -100,6 +180,7 @@ export function detectRug(
                     confidence = 95;
                     reason = `COPYCAT SCAM: ${identityLabel} "${displayIdentity}" seen ${(timeSinceLastSeen / 1000).toFixed(0)}s ago`;
                     quarantineIdentity(identityText, token.mint, reason);
+                    markCreatorSuspicious(creator);
                 }
             }
         }
@@ -121,6 +202,7 @@ export function detectRug(
                 confidence = 90;
                 reason = `SUSPICIOUS NAME: "${displayIdentity}" matches a known scam pattern`;
                 quarantineIdentity(identityText, token.mint, reason);
+                markCreatorSuspicious(creator);
             }
             break;
         }
@@ -194,6 +276,13 @@ export function quickRugCheck(token: TokenData): { passed: boolean; reason?: str
 export function clearNameCache(): void {
     recentTokenNames.clear();
     quarantinedIdentities.clear();
+    recentMetadataUris.clear();
+    creatorReputation.clear();
+}
+
+export function getCreatorReputation(creator: string | null | undefined): CreatorStats | null {
+    if (!creator) return null;
+    return creatorReputation.get(creator) || null;
 }
 
 export function getRugStats(): { totalNamesTracked: number; recentNames: string[] } {
