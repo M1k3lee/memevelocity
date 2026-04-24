@@ -409,7 +409,12 @@ function evaluateLegacyRunnerEntry(token: TokenData, analysis: EnhancedAnalysis,
     return score >= 74;
 }
 
-function executeSell(position: Position, amountPercent: number, price: number): { realizedDelta: number; closed: boolean } {
+function executeSell(
+    position: Position,
+    amountPercent: number,
+    price: number,
+    curve?: { vSolInBondingCurve?: number; vTokensInBondingCurve?: number } | null
+): { realizedDelta: number; closed: boolean } {
     const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
     const soldTokenAmount = position.amountTokens * sellFraction;
     const costBasis = position.buyPrice * soldTokenAmount;
@@ -417,7 +422,9 @@ function executeSell(position: Position, amountPercent: number, price: number): 
         observedPrice: price,
         amountSolPaid: position.amountSolPaid * sellFraction,
         amountTokens: soldTokenAmount,
-        exitStrategy: position.exitStrategy
+        exitStrategy: position.exitStrategy,
+        curve,
+        failureSeed: `${position.buyTime}:${amountPercent}`
     });
     const realizedDelta = sellExecution.netProceedsSol - costBasis;
 
@@ -437,7 +444,12 @@ function executeSell(position: Position, amountPercent: number, price: number): 
     };
 }
 
-function maybeManageExit(position: Position, price: number, now: number): { closeReason?: string; realizedDelta?: number; closed?: boolean } {
+function maybeManageExit(
+    position: Position,
+    price: number,
+    now: number,
+    curve?: { vSolInBondingCurve?: number; vTokensInBondingCurve?: number } | null
+): { closeReason?: string; realizedDelta?: number; closed?: boolean } {
     position.currentPrice = price;
     position.highestPrice = Math.max(position.highestPrice, price);
 
@@ -455,7 +467,7 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
     if (runnerMaxHoldTime && holdTimeSeconds >= runnerMaxHoldTime) {
         const runnerTimeExitFloor = getRunnerTimeExitFloor(strategy);
         if (currentPnl < runnerTimeExitFloor) {
-            const sell = executeSell(position, 100, price);
+            const sell = executeSell(position, 100, price, curve);
             return { closeReason: 'runner-time-exit', realizedDelta: sell.realizedDelta, closed: sell.closed };
         }
     } else if (!runnerActive && strategy.maxHoldTime && holdTimeSeconds >= strategy.maxHoldTime && currentPnl < 10) {
@@ -470,7 +482,7 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
 
     if (!runnerActive && strategy.givebackSeconds && strategy.givebackPeakTrigger !== undefined && strategy.givebackFloor !== undefined) {
         if (holdTimeSeconds >= strategy.givebackSeconds && peakPnl >= strategy.givebackPeakTrigger && currentPnl <= strategy.givebackFloor) {
-            const sell = executeSell(position, 100, price);
+            const sell = executeSell(position, 100, price, curve);
             return { closeReason: 'giveback-exit', realizedDelta: sell.realizedDelta, closed: sell.closed };
         }
     }
@@ -478,7 +490,7 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
     if (!runnerActive && strategy.stagnationSeconds && strategy.stagnationFloor !== undefined && holdTimeSeconds >= strategy.stagnationSeconds) {
         const peakTrigger = strategy.givebackPeakTrigger ?? 4;
         if (peakPnl < peakTrigger && currentPnl <= strategy.stagnationFloor) {
-            const sell = executeSell(position, 100, price);
+            const sell = executeSell(position, 100, price, curve);
             return { closeReason: 'stagnation-exit', realizedDelta: sell.realizedDelta, closed: sell.closed };
         }
     }
@@ -492,7 +504,7 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
     if (runnerTrailingStopPercent !== null && position.highestPrice > position.buyPrice) {
         const currentDropFromPeak = ((position.highestPrice - price) / position.highestPrice) * 100;
         if (peakPnl >= getRunnerActivationProfit(strategy) && currentDropFromPeak >= runnerTrailingStopPercent) {
-            const sell = executeSell(position, 100, price);
+            const sell = executeSell(position, 100, price, curve);
             return { closeReason: 'runner-trailing-stop', realizedDelta: sell.realizedDelta, closed: sell.closed };
         }
     }
@@ -503,13 +515,13 @@ function maybeManageExit(position: Position, price: number, now: number): { clos
     }
 
     if (currentPnl >= strategy.takeProfit && !hasTp1Sell(position.partialSells as PartialSellFlags)) {
-        const sell = executeSell(position, getTp1SellPercent(strategy), price);
+        const sell = executeSell(position, getTp1SellPercent(strategy), price, curve);
         position.partialSells.tp1 = true;
         return { closeReason: 'tp1', realizedDelta: sell.realizedDelta, closed: sell.closed };
     }
 
     if (strategy.takeProfit2 && currentPnl >= strategy.takeProfit2 && !hasTp2Sell(position.partialSells as PartialSellFlags)) {
-        const sell = executeSell(position, getTp2SellPercent(strategy), price);
+        const sell = executeSell(position, getTp2SellPercent(strategy), price, curve);
         position.partialSells.tp2 = true;
         return { closeReason: 'tp2', realizedDelta: sell.realizedDelta, closed: sell.closed };
     }
@@ -560,15 +572,20 @@ export function runScenario(strategy: StrategyName, scenario: Scenario): RunResu
                         observedPrice: price,
                         amountSol: strategyConfig.amountSol,
                         requestedSlippagePercent: strategyConfig.buySlippagePercent,
-                        exitStrategy
+                        exitStrategy,
+                        curve: {
+                            vSolInBondingCurve: token.vSolInBondingCurve,
+                            vTokensInBondingCurve: token.vTokensInBondingCurve
+                        }
                     });
-                    const tradeableSol = strategyConfig.amountSol - PAPER_TOKEN_ACCOUNT_RENT_SOL;
-                    const amountTokens = tradeableSol / buyExecution.fillPrice;
+                    const amountTokens = buyExecution.tokensOut > 0
+                        ? buyExecution.tokensOut
+                        : ((strategyConfig.amountSol - PAPER_TOKEN_ACCOUNT_RENT_SOL) / buyExecution.fillPrice);
 
                     position = {
                         buyPrice: buyExecution.fillPrice,
                         amountTokens,
-                        amountSolPaid: strategyConfig.amountSol + buyExecution.networkFeeSol,
+                        amountSolPaid: strategyConfig.amountSol + buyExecution.networkFeeSol + PAPER_TOKEN_ACCOUNT_RENT_SOL,
                         currentPrice: buyExecution.fillPrice,
                         highestPrice: buyExecution.fillPrice,
                         buyTime: now,
@@ -582,7 +599,11 @@ export function runScenario(strategy: StrategyName, scenario: Scenario): RunResu
             }
 
             if (position && price > 0) {
-                const sellResult = maybeManageExit(position, price, now);
+                const currentCurve = {
+                    vSolInBondingCurve: token.vSolInBondingCurve,
+                    vTokensInBondingCurve: token.vTokensInBondingCurve
+                };
+                const sellResult = maybeManageExit(position, price, now, currentCurve);
                 if (sellResult.realizedDelta) {
                     realizedPnlSol += sellResult.realizedDelta;
                 }
@@ -598,7 +619,11 @@ export function runScenario(strategy: StrategyName, scenario: Scenario): RunResu
             const now = replayStart + (lastEvent.t * 1000);
             Date.now = () => now;
             const lastPrice = calculatePumpPrice(lastEvent.liquiditySol, vTokensFromProgress(lastEvent.progress));
-            const sell = executeSell(position, 100, lastPrice);
+            const lastCurve = {
+                vSolInBondingCurve: lastEvent.liquiditySol,
+                vTokensInBondingCurve: vTokensFromProgress(lastEvent.progress)
+            };
+            const sell = executeSell(position, 100, lastPrice, lastCurve);
             realizedPnlSol += sell.realizedDelta;
             closeReason = 'forced-close';
         }

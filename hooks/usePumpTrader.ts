@@ -442,11 +442,16 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                 const sellFraction = Math.max(0, Math.min(100, amountPercent)) / 100;
                 const soldTokenAmount = (effectiveTrade.amountTokens || 0) * sellFraction;
                 let sellPrice = sanitizePaperObservedPrice(effectiveTrade, effectiveTrade.currentPrice || 0);
+                let sellCurve: { vSolInBondingCurve?: number; vTokensInBondingCurve?: number } | null = null;
                 try {
                     const pumpData = await getPumpData(mint, connection);
                     if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
                         const livePrice = calculatePumpPrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve);
                         sellPrice = sanitizePaperObservedPrice(effectiveTrade, livePrice);
+                        sellCurve = {
+                            vSolInBondingCurve: pumpData.vSolInBondingCurve,
+                            vTokensInBondingCurve: pumpData.vTokensInBondingCurve
+                        };
                     } else {
                         const snapshot = getMarketSnapshot(mint);
                         if (snapshot?.currentPrice && snapshot.currentPrice > 0) {
@@ -467,7 +472,9 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
                     observedPrice: effectiveSellPrice,
                     amountSolPaid: effectiveTrade.amountSolPaid || 0,
                     amountTokens: soldTokenAmount,
-                    exitStrategy: effectiveTrade.exitStrategy
+                    exitStrategy: effectiveTrade.exitStrategy,
+                    curve: sellCurve,
+                    failureSeed: `${mint}:${effectiveTrade.buyTime ?? 0}:${amountPercent}`
                 });
                 const revenue = sellExecution.netProceedsSol;
                 const rentReclaim = amountPercent >= 99 ? PAPER_TOKEN_ACCOUNT_RENT_SOL : 0;
@@ -967,13 +974,34 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         const isLiveMicroTrade = !isDemo && buyExecutionPlan.fastTrade;
 
         if (isDemo) {
+            // Pull fresh curve state so paper fills use real AMM math instead
+            // of a cached feed price. This is a critical piece of paper-live
+            // parity — otherwise paper fills are 2-5% cheaper than live.
+            let buyCurve: { vSolInBondingCurve?: number; vTokensInBondingCurve?: number } | null = null;
+            let observedPrice = initialPrice || 0;
+            try {
+                const pumpData = await getPumpData(mint, connection);
+                if (pumpData?.vTokensInBondingCurve && pumpData.vSolInBondingCurve > 0) {
+                    buyCurve = {
+                        vSolInBondingCurve: pumpData.vSolInBondingCurve,
+                        vTokensInBondingCurve: pumpData.vTokensInBondingCurve
+                    };
+                    observedPrice = observedPrice || calculatePumpPrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve);
+                }
+            } catch {
+                // Fall back to whatever we have; simulation will use the heuristic path.
+            }
+            if (!observedPrice) {
+                observedPrice = await getPumpPrice(mint, connection);
+            }
             const demoBuyExecution = estimatePaperBuyExecution({
-                observedPrice: initialPrice || await getPumpPrice(mint, connection),
+                observedPrice,
                 amountSol,
                 requestedSlippagePercent: slippage,
-                exitStrategy: activeExitStrategy
+                exitStrategy: activeExitStrategy,
+                curve: buyCurve
             });
-            const requiredDemoBalance = amountSol + demoBuyExecution.networkFeeSol;
+            const requiredDemoBalance = amountSol + demoBuyExecution.networkFeeSol + PAPER_TOKEN_ACCOUNT_RENT_SOL;
 
             if (demoBalance < requiredDemoBalance) {
                 addLog("[DEMO] Insufficient funds for trade.");

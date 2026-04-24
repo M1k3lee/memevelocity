@@ -12,6 +12,11 @@ import type { TokenData } from '../types/token';
 import type { BotMode, BotState, ManagedExitStrategy, ManagedPosition, RunnerConfig } from './types';
 import { calculatePumpPrice } from '../utils/pumpMath';
 import {
+    estimatePaperBuyExecution,
+    estimatePaperSellExecution,
+    PAPER_TOKEN_ACCOUNT_RENT_SOL
+} from '../utils/paperTrading';
+import {
     getProfitLockFloor,
     getRunnerActivationProfit,
     getRunnerMaxHoldTime,
@@ -564,19 +569,37 @@ class PumpFunRunner {
             }
 
             if (this.config.dryRun) {
-                const effectiveBuyPrice = entryPrice * 1.015;
-                const tradeableSol = Math.max(0, (amountSol * 0.99) - 0.00204);
-                const amountTokens = tradeableSol > 0 ? tradeableSol / effectiveBuyPrice : 0;
+                // Run the same fill simulation we use everywhere else (curve-
+                // aware AMM math, 1% pump.fun fee, confirmation-window drift).
+                // This replaces the old hardcoded `entryPrice * 1.015` which
+                // massively understated real fill cost and was the root cause
+                // of paper-vs-live P&L divergence.
+                const buyExecution = estimatePaperBuyExecution({
+                    observedPrice: entryPrice,
+                    amountSol,
+                    requestedSlippagePercent: this.config.slippage,
+                    exitStrategy,
+                    curve: pumpData
+                });
+
+                if (!Number.isFinite(buyExecution.fillPrice) || buyExecution.fillPrice <= 0 || buyExecution.tokensOut <= 0) {
+                    this.log(`[DRY RUN] Skipped ${token.symbol}: could not simulate fill`);
+                    return;
+                }
+
+                // Subtract rent + network fees the same way a live buy would,
+                // so paper P&L reflects the full cost stack.
+                const totalSolOut = amountSol + buyExecution.networkFeeSol + PAPER_TOKEN_ACCOUNT_RENT_SOL;
 
                 const position: ManagedPosition = {
                     mint: token.mint,
                     symbol: token.symbol,
                     status: 'open',
-                    buyPrice: effectiveBuyPrice,
-                    currentPrice: effectiveBuyPrice,
-                    highestPrice: effectiveBuyPrice,
-                    amountTokens,
-                    amountSolPaid: amountSol,
+                    buyPrice: buyExecution.fillPrice,
+                    currentPrice: buyExecution.fillPrice,
+                    highestPrice: buyExecution.fillPrice,
+                    amountTokens: buyExecution.tokensOut,
+                    amountSolPaid: totalSolOut,
                     buyTime: Date.now(),
                     partialSells: {},
                     realizedProfitSol: 0,
@@ -592,7 +615,7 @@ class PumpFunRunner {
                 this.state.openPositions.unshift(position);
                 this.lastTradeTime = Date.now();
                 this.subscribeToMint(token.mint);
-                this.log(`[DRY RUN] Bought ${token.symbol} for ${amountSol.toFixed(4)} SOL (score ${analysisScore})`);
+                this.log(`[DRY RUN] Bought ${token.symbol} for ${totalSolOut.toFixed(4)} SOL @ ${buyExecution.fillPrice.toExponential(3)} (score ${analysisScore})`);
                 await this.persistState();
                 return;
             }
@@ -966,7 +989,29 @@ class PumpFunRunner {
     private async applyDryRunSell(position: ManagedPosition, amountPercent: number, reason: string, stage?: 'tp1' | 'tp2'): Promise<void> {
         const sellFraction = amountPercent / 100;
         const soldTokenAmount = position.amountTokens * sellFraction;
-        const revenue = soldTokenAmount * position.currentPrice * 0.97;
+
+        // Fetch fresh curve state so the sell simulation uses the real AMM
+        // reserves, not a stale cached price. This is the sell side of the fix
+        // that used to compute `position.currentPrice * 0.97` — a flat 3%
+        // slippage that was wildly optimistic on thin pools.
+        let curve: { vSolInBondingCurve?: number; vTokensInBondingCurve?: number } | null = null;
+        try {
+            curve = await getPumpData(position.mint, this.connection);
+        } catch {
+            curve = null;
+        }
+
+        const failureSeed = `${position.mint}:${position.buyTime}:${stage ?? 'full'}`;
+        const sellExecution = estimatePaperSellExecution({
+            observedPrice: position.currentPrice,
+            amountSolPaid: position.amountSolPaid * sellFraction,
+            amountTokens: soldTokenAmount,
+            exitStrategy: position.exitStrategy,
+            curve,
+            failureSeed
+        });
+
+        const revenue = sellExecution.netProceedsSol;
         const costBasis = position.amountSolPaid * sellFraction;
         const realizedProfit = revenue - costBasis;
 
@@ -994,7 +1039,8 @@ class PumpFunRunner {
             this.replaceOpenPosition(updatedPosition);
         }
 
-        this.log(`[DRY RUN] Sold ${amountPercent}% of ${position.symbol}: ${realizedProfit >= 0 ? '+' : ''}${realizedProfit.toFixed(4)} SOL (${reason})`);
+        const retryTag = sellExecution.retried ? ' [retry]' : '';
+        this.log(`[DRY RUN] Sold ${amountPercent}% of ${position.symbol}${retryTag}: ${realizedProfit >= 0 ? '+' : ''}${realizedProfit.toFixed(4)} SOL (${reason})`);
         await this.persistState();
     }
 
