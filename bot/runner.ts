@@ -26,6 +26,7 @@ import {
     getTp2SellPercent,
     hasTp1Sell
 } from '../utils/tradeExit';
+import { computeDynamicBuySlippage, computeDynamicSellSlippage } from '../utils/slippageModel';
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -565,6 +566,21 @@ class PumpFunRunner {
                 return;
             }
 
+            // Depth-aware buy slippage. Volatile tokens and thin pools need
+            // more tolerance so legitimate fills don't get rejected. Keeps
+            // paper and live in lockstep since both paths use this value.
+            const buySnapshot = getMarketSnapshot(token.mint);
+            const buySlippageDecision = computeDynamicBuySlippage({
+                baseSlippagePercent: this.config.slippage,
+                liquiditySol: pumpData?.vSolInBondingCurve || 0,
+                amountSol,
+                recentPriceChangePercent: buySnapshot?.maxPriceChangePercent,
+                // velocitySolPerMin is a reasonable proxy for how fast the
+                // curve is advancing right now.
+                curveVelocityPercent: buySnapshot?.velocitySolPerMin
+            });
+            const buySlippagePercent = buySlippageDecision.slippagePercent;
+
             if (this.config.dryRun) {
                 // Run the same fill simulation we use everywhere else (curve-
                 // aware AMM math, 1% pump.fun fee, confirmation-window drift).
@@ -574,7 +590,7 @@ class PumpFunRunner {
                 const buyExecution = estimatePaperBuyExecution({
                     observedPrice: entryPrice,
                     amountSol,
-                    requestedSlippagePercent: this.config.slippage,
+                    requestedSlippagePercent: buySlippagePercent,
                     exitStrategy,
                     curve: pumpData
                 });
@@ -637,18 +653,20 @@ class PumpFunRunner {
                     mint: token.mint,
                     amount: amountSol,
                     denominatedInSol: 'true',
-                    slippage: this.config.slippage,
+                    slippage: buySlippagePercent,
                     priorityFee,
                     pool: 'pump'
                 });
             } catch {
+                // Retry with a larger buffer on top of the dynamic value so
+                // transient routing drift doesn't cost us the entry.
                 transactionBuffer = await getTradeTransaction({
                     publicKey: this.wallet.publicKey.toBase58(),
                     action: 'buy',
                     mint: token.mint,
                     amount: amountSol,
                     denominatedInSol: 'true',
-                    slippage: Math.max(this.config.slippage, 35),
+                    slippage: Math.max(buySlippagePercent + 10, 35),
                     priorityFee: 0.003,
                     pool: 'pump'
                 });
@@ -918,6 +936,22 @@ class PumpFunRunner {
             this.replaceOpenPosition({ ...position, status: 'selling' });
             await this.persistState();
 
+            // Depth-aware sell slippage. Rugs, stop-losses and other panic
+            // exits get extra tolerance so we actually land the sell;
+            // orphaned positions are the worst outcome. Controlled profit-
+            // takes stay near the preset minimum.
+            const currentPump = await getPumpData(mint, this.connection).catch(() => null);
+            const currentLiquidity = currentPump?.vSolInBondingCurve ?? position.lastLiquidity;
+            const holdDurationSeconds = (Date.now() - position.buyTime) / 1000;
+            const sellSlippageDecision = computeDynamicSellSlippage({
+                baseSlippagePercent: this.config.slippage,
+                closeReason: reason,
+                initialLiquiditySol: position.lastLiquidity,
+                currentLiquiditySol: currentLiquidity,
+                holdDurationSeconds
+            });
+            const sellSlippagePercent = sellSlippageDecision.slippagePercent;
+
             let transactionBuffer: Uint8Array;
             try {
                 transactionBuffer = await getTradeTransaction({
@@ -926,7 +960,7 @@ class PumpFunRunner {
                     mint,
                     amount: amountToSell,
                     denominatedInSol: 'false',
-                    slippage: Math.max(this.config.slippage, 25),
+                    slippage: sellSlippagePercent,
                     priorityFee,
                     pool: 'auto'
                 });
@@ -937,7 +971,7 @@ class PumpFunRunner {
                     mint,
                     amount: amountToSell,
                     denominatedInSol: 'false',
-                    slippage: Math.max(this.config.slippage, 50),
+                    slippage: Math.max(sellSlippagePercent + 15, 60),
                     priorityFee: 0.003,
                     pool: 'auto'
                 });

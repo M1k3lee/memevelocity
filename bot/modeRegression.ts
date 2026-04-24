@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { getStrategyPresetConfig, normalizeStrategyProfile } from '../utils/strategyProfiles';
 import { getPresetAdvancedConfig, resolveMode } from './config';
 import { resolveReplayScenarios, runReplaySet, type RunResult, type StrategyName } from './paperReplay';
+import {
+    computeDynamicBuySlippage,
+    computeDynamicSellSlippage,
+    isPanicExit
+} from '../utils/slippageModel';
 import type { BotMode } from './types';
 
 type RegressionCase = {
@@ -184,6 +189,67 @@ const CASES: RegressionCase[] = [
             assertProtectiveExit(replay.resultIndex, 'milkers-6amhge', 'probe', allowed, 'ruggy fast exit');
             assertProtectiveExit(replay.resultIndex, 'milkers-7qikkz', 'aggressive', allowed, 'ruggy fast exit');
             assertProtectiveExit(replay.resultIndex, 'milkers-7qikkz', 'probe', allowed, 'ruggy fast exit');
+        }
+    },
+    {
+        name: 'dynamic buy slippage never goes below preset floor',
+        run: () => {
+            const calmDeepPool = computeDynamicBuySlippage({
+                baseSlippagePercent: 12,
+                liquiditySol: 50,
+                amountSol: 0.006
+            });
+            assert.ok(calmDeepPool.slippagePercent >= 12, `calm pool should respect preset floor, got ${calmDeepPool.slippagePercent}`);
+            assert.ok(calmDeepPool.slippagePercent <= 15, `calm pool should stay near preset, got ${calmDeepPool.slippagePercent}`);
+        }
+    },
+    {
+        name: 'dynamic buy slippage bumps on volatile tapes',
+        run: () => {
+            const hotMove = computeDynamicBuySlippage({
+                baseSlippagePercent: 12,
+                liquiditySol: 40,
+                amountSol: 0.008,
+                recentPriceChangePercent: 55,
+                curveVelocityPercent: 2.5
+            });
+            assert.ok(hotMove.slippagePercent > 18, `volatile tape should bump slippage materially, got ${hotMove.slippagePercent}`);
+            assert.ok(hotMove.slippagePercent <= 60, `slippage should not exceed the ceiling, got ${hotMove.slippagePercent}`);
+        }
+    },
+    {
+        name: 'panic sells get elevated slippage to guarantee exit',
+        run: () => {
+            const controlled = computeDynamicSellSlippage({
+                baseSlippagePercent: 12,
+                closeReason: 'take profit 12.5%',
+                initialLiquiditySol: 30,
+                currentLiquiditySol: 29,
+                holdDurationSeconds: 60
+            });
+            const panic = computeDynamicSellSlippage({
+                baseSlippagePercent: 12,
+                closeReason: 'fast kill -3.9%',
+                initialLiquiditySol: 30,
+                currentLiquiditySol: 18,
+                holdDurationSeconds: 40
+            });
+            assert.ok(panic.slippagePercent > controlled.slippagePercent + 20, `panic should raise slippage significantly over controlled exit, got panic=${panic.slippagePercent} controlled=${controlled.slippagePercent}`);
+            assert.ok(panic.slippagePercent >= 50, `panic exits need >= 50% tolerance, got ${panic.slippagePercent}`);
+        }
+    },
+    {
+        name: 'panic exit classifier catches common runner exit reasons',
+        run: () => {
+            assert.equal(isPanicExit('fast kill -4%'), true);
+            assert.equal(isPanicExit('stop loss -6.1%'), true);
+            assert.equal(isPanicExit('liquidity drop >25%'), true);
+            assert.equal(isPanicExit('adaptive trail 12%'), true);
+            assert.equal(isPanicExit('profit protection 15%'), true);
+            assert.equal(isPanicExit('take profit 20%'), false);
+            assert.equal(isPanicExit('time limit 200s'), false);
+            assert.equal(isPanicExit('take profit 2 38%'), false);
+            assert.equal(isPanicExit('runner trail 15%'), false);
         }
     }
 ];
