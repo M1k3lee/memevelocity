@@ -509,7 +509,9 @@ class PumpFunRunner {
                 exit.runnerTrailingStopPercent = Math.max(5, exit.runnerTrailingStopPercent - 2);
             }
             if (exit.fastKillLoss !== undefined) {
-                exit.fastKillLoss = Math.min(exit.fastKillLoss, 2.4);
+                // Tighten fast-kill when token looks sketchy, but keep above the old
+                // panic-level 2.4% floor that was getting us shaken out of normal wicks.
+                exit.fastKillLoss = Math.min(exit.fastKillLoss, 3);
             }
         }
 
@@ -761,7 +763,10 @@ class PumpFunRunner {
 
             if (position.lastLiquidity && position.lastLiquidity > 5) {
                 const liquidityDrop = (position.lastLiquidity - pumpData.vSolInBondingCurve) / position.lastLiquidity;
-                const rugDropThreshold = isFastTrade ? 0.1 : 0.2;
+                // Pump.fun tokens regularly see 10-20% transient liquidity dips during
+                // normal trading. Only treat drops above 25-35% as rug signals so we
+                // stop panic-selling through healthy volatility.
+                const rugDropThreshold = isFastTrade ? 0.25 : 0.35;
                 if (liquidityDrop > rugDropThreshold) {
                     await this.executeSell(mint, 100, `liquidity drop >${Math.round(rugDropThreshold * 100)}%`);
                     return;
@@ -845,21 +850,28 @@ class PumpFunRunner {
                 return;
             }
 
-            if (!runnerActive && peakGain >= 20 && pnl > 0 && pnl <= 10) {
+            // Profit-protection bands used to fire on peakGain>=20 with pnl<=10 and
+            // peakGain>=10 with pnl<=5 — that cut winners off before they had room
+            // to consolidate and continue. Widen the gates so we only lock profit
+            // once the token has made a real move and we've given back a clear chunk.
+            if (!runnerActive && peakGain >= 30 && pnl > 0 && pnl <= 8) {
                 await this.executeSell(mint, 100, `profit protection ${pnl.toFixed(2)}%`);
                 return;
             }
 
-            if (!runnerActive && peakGain >= 10 && pnl > 0 && pnl <= 5) {
+            if (!runnerActive && peakGain >= 18 && pnl > 0 && pnl <= 3) {
                 await this.executeSell(mint, 100, `profit protection ${pnl.toFixed(2)}%`);
                 return;
             }
 
-            if (!runnerActive && peakGain >= 10) {
-                let adaptiveTrailPercent = 15;
-                if (peakGain >= 50) adaptiveTrailPercent = 8;
-                else if (peakGain >= 30) adaptiveTrailPercent = 10;
-                else if (peakGain >= 15) adaptiveTrailPercent = 12;
+            if (!runnerActive && peakGain >= 12) {
+                // Widened adaptive trailing bands — old values (8-15%) exited on normal
+                // pump.fun retracements. New bands let winners breathe while still
+                // locking in a clear downswing.
+                let adaptiveTrailPercent = 20;
+                if (peakGain >= 50) adaptiveTrailPercent = 12;
+                else if (peakGain >= 30) adaptiveTrailPercent = 15;
+                else if (peakGain >= 18) adaptiveTrailPercent = 17;
 
                 if (dropFromPeak >= adaptiveTrailPercent) {
                     await this.executeSell(mint, 100, `adaptive trail ${dropFromPeak.toFixed(2)}%`);
