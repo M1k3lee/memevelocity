@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 3;
+export const STRATEGY_PRESET_VERSION = 4;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -127,8 +127,8 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxTop10: 22,
                     maxDev: 3,
                     minBondingCurve: 1.5,
-                    maxBondingCurve: 11,
-                    minVelocity: 0.85,
+                    maxBondingCurve: 14,
+                    minVelocity: 0.65,
                     rugCheckStrictness: 'strict',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -151,8 +151,8 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxTop10: 55,
                     maxDev: 12,
                     minBondingCurve: 1,
-                    maxBondingCurve: 12,
-                    minVelocity: 0.6,
+                    maxBondingCurve: 17,
+                    minVelocity: 0.4,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -175,8 +175,8 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxTop10: 42,
                     maxDev: 8,
                     minBondingCurve: 1.5,
-                    maxBondingCurve: 14,
-                    minVelocity: 0.85,
+                    maxBondingCurve: 17,
+                    minVelocity: 0.55,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -224,8 +224,8 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxTop10: 40,
                     maxDev: 5,
                     minBondingCurve: 5,
-                    maxBondingCurve: 15,
-                    minVelocity: 0.7,
+                    maxBondingCurve: 18,
+                    minVelocity: 0.6,
                     rugCheckStrictness: 'strict',
                     requireSocials: true,
                     avoidSnipers: true,

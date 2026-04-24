@@ -373,12 +373,13 @@ function evaluateLegacyRunnerEntry(token: TokenData, analysis: EnhancedAnalysis,
     const maxPriceChangePercent = snapshot?.maxPriceChangePercent || priceChangePercent || 0;
     const impact = liquidity > 0 ? (amountSol / liquidity) * 100 : 100;
 
-    // Late-chase guard: if the token already ran 18%+ and has given back a third
-    // of that move, we'd be buying the top. Same rule used in live entry guard.
-    if (maxPriceChangePercent >= 18) {
+    // Late-chase guard — same thresholds as the live entry guard. Only reject
+    // when the move was material (30%+ peak) and most of it is already given
+    // back (60%+). Pump.fun wicks 30-40% routinely during healthy runs.
+    if (maxPriceChangePercent >= 30) {
         const giveback = Math.max(0, maxPriceChangePercent - priceChangePercent);
         const givebackFraction = Math.min(1, giveback / maxPriceChangePercent);
-        if (givebackFraction >= 0.33) return false;
+        if (givebackFraction >= 0.6) return false;
     }
 
     if (sellCount > Math.max(2, Math.floor(tradeCount * 0.45)) && age <= 90) return false;

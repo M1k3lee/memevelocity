@@ -343,8 +343,8 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         buyPressure >= 0.6 &&
         netFlow >= 0.45;
     const curveReady =
-        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 12) ||
-        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8 && analysis.bondingCurveProgress <= 14);
+        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 15) ||
+        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8 && analysis.bondingCurveProgress <= 17);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -786,8 +786,10 @@ export function evaluateLiveEntryGuard(
     }
 
     // Late-chase guard (applies to every mode except sniper, which is meant to
-    // enter before a peak forms). If the token already made a real move and has
-    // given back a material chunk of it, buying now is statistically a top-tick.
+    // enter before a peak forms). Pump.fun tokens routinely wick 30-40% off a
+    // peak as part of healthy consolidation, so the threshold has to be high
+    // enough that normal shakeouts don't count as "post-peak chase". Only reject
+    // when the move was material (30%+) AND most of it (60%+) is already gone.
     if (mode !== 'sniper' && mode !== 'first') {
         const snapshot = getMarketSnapshot(token.mint);
         if (snapshot) {
@@ -795,7 +797,7 @@ export function evaluateLiveEntryGuard(
             const current = snapshot.priceChangePercent ?? 0;
             const giveback = Math.max(0, peak - current);
             const givebackFraction = peak > 0 ? Math.min(1, giveback / peak) : 0;
-            if (peak >= 18 && givebackFraction >= 0.33) {
+            if (peak >= 30 && givebackFraction >= 0.6) {
                 return {
                     status: 'reject',
                     reason: `Post-peak entry rejected (peak ${peak.toFixed(0)}%, now ${current.toFixed(0)}%, ${Math.round(givebackFraction * 100)}% of move already given back)`

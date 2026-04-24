@@ -274,14 +274,14 @@ export async function analyzeEnhanced(
             // over — which was the textbook late-chase that was losing SOL.
             const hasEarlyFlowConfirmation = !!marketSnapshot &&
                 age <= 35 &&
-                bondingCurveProgress < 6 &&
-                peakGivebackFraction <= 0.25 &&
+                bondingCurveProgress < 8 &&
+                peakGivebackFraction <= 0.3 &&
                 marketSnapshot.sellCount >= 1 &&
                 marketSnapshot.buyCount >= 4 &&
                 marketSnapshot.tradeCount >= 6 &&
                 marketSnapshot.uniqueTraderCount >= 4 &&
                 marketSnapshot.observedVolumeSol >= 1.4 &&
-                marketSnapshot.buyPressure >= 0.68;
+                marketSnapshot.buyPressure >= 0.65;
 
             if (hasEarlyFlowConfirmation && (effectiveConfig.minBondingCurve ?? 0) > 0) {
                 effectiveConfig.minBondingCurve = 0;
@@ -315,12 +315,12 @@ export async function analyzeEnhanced(
             warnings.push('Observed trade-flow history not yet available');
         }
 
-        // Late-chase guard: if the token already pumped hard and is now meaningfully
-        // below its peak, we're almost always buying the top. Reject any entry once
-        // the move has given back more than a third of the gain, unless we're the
-        // sniper mode which is specifically designed to enter before a peak forms.
-        if (!isSniperMode && marketSnapshot && maxPriceChangePercent >= 18 && peakGivebackFraction >= 0.33) {
-            const reason = `Post-peak entry rejected: ${peakGivebackFraction.toFixed(2).slice(2)}% of the ${maxPriceChangePercent.toFixed(0)}% move already given back`;
+        // Late-chase guard: only reject once the move has been truly exhausted.
+        // Pump.fun tokens routinely give back 30-40% off the peak as part of a
+        // healthy consolidation, so we need the peak to be material (30%+) AND
+        // most of it gone (60%+) before calling it a late chase.
+        if (!isSniperMode && marketSnapshot && maxPriceChangePercent >= 30 && peakGivebackFraction >= 0.6) {
+            const reason = `Post-peak entry rejected: ${Math.round(peakGivebackFraction * 100)}% of the ${maxPriceChangePercent.toFixed(0)}% move already given back`;
             reasons.push(reason);
             return createRejectResult(reason, reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
         }
@@ -469,8 +469,8 @@ export async function analyzeEnhanced(
                 sniperNetFlow >= 0.25;
             const curveWindow =
                 bondingCurveProgress >= 0.15 &&
-                bondingCurveProgress <= 6 &&
-                curveVelocity >= 0.35;
+                bondingCurveProgress <= 7 &&
+                curveVelocity >= 0.2;
             const healthyDistribution =
                 holderMetrics.top10Concentration <= 55 &&
                 (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 12);
@@ -520,8 +520,8 @@ export async function analyzeEnhanced(
                 degenNetFlow >= 0.45;
             const healthyCurve =
                 bondingCurveProgress >= 1.75 &&
-                bondingCurveProgress <= 12 &&
-                curveVelocity >= 0.9;
+                bondingCurveProgress <= 15 &&
+                curveVelocity >= 0.65;
             const healthyDistribution =
                 holderMetrics.top10Concentration <= 42 &&
                 (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 10);
