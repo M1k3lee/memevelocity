@@ -343,8 +343,8 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         buyPressure >= 0.6 &&
         netFlow >= 0.45;
     const curveReady =
-        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 18) ||
-        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
+        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 12) ||
+        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8 && analysis.bondingCurveProgress <= 14);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -783,6 +783,25 @@ export function evaluateLiveEntryGuard(
             status: 'reject',
             reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})`
         };
+    }
+
+    // Late-chase guard (applies to every mode except sniper, which is meant to
+    // enter before a peak forms). If the token already made a real move and has
+    // given back a material chunk of it, buying now is statistically a top-tick.
+    if (mode !== 'sniper' && mode !== 'first') {
+        const snapshot = getMarketSnapshot(token.mint);
+        if (snapshot) {
+            const peak = snapshot.maxPriceChangePercent ?? snapshot.priceChangePercent ?? 0;
+            const current = snapshot.priceChangePercent ?? 0;
+            const giveback = Math.max(0, peak - current);
+            const givebackFraction = peak > 0 ? Math.min(1, giveback / peak) : 0;
+            if (peak >= 18 && givebackFraction >= 0.33) {
+                return {
+                    status: 'reject',
+                    reason: `Post-peak entry rejected (peak ${peak.toFixed(0)}%, now ${current.toFixed(0)}%, ${Math.round(givebackFraction * 100)}% of move already given back)`
+                };
+            }
+        }
     }
 
     if (mode === 'sniper' || mode === 'first') {

@@ -32,96 +32,98 @@ import {
 const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000;
 const PUMP_CURVE_SALE_TOKENS = 793_100_000;
 
+// Exit presets kept in sync with bot/config.ts so the paper replay mirrors
+// what the live bot actually runs. See Phase 2 notes in the commit history.
 const LEGACY_EXIT: ManagedExitStrategy = {
-    takeProfit: 30,
+    takeProfit: 32,
     takeProfit2: 95,
-    stopLoss: 5,
-    maxHoldTime: 240,
+    stopLoss: 9,
+    maxHoldTime: 270,
     trailingStop: false,
-    fastKillLoss: 2.8,
-    fastKillSeconds: 6,
-    givebackPeakTrigger: 7,
-    givebackFloor: 1.5,
-    givebackSeconds: 14,
-    stagnationSeconds: 60,
-    stagnationFloor: 2,
-    tp1SellPercent: 70,
-    tp2SellPercent: 15,
-    postTp1FloorPercent: 4,
-    postTp2FloorPercent: 14,
-    runnerMaxHoldTime: 900,
-    runnerTrailingStopPercent: 18,
+    fastKillLoss: 5,
+    fastKillSeconds: 14,
+    givebackPeakTrigger: 10,
+    givebackFloor: 5,
+    givebackSeconds: 32,
+    stagnationSeconds: 90,
+    stagnationFloor: -0.5,
+    tp1SellPercent: 40,
+    tp2SellPercent: 30,
+    postTp1FloorPercent: 8,
+    postTp2FloorPercent: 16,
+    runnerMaxHoldTime: 960,
+    runnerTrailingStopPercent: 20,
     runnerActivationProfit: 30,
     runnerTimeExitFloor: 12
 };
 
 const STRICT_EXIT: ManagedExitStrategy = {
     takeProfit: 24,
-    takeProfit2: 55,
-    stopLoss: 4.5,
-    maxHoldTime: 180,
+    takeProfit2: 60,
+    stopLoss: 6,
+    maxHoldTime: 210,
     trailingStop: false,
-    fastKillLoss: 2.5,
-    fastKillSeconds: 6,
-    givebackPeakTrigger: 6,
-    givebackFloor: 1.5,
-    givebackSeconds: 15,
-    stagnationSeconds: 35,
-    stagnationFloor: 2,
-    tp1SellPercent: 75,
-    tp2SellPercent: 15,
-    postTp1FloorPercent: 4,
-    postTp2FloorPercent: 10,
-    runnerMaxHoldTime: 420,
-    runnerTrailingStopPercent: 14,
-    runnerActivationProfit: 25,
-    runnerTimeExitFloor: 6
+    fastKillLoss: 3.8,
+    fastKillSeconds: 11,
+    givebackPeakTrigger: 7,
+    givebackFloor: 4,
+    givebackSeconds: 30,
+    stagnationSeconds: 65,
+    stagnationFloor: 0.5,
+    tp1SellPercent: 45,
+    tp2SellPercent: 25,
+    postTp1FloorPercent: 6,
+    postTp2FloorPercent: 14,
+    runnerMaxHoldTime: 480,
+    runnerTrailingStopPercent: 16,
+    runnerActivationProfit: 28,
+    runnerTimeExitFloor: 8
 };
 
 const AGGRESSIVE_EXIT: ManagedExitStrategy = {
-    takeProfit: 8,
-    takeProfit2: 14,
-    stopLoss: 4,
-    maxHoldTime: 40,
+    takeProfit: 10,
+    takeProfit2: 18,
+    stopLoss: 5.5,
+    maxHoldTime: 55,
     trailingStop: false,
-    fastKillLoss: 2.2,
-    fastKillSeconds: 5,
-    givebackPeakTrigger: 3.2,
-    givebackFloor: 0.2,
-    givebackSeconds: 6,
-    stagnationSeconds: 10,
-    stagnationFloor: -0.5,
-    tp1SellPercent: 82,
-    tp2SellPercent: 8,
-    postTp1FloorPercent: 1,
-    postTp2FloorPercent: 3,
-    runnerMaxHoldTime: 90,
-    runnerTrailingStopPercent: 6,
-    runnerActivationProfit: 8,
-    runnerTimeExitFloor: 2
+    fastKillLoss: 3.2,
+    fastKillSeconds: 9,
+    givebackPeakTrigger: 4,
+    givebackFloor: 2.2,
+    givebackSeconds: 16,
+    stagnationSeconds: 22,
+    stagnationFloor: -1.5,
+    tp1SellPercent: 50,
+    tp2SellPercent: 25,
+    postTp1FloorPercent: 3.5,
+    postTp2FloorPercent: 8,
+    runnerMaxHoldTime: 130,
+    runnerTrailingStopPercent: 9,
+    runnerActivationProfit: 10,
+    runnerTimeExitFloor: 3
 };
 
 const PROBE_EXIT: ManagedExitStrategy = {
-    takeProfit: 8,
-    takeProfit2: 14,
-    stopLoss: 4,
-    maxHoldTime: 30,
+    takeProfit: 10,
+    takeProfit2: 18,
+    stopLoss: 6,
+    maxHoldTime: 45,
     trailingStop: false,
-    fastKillLoss: 2.2,
-    fastKillSeconds: 4,
-    givebackPeakTrigger: 3.2,
-    givebackFloor: 0.4,
-    givebackSeconds: 7,
-    stagnationSeconds: 12,
-    stagnationFloor: -0.5,
-    tp1SellPercent: 85,
-    tp2SellPercent: 10,
-    postTp1FloorPercent: 1.2,
-    postTp2FloorPercent: 4,
-    runnerMaxHoldTime: 90,
-    runnerTrailingStopPercent: 8,
-    runnerActivationProfit: 8,
-    runnerTimeExitFloor: 2
+    fastKillLoss: 3.2,
+    fastKillSeconds: 8,
+    givebackPeakTrigger: 4,
+    givebackFloor: 2.5,
+    givebackSeconds: 16,
+    stagnationSeconds: 22,
+    stagnationFloor: -1.5,
+    tp1SellPercent: 55,
+    tp2SellPercent: 25,
+    postTp1FloorPercent: 3.5,
+    postTp2FloorPercent: 8,
+    runnerMaxHoldTime: 120,
+    runnerTrailingStopPercent: 10,
+    runnerActivationProfit: 10,
+    runnerTimeExitFloor: 3
 };
 
 type Position = {
@@ -368,7 +370,16 @@ function evaluateLegacyRunnerEntry(token: TokenData, analysis: EnhancedAnalysis,
     const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
     const netFlow = snapshot?.netFlowSol || 0;
     const priceChangePercent = snapshot?.priceChangePercent || analysis.metrics.priceChangePercent || 0;
+    const maxPriceChangePercent = snapshot?.maxPriceChangePercent || priceChangePercent || 0;
     const impact = liquidity > 0 ? (amountSol / liquidity) * 100 : 100;
+
+    // Late-chase guard: if the token already ran 18%+ and has given back a third
+    // of that move, we'd be buying the top. Same rule used in live entry guard.
+    if (maxPriceChangePercent >= 18) {
+        const giveback = Math.max(0, maxPriceChangePercent - priceChangePercent);
+        const givebackFraction = Math.min(1, giveback / maxPriceChangePercent);
+        if (givebackFraction >= 0.33) return false;
+    }
 
     if (sellCount > Math.max(2, Math.floor(tradeCount * 0.45)) && age <= 90) return false;
     if (netFlow <= 0 && age >= 20) return false;
