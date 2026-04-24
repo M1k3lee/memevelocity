@@ -117,7 +117,7 @@ export async function analyzeFirstBuyer(
             ? 0.0025
             : 0.002;
 
-    const guardDecision = evaluateLiveEntryGuard('first', token, analysis, basePositionSize);
+    const guardDecision = evaluateLiveEntryGuard('sniper', token, analysis, basePositionSize);
     if (guardDecision.status === 'reject') {
         return {
             status: 'reject',
@@ -169,7 +169,7 @@ export async function analyzeFirstBuyer(
 }
 
 export function quickFirstBuyerCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const decision = evaluateLiveEntryGuard('first', token, buildFeedOnlyAnalysis(token), 0.0025);
+    const decision = evaluateLiveEntryGuard('sniper', token, buildFeedOnlyAnalysis(token), 0.0025);
     if (decision.status === 'reject') {
         return { passed: false, reason: decision.reason || 'Probe rejected' };
     }

@@ -9,7 +9,19 @@ import type { BotMode, ManagedExitStrategy, RunnerConfig } from './types';
 loadEnv({ path: path.resolve(process.cwd(), '.env.local'), quiet: true });
 loadEnv({ path: path.resolve(process.cwd(), '.env'), quiet: true });
 
-const SUPPORTED_MODES: BotMode[] = ['runner', 'sniper', 'degen', 'god', 'safe', 'medium', 'high', 'velocity', 'first', 'scalp'];
+const CANONICAL_MODES: BotMode[] = ['god', 'micro', 'degen', 'sniper', 'custom'];
+
+// Legacy env values that were shipped earlier. We accept them and translate
+// to the canonical five so older .env files and saved UI states keep working.
+const LEGACY_MODE_ALIASES: Record<string, BotMode> = {
+    runner: 'god',
+    safe: 'god',
+    medium: 'god',
+    high: 'degen',
+    velocity: 'degen',
+    scalp: 'degen',
+    first: 'sniper'
+};
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     if (value === undefined) return fallback;
@@ -22,10 +34,16 @@ function parseNumber(value: string | undefined, fallback: number): number {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function resolveMode(rawMode: string | undefined): BotMode {
+export function resolveMode(rawMode: string | undefined): BotMode {
     if (!rawMode) return 'god';
-    const normalized = rawMode.trim().toLowerCase() as BotMode;
-    return SUPPORTED_MODES.includes(normalized) ? normalized : 'god';
+    const normalized = rawMode.trim().toLowerCase();
+    if ((CANONICAL_MODES as string[]).includes(normalized)) {
+        return normalized as BotMode;
+    }
+    if (normalized in LEGACY_MODE_ALIASES) {
+        return LEGACY_MODE_ALIASES[normalized];
+    }
+    return 'god';
 }
 
 export function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
@@ -35,139 +53,170 @@ export function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
 }
 
 function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
-    if (mode === 'god') {
-        return {
-            takeProfit: 24,
-            takeProfit2: 60,
-            stopLoss: 6,
-            maxHoldTime: 210,
-            trailingStop: false,
-            fastKillLoss: 3.8,
-            fastKillSeconds: 11,
-            givebackPeakTrigger: 7,
-            givebackFloor: 4,
-            givebackSeconds: 30,
-            stagnationSeconds: 65,
-            stagnationFloor: 0.5,
-            tp1SellPercent: 45,
-            tp2SellPercent: 25,
-            postTp1FloorPercent: 6,
-            postTp2FloorPercent: 14,
-            runnerMaxHoldTime: 480,
-            runnerTrailingStopPercent: 16,
-            runnerActivationProfit: 28,
-            runnerTimeExitFloor: 8
-        };
+    switch (mode) {
+        case 'god':
+            return {
+                takeProfit: 24,
+                takeProfit2: 60,
+                stopLoss: 6,
+                maxHoldTime: 210,
+                trailingStop: false,
+                fastKillLoss: 3.8,
+                fastKillSeconds: 11,
+                givebackPeakTrigger: 7,
+                givebackFloor: 4,
+                givebackSeconds: 30,
+                stagnationSeconds: 65,
+                stagnationFloor: 0.5,
+                tp1SellPercent: 45,
+                tp2SellPercent: 25,
+                postTp1FloorPercent: 6,
+                postTp2FloorPercent: 14,
+                runnerMaxHoldTime: 480,
+                runnerTrailingStopPercent: 16,
+                runnerActivationProfit: 28,
+                runnerTimeExitFloor: 8
+            };
+        case 'micro':
+            // Reclaim-first compounding: tighter profit-take than god to
+            // compound gains faster, but still a real runner window so we
+            // don't cap a move. Previously this mode silently fell through
+            // to the catch-all 32% TP / 270s hold — way too long for a
+            // reclaim strategy. That was a latent bug from Phase 0.
+            return {
+                takeProfit: 12,
+                takeProfit2: 28,
+                stopLoss: 6,
+                maxHoldTime: 150,
+                trailingStop: false,
+                fastKillLoss: 3.5,
+                fastKillSeconds: 10,
+                givebackPeakTrigger: 5,
+                givebackFloor: 3,
+                givebackSeconds: 22,
+                stagnationSeconds: 50,
+                stagnationFloor: -0.5,
+                tp1SellPercent: 50,
+                tp2SellPercent: 25,
+                postTp1FloorPercent: 5,
+                postTp2FloorPercent: 10,
+                runnerMaxHoldTime: 360,
+                runnerTrailingStopPercent: 14,
+                runnerActivationProfit: 18,
+                runnerTimeExitFloor: 5
+            };
+        case 'sniper':
+            return {
+                takeProfit: 10,
+                takeProfit2: 18,
+                stopLoss: 6,
+                maxHoldTime: 45,
+                trailingStop: false,
+                fastKillLoss: 3.2,
+                fastKillSeconds: 8,
+                givebackPeakTrigger: 4,
+                givebackFloor: 2.5,
+                givebackSeconds: 16,
+                stagnationSeconds: 22,
+                stagnationFloor: -1.5,
+                tp1SellPercent: 55,
+                tp2SellPercent: 25,
+                postTp1FloorPercent: 3.5,
+                postTp2FloorPercent: 8,
+                runnerMaxHoldTime: 120,
+                runnerTrailingStopPercent: 10,
+                runnerActivationProfit: 10,
+                runnerTimeExitFloor: 3
+            };
+        case 'degen':
+            return {
+                takeProfit: 10,
+                takeProfit2: 18,
+                stopLoss: 5.5,
+                maxHoldTime: 55,
+                trailingStop: false,
+                fastKillLoss: 3.2,
+                fastKillSeconds: 9,
+                givebackPeakTrigger: 4,
+                givebackFloor: 2.2,
+                givebackSeconds: 16,
+                stagnationSeconds: 22,
+                stagnationFloor: -1.5,
+                tp1SellPercent: 50,
+                tp2SellPercent: 25,
+                postTp1FloorPercent: 3.5,
+                postTp2FloorPercent: 8,
+                runnerMaxHoldTime: 130,
+                runnerTrailingStopPercent: 9,
+                runnerActivationProfit: 10,
+                runnerTimeExitFloor: 3
+            };
+        case 'custom':
+        default:
+            return {
+                takeProfit: 32,
+                takeProfit2: 95,
+                stopLoss: 9,
+                maxHoldTime: 270,
+                trailingStop: false,
+                fastKillLoss: 5,
+                fastKillSeconds: 14,
+                givebackPeakTrigger: 10,
+                givebackFloor: 5,
+                givebackSeconds: 32,
+                stagnationSeconds: 90,
+                stagnationFloor: -0.5,
+                tp1SellPercent: 40,
+                tp2SellPercent: 30,
+                postTp1FloorPercent: 8,
+                postTp2FloorPercent: 16,
+                runnerMaxHoldTime: 960,
+                runnerTrailingStopPercent: 20,
+                runnerActivationProfit: 30,
+                runnerTimeExitFloor: 12
+            };
     }
-
-    if (mode === 'sniper' || mode === 'first') {
-        return {
-            takeProfit: 10,
-            takeProfit2: 18,
-            stopLoss: 6,
-            maxHoldTime: 45,
-            trailingStop: false,
-            fastKillLoss: 3.2,
-            fastKillSeconds: 8,
-            givebackPeakTrigger: 4,
-            givebackFloor: 2.5,
-            givebackSeconds: 16,
-            stagnationSeconds: 22,
-            stagnationFloor: -1.5,
-            tp1SellPercent: 55,
-            tp2SellPercent: 25,
-            postTp1FloorPercent: 3.5,
-            postTp2FloorPercent: 8,
-            runnerMaxHoldTime: 120,
-            runnerTrailingStopPercent: 10,
-            runnerActivationProfit: 10,
-            runnerTimeExitFloor: 3
-        };
-    }
-
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
-        return {
-            takeProfit: 10,
-            takeProfit2: 18,
-            stopLoss: 5.5,
-            maxHoldTime: 55,
-            trailingStop: false,
-            fastKillLoss: 3.2,
-            fastKillSeconds: 9,
-            givebackPeakTrigger: 4,
-            givebackFloor: 2.2,
-            givebackSeconds: 16,
-            stagnationSeconds: 22,
-            stagnationFloor: -1.5,
-            tp1SellPercent: 50,
-            tp2SellPercent: 25,
-            postTp1FloorPercent: 3.5,
-            postTp2FloorPercent: 8,
-            runnerMaxHoldTime: 130,
-            runnerTrailingStopPercent: 9,
-            runnerActivationProfit: 10,
-            runnerTimeExitFloor: 3
-        };
-    }
-
-    return {
-        takeProfit: 32,
-        takeProfit2: 95,
-        stopLoss: 9,
-        maxHoldTime: 270,
-        trailingStop: false,
-        fastKillLoss: 5,
-        fastKillSeconds: 14,
-        givebackPeakTrigger: 10,
-        givebackFloor: 5,
-        givebackSeconds: 32,
-        stagnationSeconds: 90,
-        stagnationFloor: -0.5,
-        tp1SellPercent: 40,
-        tp2SellPercent: 30,
-        postTp1FloorPercent: 8,
-        postTp2FloorPercent: 16,
-        runnerMaxHoldTime: 960,
-        runnerTrailingStopPercent: 20,
-        runnerActivationProfit: 30,
-        runnerTimeExitFloor: 12
-    };
 }
 
 function getPresetRiskControls(mode: BotMode): { maxConsecutiveLosses: number; maxDailyLossSol: number; riskFloorMultiplier: number; riskCeilingMultiplier: number } {
-    if (mode === 'god') {
-        return {
-            maxConsecutiveLosses: 2,
-            maxDailyLossSol: 0.008,
-            riskFloorMultiplier: 0.6,
-            riskCeilingMultiplier: 1.35
-        };
+    switch (mode) {
+        case 'god':
+            return {
+                maxConsecutiveLosses: 2,
+                maxDailyLossSol: 0.008,
+                riskFloorMultiplier: 0.6,
+                riskCeilingMultiplier: 1.35
+            };
+        case 'micro':
+            return {
+                maxConsecutiveLosses: 3,
+                maxDailyLossSol: 0.007,
+                riskFloorMultiplier: 0.55,
+                riskCeilingMultiplier: 1.2
+            };
+        case 'sniper':
+            return {
+                maxConsecutiveLosses: 3,
+                maxDailyLossSol: 0.005,
+                riskFloorMultiplier: 0.45,
+                riskCeilingMultiplier: 1.05
+            };
+        case 'degen':
+            return {
+                maxConsecutiveLosses: 3,
+                maxDailyLossSol: 0.006,
+                riskFloorMultiplier: 0.5,
+                riskCeilingMultiplier: 1.15
+            };
+        case 'custom':
+        default:
+            return {
+                maxConsecutiveLosses: 2,
+                maxDailyLossSol: 0.01,
+                riskFloorMultiplier: 0.55,
+                riskCeilingMultiplier: 1.2
+            };
     }
-
-    if (mode === 'sniper' || mode === 'first') {
-        return {
-            maxConsecutiveLosses: 3,
-            maxDailyLossSol: 0.005,
-            riskFloorMultiplier: 0.45,
-            riskCeilingMultiplier: 1.05
-        };
-    }
-
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
-        return {
-            maxConsecutiveLosses: 3,
-            maxDailyLossSol: 0.006,
-            riskFloorMultiplier: 0.5,
-            riskCeilingMultiplier: 1.15
-        };
-    }
-
-    return {
-        maxConsecutiveLosses: 2,
-        maxDailyLossSol: 0.01,
-        riskFloorMultiplier: 0.55,
-        riskCeilingMultiplier: 1.2
-    };
 }
 
 function withAdvancedOverrides(base: AdvancedConfig): AdvancedConfig {

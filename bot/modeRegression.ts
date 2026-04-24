@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { getStrategyPresetConfig, normalizeStrategyProfile } from '../utils/strategyProfiles';
-import { getPresetAdvancedConfig } from './config';
+import { getPresetAdvancedConfig, resolveMode } from './config';
 import { resolveReplayScenarios, runReplaySet, type RunResult, type StrategyName } from './paperReplay';
 import type { BotMode } from './types';
 
@@ -11,17 +11,30 @@ type RegressionCase = {
 
 type ReplayIndex = Map<string, Map<StrategyName, RunResult>>;
 
-const PRESET_ALIAS_CASES: Array<{ mode: BotMode; expectedProfile: ReturnType<typeof normalizeStrategyProfile> }> = [
+// Canonical BotMode values now map 1:1 to a VisibleStrategyMode.
+// Legacy env strings ('runner', 'safe', 'medium', 'high', 'velocity',
+// 'scalp', 'first') are no longer valid BotMode values but must still
+// resolve to the right canonical mode via resolveMode() for backward
+// compatibility with older .env files and saved UI configs.
+const CANONICAL_PRESET_CASES: Array<{ mode: BotMode; expectedProfile: ReturnType<typeof normalizeStrategyProfile> }> = [
     { mode: 'god', expectedProfile: 'god' },
-    { mode: 'runner', expectedProfile: 'god' },
-    { mode: 'safe', expectedProfile: 'god' },
-    { mode: 'medium', expectedProfile: 'god' },
+    { mode: 'micro', expectedProfile: 'micro' },
     { mode: 'degen', expectedProfile: 'degen' },
-    { mode: 'high', expectedProfile: 'degen' },
-    { mode: 'velocity', expectedProfile: 'degen' },
-    { mode: 'scalp', expectedProfile: 'degen' },
     { mode: 'sniper', expectedProfile: 'sniper' },
-    { mode: 'first', expectedProfile: 'sniper' }
+    { mode: 'custom', expectedProfile: 'custom' }
+];
+
+const LEGACY_ENV_ALIAS_CASES: Array<{ env: string; expectedMode: BotMode }> = [
+    { env: 'runner', expectedMode: 'god' },
+    { env: 'safe', expectedMode: 'god' },
+    { env: 'medium', expectedMode: 'god' },
+    { env: 'high', expectedMode: 'degen' },
+    { env: 'velocity', expectedMode: 'degen' },
+    { env: 'scalp', expectedMode: 'degen' },
+    { env: 'first', expectedMode: 'sniper' },
+    { env: 'GOD', expectedMode: 'god' },
+    { env: '  degen  ', expectedMode: 'degen' },
+    { env: 'bogus', expectedMode: 'god' }
 ];
 
 function buildReplayIndex(): {
@@ -93,15 +106,30 @@ const replay = buildReplayIndex();
 
 const CASES: RegressionCase[] = [
     {
-        name: 'preset alias parity',
+        name: 'canonical modes map 1:1 to strategy presets',
         run: () => {
-            for (const { mode, expectedProfile } of PRESET_ALIAS_CASES) {
+            for (const { mode, expectedProfile } of CANONICAL_PRESET_CASES) {
                 assert.deepEqual(
                     getPresetAdvancedConfig(mode),
                     getStrategyPresetConfig(expectedProfile).advanced,
                     `preset parity mismatch for ${mode}`
                 );
             }
+        }
+    },
+    {
+        name: 'legacy env mode strings resolve to canonical modes',
+        run: () => {
+            for (const { env, expectedMode } of LEGACY_ENV_ALIAS_CASES) {
+                assert.equal(
+                    resolveMode(env),
+                    expectedMode,
+                    `legacy env alias "${env}" should resolve to ${expectedMode}`
+                );
+            }
+            // Empty / undefined inputs should fall back to god.
+            assert.equal(resolveMode(undefined), 'god', 'undefined env should resolve to god');
+            assert.equal(resolveMode(''), 'god', 'empty env should resolve to god');
         }
     },
     {

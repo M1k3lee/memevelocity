@@ -3,7 +3,10 @@ import { getMarketSnapshot } from './marketData';
 import type { TokenData } from '../types/token';
 import { getTokenAgeSeconds } from './tokenTiming';
 
-type GuardMode = 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp';
+// Canonical five-mode vocabulary — callers already resolve legacy aliases
+// (runner/safe/medium/high/velocity/scalp/first) to one of these via
+// resolveMode() in bot/config.ts.
+type GuardMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 
 export interface EntryGuardDecision {
     status: 'pass' | 'wait' | 'reject';
@@ -790,7 +793,7 @@ export function evaluateLiveEntryGuard(
     // peak as part of healthy consolidation, so the threshold has to be high
     // enough that normal shakeouts don't count as "post-peak chase". Only reject
     // when the move was material (30%+) AND most of it (60%+) is already gone.
-    if (mode !== 'sniper' && mode !== 'first') {
+    if (mode !== 'sniper') {
         const snapshot = getMarketSnapshot(token.mint);
         if (snapshot) {
             const peak = snapshot.maxPriceChangePercent ?? snapshot.priceChangePercent ?? 0;
@@ -806,13 +809,14 @@ export function evaluateLiveEntryGuard(
         }
     }
 
-    if (mode === 'sniper' || mode === 'first') {
+    if (mode === 'sniper') {
         return evaluateSniperEntry(token);
     }
 
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') {
+    if (mode === 'degen') {
         return evaluateMomentumEntry(token, analysis, amountSol);
     }
 
+    // 'god', 'micro', and 'custom' all route through the selective runner gate.
     return evaluateRunnerEntry(mode, token, analysis, amountSol);
 }

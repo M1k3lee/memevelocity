@@ -108,18 +108,22 @@ export async function analyzeEnhanced(
     token: TokenData,
     connection: Connection,
     heliusKey?: string,
-    riskMode: 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp' = 'runner', // Mapped to new strategy
+    // Canonical five-mode vocabulary. Callers from the runner already translate
+    // legacy env aliases through resolveMode() in config.ts.
+    riskMode: 'god' | 'micro' | 'degen' | 'sniper' | 'custom' = 'god',
     config?: AdvancedConfig
 ): Promise<EnhancedAnalysis> {
     const reasons: string[] = [];
     const warnings: string[] = [];
     const strengths: string[] = [];
 
-    // Map legacy modes to new strategy intent
+    // Map canonical modes to analyzer strategy intent. 'micro' and 'custom'
+    // run through the strict tier-compliance pipeline alongside 'god' but use
+    // the looser tier thresholds (micro is balanced, custom is user-driven).
     const isGodMode = riskMode === 'god';
-    const isRunnerMode = isGodMode || riskMode === 'runner' || riskMode === 'safe' || riskMode === 'medium'; // Strict Tier compliance
-    const isSniperMode = riskMode === 'sniper' || riskMode === 'first'; // Earliest probe entries
-    const isDegenMode = riskMode === 'degen' || riskMode === 'velocity' || riskMode === 'high' || riskMode === 'scalp'; // Earlier continuation entries
+    const isRunnerMode = isGodMode || riskMode === 'micro' || riskMode === 'custom';
+    const isSniperMode = riskMode === 'sniper';
+    const isDegenMode = riskMode === 'degen';
     const tier2Floor = isGodMode ? 75 : 60;
     const tier4Floor = isGodMode ? 60 : 50;
 

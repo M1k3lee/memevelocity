@@ -111,7 +111,7 @@ export async function analyzeSpeedTrade(
     const buyPressure = snapshot?.buyPressure ?? 0;
     const netFlow = snapshot?.netFlowSol || 0;
 
-    const guardDecision = evaluateLiveEntryGuard('scalp', token, analysis, 0.0025);
+    const guardDecision = evaluateLiveEntryGuard('degen', token, analysis, 0.0025);
     if (guardDecision.status === 'reject') {
         return {
             status: 'reject',
@@ -170,10 +170,11 @@ export async function analyzeSpeedTrade(
 }
 
 export function quickSpeedCheck(token: TokenData): { passed: boolean; reason?: string } {
-    const decision = evaluateLiveEntryGuard('scalp', token, buildFeedOnlyAnalysis(token), 0.0025);
+    const decision = evaluateLiveEntryGuard('degen', token, buildFeedOnlyAnalysis(token), 0.0025);
     if (decision.status === 'reject') {
         return { passed: false, reason: decision.reason || 'Aggressive continuation rejected' };
     }
 
     return { passed: true };
 }
+

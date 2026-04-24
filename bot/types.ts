@@ -1,7 +1,11 @@
 import type { AdvancedConfig } from '../utils/enhancedAnalyzer';
 import type { ManagedExitStrategy } from '../utils/tradeExit';
 
-export type BotMode = 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity' | 'first' | 'scalp';
+// The runner now speaks the same five-mode vocabulary as the UI.
+// Legacy env values ('runner', 'safe', 'medium', 'high', 'velocity', 'scalp',
+// 'first') are still accepted as input but are translated to one of these
+// canonical modes by resolveMode() in config.ts.
+export type BotMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 export type { ManagedExitStrategy } from '../utils/tradeExit';
 
 export interface ManagedPosition {

@@ -41,8 +41,9 @@ function calculatePrice(liquiditySol: number, virtualTokens: number): number {
 }
 
 function getRugMode(mode: BotMode): 'safe' | 'medium' | 'high' {
-    if (mode === 'degen' || mode === 'velocity' || mode === 'high' || mode === 'scalp') return 'high';
-    if (mode === 'sniper' || mode === 'first') return 'medium';
+    if (mode === 'degen') return 'high';
+    if (mode === 'sniper') return 'medium';
+    // 'god', 'micro', 'custom' all use the strict rug gate
     return 'safe';
 }
 
@@ -362,9 +363,8 @@ class PumpFunRunner {
 
         const isSelectiveMode =
             this.config.mode === 'god' ||
-            this.config.mode === 'runner' ||
-            this.config.mode === 'safe' ||
-            this.config.mode === 'medium';
+            this.config.mode === 'micro' ||
+            this.config.mode === 'custom';
         const pauseWindowMs = isSelectiveMode ? 15 * 60 * 1000 : 8 * 60 * 1000;
         const recentClosed = this.state.closedPositions
             .filter((position) => position.txId && position.closeTime && (now - (position.closeTime || 0)) < pauseWindowMs)
@@ -412,7 +412,9 @@ class PumpFunRunner {
         const setupCurve = setupPumpData?.bondingCurveProgress || 0;
         const setupPrice = calculatePrice(setupLiquidity, setupVirtualTokens);
 
-        await delay(this.config.mode === 'god' || this.config.mode === 'runner' ? 1200 : 800);
+        // Selective modes pause a touch longer to let the confirmation tape build.
+        const isSlowConfirm = this.config.mode === 'god' || this.config.mode === 'micro' || this.config.mode === 'custom';
+        await delay(isSlowConfirm ? 1200 : 800);
 
         const freshPumpData = await getPumpData(token.mint, this.connection);
         const freshSnapshot = getMarketSnapshot(token.mint);
@@ -430,17 +432,10 @@ class PumpFunRunner {
 
         const isSelectiveMode =
             this.config.mode === 'god' ||
-            this.config.mode === 'runner' ||
-            this.config.mode === 'safe' ||
-            this.config.mode === 'medium';
-        const isProbeMode =
-            this.config.mode === 'sniper' ||
-            this.config.mode === 'first';
-        const isAggressiveMode =
-            this.config.mode === 'degen' ||
-            this.config.mode === 'velocity' ||
-            this.config.mode === 'high' ||
-            this.config.mode === 'scalp';
+            this.config.mode === 'micro' ||
+            this.config.mode === 'custom';
+        const isProbeMode = this.config.mode === 'sniper';
+        const isAggressiveMode = this.config.mode === 'degen';
         const liquidityDeltaPercent = setupLiquidity > 0 ? ((freshLiquidity - setupLiquidity) / setupLiquidity) * 100 : 0;
         const curveDelta = freshCurve - setupCurve;
         const priceDeltaPercent = setupPrice > 0 && freshPrice > 0 ? ((freshPrice - setupPrice) / setupPrice) * 100 : 0;
@@ -515,11 +510,11 @@ class PumpFunRunner {
             }
         }
 
-        if (this.config.mode === 'sniper' || this.config.mode === 'first') {
+        if (this.config.mode === 'sniper') {
             exit.maxHoldTime = Math.min(exit.maxHoldTime, 45);
         }
 
-        if (this.config.mode === 'degen' || this.config.mode === 'velocity' || this.config.mode === 'high' || this.config.mode === 'scalp') {
+        if (this.config.mode === 'degen') {
             exit.maxHoldTime = Math.min(exit.maxHoldTime, 70);
         }
 
