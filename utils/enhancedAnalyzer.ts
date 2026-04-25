@@ -461,9 +461,18 @@ export async function analyzeEnhanced(
             // as the snapshot fills in). The analyzer returning `passed=true`
             // means "this token is not a known scam" — not "this token is
             // ready to enter."
+            //
+            // Top-10 is structurally elevated at launch (curve <10% or
+            // <25 holders) — the fallback estimator returns hardcoded 52/58/
+            // 68% concentrations that no fresh launch can satisfy. Skip the
+            // distribution check while we're in that regime; once the curve
+            // matures the check re-engages.
+            const top10IsMeaningful =
+                bondingCurveProgress >= 10 && holderMetrics.holderCount >= 25;
             const healthyDistribution =
-                holderMetrics.top10Concentration <= 65 &&
-                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 18);
+                !top10IsMeaningful ||
+                (holderMetrics.top10Concentration <= 65 &&
+                    (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 18));
 
             if (!healthyDistribution) {
                 reasons.push(`Probe distribution is too concentrated (${holderMetrics.top10Concentration.toFixed(1)}% top 10)`);
@@ -481,9 +490,18 @@ export async function analyzeEnhanced(
             // Degen analyzer is also safety-only. Tape shape lives in the
             // live entry guard which has both an early-momentum path and the
             // confirmed-continuation path.
+            //
+            // Same launch-phase exemption as the sniper path above: while
+            // we're pre-launch (curve <10%) or holder count is too low
+            // (<25) the fallback estimator's hardcoded 52-68% top10 is
+            // mathematically guaranteed to fail this check. Skip until
+            // the metric is actually meaningful.
+            const top10IsMeaningful =
+                bondingCurveProgress >= 10 && holderMetrics.holderCount >= 25;
             const healthyDistribution =
-                holderMetrics.top10Concentration <= 55 &&
-                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 15);
+                !top10IsMeaningful ||
+                (holderMetrics.top10Concentration <= 55 &&
+                    (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 15));
 
             if (!healthyDistribution) {
                 reasons.push(`Aggressive distribution is too concentrated (${holderMetrics.top10Concentration.toFixed(1)}% top 10)`);

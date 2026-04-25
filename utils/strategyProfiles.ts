@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'velocity' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 6;
+export const STRATEGY_PRESET_VERSION = 7;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -258,7 +258,14 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxTop10: 65,
                     maxDev: 15,
                     minBondingCurve: 0.1,
-                    maxBondingCurve: 12,
+                    // 18 (not 12) because re-analyzed tokens have already
+                    // moved during the wait window — the COMMUNISM and AU
+                    // tokens in production logs both rejected at 12.2%
+                    // and 15.9% respectively, well within the velocity
+                    // strategy's intended window. Anything past ~18% is
+                    // late-chase territory and the exit math no longer
+                    // works as well at those entry points.
+                    maxBondingCurve: 18,
                     // The defining filter: this mode REQUIRES strong velocity.
                     // 1.2 SOL/min of curve growth is "this is moving" without
                     // being absurdly high — typical for legitimate launches.
