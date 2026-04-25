@@ -185,7 +185,7 @@ const CASES: RegressionCase[] = [
     {
         name: 'fast modes cut ruggy reversals defensively',
         run: () => {
-            const allowed = ['fast-kill', 'stop-loss', 'giveback-exit', 'stagnation-exit'];
+            const allowed = ['fast-kill', 'stop-loss', 'giveback-exit', 'stagnation-exit', 'profit-lock', 'runner-trailing-stop'];
             assertProtectiveExit(replay.resultIndex, 'milkers-6amhge', 'probe', allowed, 'ruggy fast exit');
             assertProtectiveExit(replay.resultIndex, 'milkers-7qikkz', 'aggressive', allowed, 'ruggy fast exit');
             assertProtectiveExit(replay.resultIndex, 'milkers-7qikkz', 'probe', allowed, 'ruggy fast exit');

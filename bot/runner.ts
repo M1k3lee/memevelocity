@@ -27,6 +27,7 @@ import {
     hasTp1Sell
 } from '../utils/tradeExit';
 import { computeDynamicBuySlippage, computeDynamicSellSlippage } from '../utils/slippageModel';
+import { flushSummary as flushRejectionSummary, recordEntryDecision, recordSeenToken } from '../utils/rejectionLog';
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,6 +62,12 @@ class PumpFunRunner {
     private readonly analyzingMints = new Set<string>();
     private readonly processingMints = new Set<string>();
     private readonly analysisCooldowns = new Map<string, number>();
+    // Tokens that have returned `wait` from the live entry guard. The
+    // websocket only fires events on trades, so a quiet token in `wait` would
+    // otherwise be dropped — we re-evaluate them on a periodic sweep instead.
+    private readonly waitingMints = new Map<string, { token: TokenData; firstSeenAt: number; lastTriedAt: number }>();
+    private rescanLoop: NodeJS.Timeout | null = null;
+    private telemetryLoop: NodeJS.Timeout | null = null;
     private lastTradeTime = 0;
     private shuttingDown = false;
     private saveChain: Promise<void> = Promise.resolve();
@@ -95,6 +102,8 @@ class PumpFunRunner {
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         if (this.priceLoop) clearInterval(this.priceLoop);
         if (this.healthLoop) clearInterval(this.healthLoop);
+        if (this.rescanLoop) clearInterval(this.rescanLoop);
+        if (this.telemetryLoop) clearInterval(this.telemetryLoop);
         if (this.ws) this.ws.close();
         await this.persistState();
     }
@@ -109,6 +118,52 @@ class PumpFunRunner {
             const lossStreak = this.getLossStreak();
             this.log(`Health: ${this.state.openPositions.length} open position(s), realized ${this.state.totals.realizedProfitSol.toFixed(4)} SOL, daily ${dailyRealized.toFixed(4)} SOL, loss streak ${lossStreak}`);
         }, this.config.healthLogIntervalMs);
+
+        // Rescan tokens that returned `wait` from the live guard. Without this
+        // sweep, a token that ages 5s with not-yet-confirmed tape would be
+        // dropped and never reconsidered, even if the tape develops cleanly
+        // in the next 30s. This was a major contributor to the zero-trade
+        // session — most launches need a few seconds to show a confirmable
+        // pattern, and the websocket only fires events on individual trades.
+        this.rescanLoop = setInterval(() => {
+            void this.rescanWaitingTokens();
+        }, 4000);
+
+        // Periodic rejection telemetry summary so the operator sees which
+        // gate is blocking entries instead of staring at silence.
+        this.telemetryLoop = setInterval(() => {
+            flushRejectionSummary((line) => this.log(line));
+        }, 60_000);
+    }
+
+    private async rescanWaitingTokens(): Promise<void> {
+        if (this.shuttingDown) return;
+        if (this.state.openPositions.length >= this.config.maxConcurrentTrades) return;
+
+        const now = Date.now();
+        // Garbage-collect stale entries up front. A token older than 4 minutes
+        // has missed its window across every mode and should be retired.
+        for (const [mint, entry] of this.waitingMints.entries()) {
+            const ageSeconds = (now - (entry.token.createdAt || entry.firstSeenAt)) / 1000;
+            if (ageSeconds > 240 || (now - entry.firstSeenAt) > 4 * 60_000) {
+                this.waitingMints.delete(mint);
+            }
+        }
+
+        for (const [mint, entry] of this.waitingMints.entries()) {
+            if (this.analyzingMints.has(mint) || this.processingMints.has(mint)) continue;
+            if (this.state.openPositions.some((position) => position.mint === mint)) {
+                this.waitingMints.delete(mint);
+                continue;
+            }
+            // Throttle rescans per mint to ~1.5s so we don't burn RPC.
+            if ((now - entry.lastTriedAt) < 1500) continue;
+            entry.lastTriedAt = now;
+            // Refresh the cached token (snapshot might have updated the merged form).
+            const refreshed = this.tokenCache.get(mint) || entry.token;
+            entry.token = refreshed;
+            await this.maybeOpenPosition(refreshed);
+        }
     }
 
     private connectFeed(): void {
@@ -214,13 +269,25 @@ class PumpFunRunner {
 
     private async maybeOpenPosition(token: TokenData): Promise<void> {
         if (this.state.openPositions.length >= this.config.maxConcurrentTrades) return;
-        if (this.analysisCooldowns.has(token.mint) && (Date.now() - (this.analysisCooldowns.get(token.mint) || 0)) < this.config.analysisCooldownMs) return;
         if (this.analyzingMints.has(token.mint) || this.processingMints.has(token.mint)) return;
         if (this.state.openPositions.some((position) => position.mint === token.mint)) return;
         if ((Date.now() - this.lastTradeTime) < this.config.minTimeBetweenTradesMs) return;
+        // Cheap analysis cooldown — only used to throttle hard `reject` decisions.
+        // `wait` decisions explicitly bypass this so the rescan loop can keep retrying.
+        const cooldownEntry = this.analysisCooldowns.get(token.mint);
+        if (cooldownEntry && (Date.now() - cooldownEntry) < this.config.analysisCooldownMs) return;
 
         const entryPauseReason = this.getEntryPauseReason();
         if (entryPauseReason) {
+            recordEntryDecision({
+                mode: this.config.mode,
+                gate: 'risk-rail',
+                status: 'reject',
+                reason: entryPauseReason,
+                mint: token.mint,
+                symbol: token.symbol,
+                log: (line) => this.log(line)
+            });
             if ((Date.now() - this.lastRiskPauseLogAt) > 30_000) {
                 this.log(`Entry paused: ${entryPauseReason}`);
                 this.lastRiskPauseLogAt = Date.now();
@@ -228,52 +295,133 @@ class PumpFunRunner {
             return;
         }
 
-        this.analysisCooldowns.set(token.mint, Date.now());
+        recordSeenToken();
         this.analyzingMints.add(token.mint);
 
         try {
             const rug = detectRug(token, getRugMode(this.config.mode));
             if (rug.isRug) {
-                if (token.txType === 'create') {
-                    this.log(`Rejected ${token.symbol}: ${rug.reason}`);
-                }
+                recordEntryDecision({
+                    mode: this.config.mode,
+                    gate: 'rug-detector',
+                    status: 'reject',
+                    reason: rug.reason,
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    log: (line) => this.log(line)
+                });
+                this.analysisCooldowns.set(token.mint, Date.now());
+                this.waitingMints.delete(token.mint);
                 return;
             }
 
             const analysis = await analyzeEnhanced(token, this.connection, this.config.heliusKey, this.config.mode, this.config.advanced);
             if (!analysis.passed) {
-                if (token.txType === 'create') {
-                    this.log(`Filtered ${token.symbol}: ${analysis.reasons[0] || 'analysis rejected trade'}`);
+                const reason = analysis.reasons[0] || 'analysis rejected trade';
+                // Treat tape-not-ready style rejections as `wait` so we re-evaluate
+                // as the snapshot fills in. A creator-sell or tier-0 fail is terminal.
+                const isTapeNotReady = /trades|wallets|buy pressure|volume|tape|shakeout|absorb|net flow|tier 4/i.test(reason);
+                const isTerminal = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|incentive/i.test(reason);
+                const status: 'wait' | 'reject' = (!isTerminal && isTapeNotReady) ? 'wait' : 'reject';
+                recordEntryDecision({
+                    mode: this.config.mode,
+                    gate: 'analyzer',
+                    status,
+                    reason,
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    log: (line) => this.log(line)
+                });
+                if (status === 'wait') {
+                    this.queueWait(token);
+                } else {
+                    this.analysisCooldowns.set(token.mint, Date.now());
+                    this.waitingMints.delete(token.mint);
                 }
                 return;
             }
 
             const amountSol = await this.getTradeSize(analysis);
-            if (amountSol <= 0) return;
+            if (amountSol <= 0) {
+                recordEntryDecision({
+                    mode: this.config.mode,
+                    gate: 'budget',
+                    status: 'reject',
+                    reason: 'amountSol <= 0 (budget or balance)',
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    log: (line) => this.log(line)
+                });
+                this.analysisCooldowns.set(token.mint, Date.now());
+                return;
+            }
 
             const entryDecision = evaluateLiveEntryGuard(this.config.mode, token, analysis, amountSol);
             if (entryDecision.status !== 'pass') {
-                if (token.txType === 'create') {
-                    const decisionLabel = entryDecision.status === 'wait' ? 'Waiting on' : 'Skipped';
-                    this.log(`${decisionLabel} ${token.symbol}: ${entryDecision.reason || 'entry confirmation not met'}`);
+                recordEntryDecision({
+                    mode: this.config.mode,
+                    gate: 'live-guard',
+                    status: entryDecision.status,
+                    reason: entryDecision.reason,
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    log: (line) => this.log(line)
+                });
+                if (entryDecision.status === 'wait') {
+                    this.queueWait(token);
+                } else {
+                    this.analysisCooldowns.set(token.mint, Date.now());
+                    this.waitingMints.delete(token.mint);
                 }
                 return;
             }
 
             const confirmationFailure = await this.confirmEntryWindow(token);
             if (confirmationFailure) {
-                if (token.txType === 'create') {
-                    this.log(`Skipped ${token.symbol}: ${confirmationFailure}`);
-                }
+                recordEntryDecision({
+                    mode: this.config.mode,
+                    gate: 'confirmation',
+                    status: 'reject',
+                    reason: confirmationFailure,
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    log: (line) => this.log(line)
+                });
+                this.analysisCooldowns.set(token.mint, Date.now());
+                this.waitingMints.delete(token.mint);
                 return;
             }
 
+            recordEntryDecision({
+                mode: this.config.mode,
+                gate: 'live-guard',
+                status: 'pass',
+                mint: token.mint,
+                symbol: token.symbol,
+                log: (line) => this.log(line)
+            });
+            this.waitingMints.delete(token.mint);
             const exitStrategy = this.buildExitStrategy(token, analysis);
             await this.executeBuy(token, amountSol, exitStrategy, analysis.score, analysis.riskLevel, analysis.reasons);
         } catch (error: any) {
             this.log(`Analysis error for ${token.symbol}: ${error.message}`);
         } finally {
             this.analyzingMints.delete(token.mint);
+        }
+    }
+
+    private queueWait(token: TokenData): void {
+        const existing = this.waitingMints.get(token.mint);
+        const now = Date.now();
+        if (existing) {
+            existing.token = token;
+            existing.lastTriedAt = now;
+        } else {
+            this.waitingMints.set(token.mint, {
+                token,
+                firstSeenAt: now,
+                lastTriedAt: now
+            });
         }
     }
 
@@ -415,7 +563,7 @@ class PumpFunRunner {
 
         // Selective modes pause a touch longer to let the confirmation tape build.
         const isSlowConfirm = this.config.mode === 'god' || this.config.mode === 'micro' || this.config.mode === 'custom';
-        await delay(isSlowConfirm ? 1200 : 800);
+        await delay(isSlowConfirm ? 900 : 600);
 
         const freshPumpData = await getPumpData(token.mint, this.connection);
         const freshSnapshot = getMarketSnapshot(token.mint);
@@ -440,10 +588,15 @@ class PumpFunRunner {
         const liquidityDeltaPercent = setupLiquidity > 0 ? ((freshLiquidity - setupLiquidity) / setupLiquidity) * 100 : 0;
         const curveDelta = freshCurve - setupCurve;
         const priceDeltaPercent = setupPrice > 0 && freshPrice > 0 ? ((freshPrice - setupPrice) / setupPrice) * 100 : 0;
-        const minBuyPressure = isSelectiveMode ? 0.57 : (isProbeMode ? 0.56 : (isAggressiveMode ? 0.55 : 0.52));
-        const maxLiquidityDrop = isSelectiveMode ? -4 : (isProbeMode ? -3.8 : (isAggressiveMode ? -4.5 : -6));
-        const maxCurveRollback = isSelectiveMode ? -0.8 : (isProbeMode ? -0.7 : (isAggressiveMode ? -0.9 : -1.2));
-        const maxPriceFade = isSelectiveMode ? -1.8 : (isProbeMode ? -1.4 : (isAggressiveMode ? -2.0 : -2.5));
+        // Significantly looser tolerances. The previous bars (-4% liquidity, -1.8%
+        // price) were tighter than normal pump.fun volatility — even a single
+        // sub-1-SOL sell during the 1s confirmation pause would flunk a 30 SOL
+        // pool. Confirmation is meant to catch a clear fade between observation
+        // and entry, not noise.
+        const minBuyPressure = isSelectiveMode ? 0.5 : (isProbeMode ? 0.5 : (isAggressiveMode ? 0.5 : 0.48));
+        const maxLiquidityDrop = isSelectiveMode ? -10 : (isProbeMode ? -12 : (isAggressiveMode ? -12 : -14));
+        const maxCurveRollback = isSelectiveMode ? -2.5 : (isProbeMode ? -3 : (isAggressiveMode ? -3 : -3.5));
+        const maxPriceFade = isSelectiveMode ? -5 : (isProbeMode ? -6 : (isAggressiveMode ? -6 : -8));
 
         if (
             liquidityDeltaPercent < maxLiquidityDrop ||
@@ -454,7 +607,7 @@ class PumpFunRunner {
             return `confirmation faded (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure)`;
         }
 
-        if (tradeCount >= 3 && freshNetFlow < 0) {
+        if (tradeCount >= 5 && freshNetFlow < -0.1) {
             return `flow turned negative during confirmation (${freshNetFlow.toFixed(2)} SOL)`;
         }
 

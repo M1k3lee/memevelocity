@@ -145,7 +145,6 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     const age = getTokenAgeSeconds(token);
     const liquidity = token.vSolInBondingCurve || 30;
     const liquidityGrowth = liquidity - 30;
-    const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
     const tradeCount = snapshot?.tradeCount || 0;
     const buyCount = snapshot?.buyCount || 0;
     const sellCount = snapshot?.sellCount || 0;
@@ -157,14 +156,15 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     const topTwoTraderVolumeShare = snapshot?.topTwoTraderVolumeShare || 0;
     const creatorVolumeShare = snapshot?.creatorVolumeShare || 0;
     const creatorSellCount = snapshot?.creatorSellCount || 0;
-    const concentrationSampleReady =
-        tradeCount >= 3 ||
-        uniqueTraderCount >= 2;
 
-    if (age > 60) {
+    // Sniper is the early-entry mode. Its job is to engage in the first 30s
+    // of a launch when momentum is forming, not to wait for a perfect
+    // shakeout-and-absorb pattern. A single-probe path is added so we can
+    // engage on the first 1-2 confirming buys instead of demanding 7+ trades.
+    if (age > 90) {
         return {
             status: 'reject',
-            reason: `Probe window already passed (${age.toFixed(0)}s old)`
+            reason: `Sniper window already passed (${age.toFixed(0)}s old)`
         };
     }
 
@@ -175,122 +175,124 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
         };
     }
 
-    if (!concentrationSampleReady) {
-        return age < 20
+    // Dead-tape filter — even sniper needs the launch to actually have moved
+    // forward.  retardick-bpdnih dipped ~3% below the open price early then
+    // limped back to a slight positive, which is the classic dead-tape pattern.
+    // minPriceChangePercent persists across the snapshot, so a tape that ever
+    // went underwater more than 3% gets rejected even after a cosmetic recovery.
+    const probePriceDrift = snapshot?.priceChangePercent ?? 0;
+    const probeMinDrift = snapshot?.minPriceChangePercent ?? 0;
+    if (age >= 15 && tradeCount >= 3 && (probePriceDrift <= 0 || probeMinDrift <= -3)) {
+        return age < 75
             ? {
                 status: 'wait',
-                reason: `Waiting for a second wallet to join (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
+                reason: `Probe tape isn't moving forward cleanly (now ${probePriceDrift.toFixed(1)}%, dipped ${probeMinDrift.toFixed(1)}%)`
             }
             : {
                 status: 'reject',
-                reason: `Probe never broadened beyond the opening wallet (${tradeCount} trades, ${uniqueTraderCount} wallets)`
+                reason: `Probe tape never built clean displacement (now ${probePriceDrift.toFixed(1)}%, dipped ${probeMinDrift.toFixed(1)}%)`
             };
     }
 
-    if (largestTraderVolumeShare > 0.46) {
+    // Catch one-wallet dominance patterns very early. The wig-fvyutt creator-exit
+    // tape has the first buyer grab ~4.7 SOL out of ~6.5 SOL of observed volume,
+    // i.e. the entire probe is one whale before the creator dumps. The previous
+    // bar (`> 0.55 && tradeCount >= 4`) waited a tick too long — flowEngage
+    // could pass at tradeCount=3 before this check fired. Lowered to fire at
+    // tradeCount >= 3 with a 60% bar so genuine breakouts (sword-hkc82o, where
+    // the early sniper holds ~56%) still get through.
+    if (largestTraderVolumeShare > 0.6 && tradeCount >= 3) {
+        return {
+            status: 'reject',
+            reason: `One wallet still dominates the very early probe tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
+        };
+    }
+
+    if (largestTraderVolumeShare > 0.55 && tradeCount >= 4) {
         return {
             status: 'reject',
             reason: `One wallet still dominates the probe tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (topTwoTraderVolumeShare > 0.68 && uniqueTraderCount < 8) {
+    if (topTwoTraderVolumeShare > 0.78 && tradeCount >= 5 && uniqueTraderCount < 6) {
         return {
             status: 'reject',
             reason: `Too much early flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (creatorVolumeShare > 0.4 && age >= 12) {
+    if (creatorVolumeShare > 0.5 && age >= 18) {
         return {
             status: 'reject',
             reason: `Creator-linked flow is too dominant for a probe (${(creatorVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (sellCount > Math.max(2, Math.floor(tradeCount * 0.5)) && age < 60) {
+    if (sellCount > Math.max(3, Math.floor(tradeCount * 0.6)) && age < 60) {
         return {
             status: 'reject',
             reason: `Early sell pressure is too heavy for a probe (${sellCount}/${tradeCount} sells)`
         };
     }
 
-    if (netFlow < -0.15 && age < 50) {
+    if (netFlow < -0.3 && age < 50) {
         return {
             status: 'reject',
             reason: `Net flow turned negative too early (${netFlow.toFixed(2)} SOL)`
         };
     }
 
-    if (tradeCount >= 3 && buyPressure < 0.54) {
+    if (tradeCount >= 4 && buyPressure < 0.5) {
         return {
             status: 'reject',
             reason: `Buy pressure is too weak for an early probe (${(buyPressure * 100).toFixed(0)}%)`
         };
     }
 
-    const hasEarlyProbeFlow =
-        age <= 10 &&
+    // Three engagement paths, looser to tighter:
+    // 1) earlyEngage: anywhere in the first 35s with any positive follow-through.
+    //    The sniper's job is to get in early. If we wait for confluence we miss it.
+    // 2) flowEngage: small confirming probe with a couple of wallets joining.
+    // 3) confirmedTape: the original "perfect" pattern, kept for completeness.
+    const earlyEngage =
+        age >= 4 &&
+        age <= 35 &&
+        buyCount >= 2 &&
+        tradeCount >= 2 &&
+        uniqueTraderCount >= 2 &&
+        buyPressure >= 0.55 &&
+        netFlow > 0;
+    // flowEngage is the small-confluence path: a couple of wallets joining the
+    // probe within the first minute. The age >= 4 floor mirrors earlyEngage —
+    // at age <= 3 we cannot reliably distinguish a healthy launch from a tape
+    // that is about to absorb a creator dump (see wig-fvyutt where the creator
+    // sells at t=3 after a heavy whale buy at t=0).
+    const flowEngage =
+        age >= 4 &&
+        age <= 60 &&
         buyCount >= 3 &&
         tradeCount >= 3 &&
-        uniqueTraderCount >= 3 &&
-        observedVolume >= 0.7 &&
-        buyPressure >= 0.62 &&
-        netFlow >= 0.45;
-    const hasShakeoutAbsorb =
-        sellCount >= 2 &&
-        buyCount >= 3 &&
+        uniqueTraderCount >= 2 &&
+        observedVolume >= 0.4 &&
+        buyPressure >= 0.55 &&
+        netFlow >= 0.1;
+    const confirmedTape =
+        age >= 4 &&
         tradeCount >= 6 &&
         uniqueTraderCount >= 4 &&
+        buyPressure >= 0.58 &&
         observedVolume >= 1.0 &&
-        buyPressure >= 0.6 &&
         netFlow >= 0.25;
-    const hasTapeConfirmation =
-        sellCount >= 2 &&
-        tradeCount >= 7 &&
-        uniqueTraderCount >= 5 &&
-        buyPressure >= 0.6 &&
-        observedVolume >= 1.2 &&
-        netFlow >= 0.35;
-    const waitingOnSnapshot =
-        age <= 40 &&
-        tradeCount === 0 &&
-        uniqueTraderCount <= 1 &&
-        observedVolume <= 0.35 &&
-        liquidityGrowth > 0.2;
-    const needsShakeoutConfirmation =
-        age >= 15 &&
-        observedVolume >= 0.8 &&
-        tradeCount >= 4 &&
-        sellCount === 0;
 
-    if (needsShakeoutConfirmation) {
-        return age < 45
-            ? {
-                status: 'wait',
-                reason: `Waiting for the first probe shakeout (${tradeCount} trades, no sells yet)`
-            }
-            : {
-                status: 'reject',
-                reason: `Probe stayed too one-sided and never reset`
-            };
-    }
-
-    if (hasTapeConfirmation || hasShakeoutAbsorb || hasEarlyProbeFlow) {
+    if (earlyEngage || flowEngage || confirmedTape) {
         return { status: 'pass' };
     }
 
-    if (age < 10 || waitingOnSnapshot) {
+    if (age < 60) {
         return {
             status: 'wait',
-            reason: `Waiting for first follow-through buy (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
-        };
-    }
-
-    if (age < 45 && (tradeCount > 0 || liquidityGrowth > 0.4)) {
-        return {
-            status: 'wait',
-            reason: `Need stronger order flow (${buyCount} buys, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`
+            reason: `Waiting for early follow-through (${tradeCount} trades, ${uniqueTraderCount} wallets, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`
         };
     }
 
@@ -323,31 +325,42 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         tradeCount >= 4 ||
         uniqueTraderCount >= 3;
 
-    if (age > 60) {
+    if (age > 120) {
         return {
             status: 'reject',
             reason: `Aggressive continuation window already passed (${age.toFixed(0)}s old)`
         };
     }
 
+    // Degen's core engagement paths. The original "continuation tape"
+    // demanded 8+ trades, 5+ wallets, 1.5 SOL volume AND a sell-and-absorb
+    // pattern within 60s — a near-perfect breakout that occurred maybe once
+    // an hour. We add a faster early-momentum path so the bot engages on the
+    // larger set of healthy launches.
+    const earlyMomentum =
+        age >= 5 &&
+        age <= 50 &&
+        tradeCount >= 3 &&
+        uniqueTraderCount >= 2 &&
+        observedVolume >= 0.4 &&
+        buyPressure >= 0.55 &&
+        netFlow > 0;
     const continuationTape =
-        sellCount >= 2 &&
-        buyCount >= 4 &&
+        tradeCount >= 5 &&
+        uniqueTraderCount >= 3 &&
+        observedVolume >= 0.8 &&
+        buyPressure >= 0.55 &&
+        netFlow >= 0.15;
+    const strongContinuationTape =
+        sellCount >= 1 &&
         tradeCount >= 8 &&
         uniqueTraderCount >= 5 &&
         observedVolume >= 1.5 &&
-        buyPressure >= 0.6 &&
-        netFlow >= 0.3;
-    const strongContinuationTape =
-        sellCount >= 2 &&
-        tradeCount >= 10 &&
-        uniqueTraderCount >= 6 &&
-        observedVolume >= 1.8 &&
-        buyPressure >= 0.6 &&
-        netFlow >= 0.45;
+        buyPressure >= 0.58 &&
+        netFlow >= 0.35;
     const curveReady =
-        (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 15) ||
-        (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8 && analysis.bondingCurveProgress <= 17);
+        (analysis.bondingCurveProgress >= 0.6 && analysis.bondingCurveProgress <= 22) ||
+        (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
     const waitingOnSnapshot =
         age <= 45 &&
         tradeCount === 0 &&
@@ -369,8 +382,29 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
+    // Dead-tape filter — degen requires the launch to actually be moving forward
+    // before entering. retardick-bpdnih has interleaved buys/sells where the
+    // curve drifts ~3% below the open early on, then drifts back up to a slight
+    // positive on a single 1-SOL print at t=65; aggregate buyPressure looks OK
+    // by then but the tape never had real displacement.  We use minPrice (the
+    // worst dip vs first observed price) so that any tape which went underwater
+    // earlier still gets rejected even after a cosmetic recovery.
+    const priceDriftPercent = snapshot?.priceChangePercent ?? 0;
+    const minPriceDriftPercent = snapshot?.minPriceChangePercent ?? 0;
+    if (age >= 15 && tradeCount >= 3 && (priceDriftPercent <= 0 || minPriceDriftPercent <= -3)) {
+        return age < 90
+            ? {
+                status: 'wait',
+                reason: `Aggressive tape isn't moving forward cleanly (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%, ${tradeCount} trades)`
+            }
+            : {
+                status: 'reject',
+                reason: `Aggressive tape never built clean displacement (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%)`
+            };
+    }
+
     if (!concentrationSampleReady) {
-        return age < 24
+        return age < 35
             ? {
                 status: 'wait',
                 reason: `Waiting for broader aggressive flow (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
@@ -381,28 +415,28 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
             };
     }
 
-    if (largestTraderVolumeShare > 0.4) {
+    if (largestTraderVolumeShare > 0.5 && tradeCount >= 5) {
         return {
             status: 'reject',
             reason: `One wallet still dominates the aggressive tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (topTwoTraderVolumeShare > 0.66 && uniqueTraderCount < 10) {
+    if (topTwoTraderVolumeShare > 0.78 && tradeCount >= 6 && uniqueTraderCount < 8) {
         return {
             status: 'reject',
             reason: `Too much aggressive flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (creatorVolumeShare > 0.34 && age >= 12) {
+    if (creatorVolumeShare > 0.45 && age >= 18) {
         return {
             status: 'reject',
             reason: `Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)`
         };
     }
 
-    if (repeatTraderRatio > 0.58 && tradeCount >= 6) {
+    if (repeatTraderRatio > 0.7 && tradeCount >= 8) {
         return {
             status: 'reject',
             reason: `Aggressive tape is too dependent on repeat wallets (${(repeatTraderRatio * 100).toFixed(0)}%)`
@@ -416,29 +450,29 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
-    if (sellCount > Math.max(2, Math.floor(tradeCount * 0.4)) && age <= 90) {
+    if (sellCount > Math.max(3, Math.floor(tradeCount * 0.55)) && age <= 90) {
         return {
             status: 'reject',
             reason: `Sell pressure is already too heavy (${sellCount}/${tradeCount} sells)`
         };
     }
 
-    if (tradeCount >= 4 && buyPressure < 0.56) {
+    if (tradeCount >= 5 && buyPressure < 0.5) {
         return {
             status: 'reject',
             reason: `Momentum faded before entry (${(buyPressure * 100).toFixed(0)}% buy pressure)`
         };
     }
 
-    if (impact > 1.8) {
+    if (impact > 2.5) {
         return {
             status: 'reject',
             reason: `Entry would hit the curve too hard (${impact.toFixed(2)}% impact)`
         };
     }
 
-    if (liquidity < 32) {
-        return age < 55
+    if (liquidity < 30.4) {
+        return age < 60
             ? {
                 status: 'wait',
                 reason: `Aggressive mode still needs a deeper liquidity base (${liquidity.toFixed(2)} SOL)`
@@ -449,47 +483,18 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
             };
     }
 
-    const needsShakeoutConfirmation =
-        age >= 18 &&
-        observedVolume >= 1.2 &&
-        tradeCount >= 6 &&
-        sellCount < 2;
-    if (needsShakeoutConfirmation) {
-        return age < 70
-            ? {
-                status: 'wait',
-                reason: `Waiting for a second aggressive reset (${sellCount} sells, ${tradeCount} trades)`
-            }
-            : {
-                status: 'reject',
-                reason: `Aggressive setup never printed a clean second reset`
-            };
-    }
-
-    if (age >= 20 && buyPressure > 0.9 && sellCount < 1 && uniqueTraderCount < 7) {
-        return age < 55
-            ? {
-                status: 'wait',
-                reason: `Tape is still too one-sided for an aggressive continuation (${(buyPressure * 100).toFixed(0)}% buy pressure)`
-            }
-            : {
-                status: 'reject',
-                reason: `Aggressive launch stayed too coordinated and never reset`
-            };
-    }
-
-    if (netFlow <= 0 && age >= 25) {
+    if (netFlow < -0.2 && age >= 30) {
         return {
             status: 'reject',
-            reason: `Net flow is no longer positive (${netFlow.toFixed(2)} SOL)`
+            reason: `Net flow turned solidly negative (${netFlow.toFixed(2)} SOL)`
         };
     }
 
     if (!curveReady) {
-        return age < 75
+        return age < 90
             ? {
                 status: 'wait',
-                reason: `Curve still needs to expand cleanly (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
+                reason: `Curve still needs to expand (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
             }
             : {
                 status: 'reject',
@@ -497,15 +502,15 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
             };
     }
 
-    if (!(continuationTape || strongContinuationTape)) {
-        return age < 75
+    if (!(earlyMomentum || continuationTape || strongContinuationTape)) {
+        return age < 90
             ? {
                 status: 'wait',
-                reason: `Needs stronger continuation tape (${tradeCount} trades, ${sellCount} sells, ${(buyPressure * 100).toFixed(0)}% buy pressure)`
+                reason: `Needs stronger continuation tape (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure)`
             }
             : {
                 status: 'reject',
-                reason: `Aggressive tape never confirmed clean continuation (${tradeCount} trades, ${sellCount} sells)`
+                reason: `Aggressive tape never confirmed clean continuation (${tradeCount} trades)`
             };
     }
 
@@ -648,14 +653,19 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
             };
     }
 
-    const minimumTrades = isGodMode ? (reclaimLaneActive ? 7 : 8) : 6;
-    const minimumWallets = isGodMode ? 6 : 4;
-    const minimumVolume = isGodMode ? (reclaimLaneActive ? 1.15 : 1.25) : 1.0;
-    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.58 : 0.6) : 0.57;
-    const maximumImpact = isGodMode ? (reclaimLaneActive ? 1.8 : 1.65) : 2.15;
-    const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.38 : 0.3) : 0.35;
-    const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.56 : 0.48) : 0.56;
-    const maxCreatorVolumeShare = isGodMode ? 0.24 : 0.3;
+    // Loosened to match real Pump.fun launch tape. The previous bars (8 trades,
+    // 6 wallets, 1.25 SOL volume in <60s) were so high that essentially every
+    // launch failed them. We keep god mode meaningfully stricter than micro/
+    // custom but still place the bars within reach of healthy-but-not-perfect
+    // launches.
+    const minimumTrades = isGodMode ? (reclaimLaneActive ? 5 : 6) : 4;
+    const minimumWallets = isGodMode ? 4 : 3;
+    const minimumVolume = isGodMode ? (reclaimLaneActive ? 0.8 : 1.0) : 0.6;
+    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.55 : 0.57) : 0.53;
+    const maximumImpact = isGodMode ? (reclaimLaneActive ? 2.2 : 2.0) : 2.6;
+    const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.45 : 0.4) : 0.45;
+    const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.66 : 0.6) : 0.68;
+    const maxCreatorVolumeShare = isGodMode ? 0.35 : 0.4;
 
     if (concentrationSampleReady && largestTraderVolumeShare > maxLargestTraderShare) {
         return {
@@ -671,7 +681,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
-    if (concentrationSampleReady && repeatTraderRatio > (isGodMode ? 0.42 : 0.5) && tradeCount >= 6) {
+    if (concentrationSampleReady && repeatTraderRatio > (isGodMode ? 0.55 : 0.65) && tradeCount >= 8) {
         return {
             status: 'reject',
             reason: `Too much of the tape is being recycled by the same wallets (${(repeatTraderRatio * 100).toFixed(0)}%)`
@@ -685,16 +695,21 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
+    // Shakeout confirmation only applies to god mode now. Micro/custom can
+    // engage on continuous up-tape; god still wants the cleaner setup but not
+    // strictly enough to reject every clean continuation. The threshold has
+    // been lifted to require both extended age AND high volume AND zero sells.
     const needsShakeoutConfirmation =
-        age >= 18 &&
-        observedVolume >= minimumVolume &&
-        tradeCount >= Math.max(4, minimumTrades - 2) &&
-        sellCount < 1;
+        isGodMode &&
+        age >= 35 &&
+        observedVolume >= minimumVolume * 1.5 &&
+        tradeCount >= minimumTrades + 1 &&
+        sellCount === 0;
     if (needsShakeoutConfirmation) {
-        return age < 55
+        return age < 75
             ? {
                 status: 'wait',
-                reason: `Waiting for the first shakeout and absorb (${tradeCount} trades, no sells yet)`
+                reason: `Waiting for the first shakeout (${tradeCount} trades, no sells yet)`
             }
             : {
                 status: 'reject',
@@ -702,7 +717,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
             };
     }
 
-    if (age >= 20 && buyPressure > 0.92 && sellCount === 0 && uniqueTraderCount < minimumWallets + 3) {
+    if (isGodMode && age >= 30 && buyPressure > 0.95 && sellCount === 0 && uniqueTraderCount < minimumWallets + 4) {
         return age < 60
             ? {
                 status: 'wait',
@@ -755,10 +770,15 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         topTwoTraderVolumeShare,
         creatorSellCount
     });
-    const scoreFloor = isGodMode ? (reclaimLaneActive ? 74 : 78) : 70;
+    // Score floor reflects the reality that god mode wants HIGH-quality setups
+    // but a "good enough" setup needs to actually be reachable. The previous
+    // floors (74/78) basically required a textbook breakout. Composite score
+    // is itself a sum of bonuses/penalties that gets harder to achieve as more
+    // gates fire — keeping the floor moderate prevents over-rejection.
+    const scoreFloor = isGodMode ? (reclaimLaneActive ? 60 : 64) : 56;
 
     if (score < scoreFloor) {
-        return age < 95
+        return age < 110
             ? {
                 status: 'wait',
                 reason: `Composite runner score is still weak (${score}/100)`
