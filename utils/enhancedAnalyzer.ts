@@ -966,7 +966,24 @@ function applyConfigFilters({
     if (config.minHolderCount !== undefined && holderCount < config.minHolderCount) {
         return `Below configured holder minimum (${holderCount} < ${config.minHolderCount})`;
     }
-    if (config.maxTop10 !== undefined && top10Concentration > config.maxTop10) {
+    // Top-10 concentration on Pump.fun is *structurally* elevated for the
+    // first ~minute of life: the dev + 4–8 early buyers necessarily own
+    // most of the supply that's been traded so far, and the fallback
+    // estimator (used whenever RPC market data is unavailable) returns
+    // hardcoded 52–68% by holder-count bucket. Enforcing a 42% ceiling at
+    // launch is mathematically impossible to satisfy, which is why every
+    // fresh launch was being rejected with "Top 10 concentration too high".
+    //
+    // We skip the check entirely while the curve is still in launch phase
+    // (<10% progress) OR there aren't enough holders for the metric to
+    // even be meaningful (<25). After either condition is satisfied the
+    // filter re-engages and acts as a real distribution check.
+    const top10IsMeaningful = bondingCurveProgress >= 10 && holderCount >= 25;
+    if (
+        config.maxTop10 !== undefined &&
+        top10IsMeaningful &&
+        top10Concentration > config.maxTop10
+    ) {
         return `Top 10 concentration too high (${top10Concentration.toFixed(1)}% > ${config.maxTop10}%)`;
     }
 

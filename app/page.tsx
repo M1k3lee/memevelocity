@@ -20,6 +20,7 @@ import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
 import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
 import { getStrategyPresetConfig, normalizeStrategyProfile, STRATEGY_PRESET_VERSION } from '../utils/strategyProfiles';
+import { APP_VERSION_LABEL, APP_VERSION_DATE } from '../utils/version';
 import {
   getProfitLockFloor,
   getRunnerActivationProfit,
@@ -2470,6 +2471,10 @@ export default function Home() {
       else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 35;
       else if (config.mode === 'micro') minScore = 45;
       if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 35 : 38);
+      // Velocity mode is intentionally permissive on score — its discipline
+      // comes from the velocity filter and the launch-phase entry guard,
+      // not from a high score floor. We just want to make sure it's not 0.
+      if (config.mode === 'velocity') minScore = Math.max(minScore, config.isDemo ? 25 : 30);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -2482,7 +2487,34 @@ export default function Home() {
         return;
       }
 
-      if (config.mode === 'degen') {
+      if (config.mode === 'velocity') {
+        // Velocity is the "just buy when something's clearly moving" mode.
+        // It deliberately skips degen's multi-pillar tape confirmation —
+        // by the time the tape is "confirmed" the move is over. Instead,
+        // we trust the analyzer's velocity filter (1.2 SOL/min minimum
+        // from the preset) plus a couple of cheap sanity checks here.
+        const snapshot = getMarketSnapshot(token.mint);
+        const tradeCount = snapshot?.tradeCount || analysis.metrics.tradeCount || 0;
+        const sellCount = snapshot?.sellCount || 0;
+        const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
+
+        // Reject if we already see significant sell-side action in the
+        // first 60 seconds — that's the "creator dumping" pattern.
+        if (sellCount >= 2 && tradeCount >= 3 && age <= 60) {
+          addLog(`🚫 Velocity Reject: ${token.symbol} early sell pressure (${sellCount}/${tradeCount} sells in ${age.toFixed(0)}s).`);
+          return;
+        }
+
+        // Once a tape exists, require it to be net-positive. Pre-tape we
+        // let the analyzer's velocity filter decide.
+        if (tradeCount >= 3 && buyPressure < 0.5) {
+          addLog(`🚫 Velocity Reject: ${token.symbol} buy pressure too weak (${(buyPressure * 100).toFixed(0)}%, ${tradeCount} trades).`);
+          return;
+        }
+
+        // Don't wait — fall through to the buy. The whole point of this
+        // mode is that we already filtered on velocity upstream.
+      } else if (config.mode === 'degen') {
         const snapshot = getMarketSnapshot(token.mint);
         const tradeCount = snapshot?.tradeCount || analysis.metrics.tradeCount || 0;
         const buyCount = snapshot?.buyCount || 0;
@@ -2602,7 +2634,16 @@ export default function Home() {
 
       const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'sniper', 'first', 'degen', 'high', 'velocity', 'scalp']);
       if (guardEligibleModes.has(config.mode)) {
-        const guardDecision = evaluateLiveEntryGuard(config.mode as any, token, analysis, config.amount);
+        // The live entry guard only knows the five canonical modes. Velocity
+        // and the legacy aliases share their tape gating with degen.
+        const guardMode = (config.mode === 'velocity' || config.mode === 'high' || config.mode === 'scalp')
+          ? 'degen'
+          : (config.mode === 'first' || config.mode === 'sniper')
+          ? 'sniper'
+          : (config.mode === 'safe' || config.mode === 'medium' || config.mode === 'runner')
+          ? 'god'
+          : config.mode;
+        const guardDecision = evaluateLiveEntryGuard(guardMode as any, token, analysis, config.amount);
         if (guardDecision.status === 'wait') {
           scheduleRetry(5000, `⏳ ${token.symbol} guard: ${guardDecision.reason || 'waiting for cleaner confirmation'}`);
           return;
@@ -2634,7 +2675,7 @@ export default function Home() {
       // Higher score = larger position (up to 2x base amount)
       // Lower score = smaller position (down to 0.5x base amount)
       let positionSize = config.amount;
-      const liveDegenMinMultiplier = !config.isDemo && (config.mode === 'degen' || config.mode === 'micro') ? 0.75 : 0.5;
+      const liveDegenMinMultiplier = !config.isDemo && (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'micro') ? 0.75 : 0.5;
       if (config.dynamicSizing) {
         const scoreMultiplier = Math.max(liveDegenMinMultiplier, Math.min(2.0, (analysis.score / 50)));
         positionSize = config.amount * scoreMultiplier;
@@ -2655,9 +2696,9 @@ export default function Home() {
       }
 
       // Cap position size for safety
-      const maxPositionMultiplier = config.mode === 'degen' ? 1.25 : 2;
+      const maxPositionMultiplier = (config.mode === 'degen' || config.mode === 'velocity') ? 1.25 : 2;
       positionSize = Math.min(positionSize, config.amount * maxPositionMultiplier);
-      positionSize = Math.max(positionSize, config.amount * (!config.isDemo && (config.mode === 'degen' || config.mode === 'micro') ? 0.75 : 0.3));
+      positionSize = Math.max(positionSize, config.amount * (!config.isDemo && (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'micro') ? 0.75 : 0.3));
 
       console.log("[onTokenDetected] ✅ Executing buy for:", token.symbol, "Amount:", positionSize.toFixed(4), "SOL", "Score:", analysis.score, "Curve:", analysis.bondingCurveProgress.toFixed(1) + "%");
       const initialPrice = token.vSolInBondingCurve > 0 && token.vTokensInBondingCurve > 0
@@ -3184,8 +3225,11 @@ export default function Home() {
           <h1 className="text-2xl font-black italic tracking-tighter bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] bg-clip-text text-transparent">
             MEME<span className="text-white">VELOCITY</span>
           </h1>
-          <span className="px-2 py-0.5 rounded text-[10px] border border-[#333] text-gray-400 font-mono">
-            v1.0 BETA
+          <span
+            className="px-2 py-0.5 rounded text-[10px] border border-[#333] text-gray-400 font-mono cursor-help"
+            title={`Built ${APP_VERSION_DATE}`}
+          >
+            {APP_VERSION_LABEL}
           </span>
         </div>
 

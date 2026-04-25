@@ -12,10 +12,10 @@ export type InternalMode =
     | 'first'
     | 'scalp';
 
-export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
+export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'velocity' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 5;
+export const STRATEGY_PRESET_VERSION = 6;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -76,6 +76,12 @@ export const STRATEGY_PROFILE_DEFINITIONS: StrategyProfileDefinition[] = [
         description: 'Structured launch probe mode. Tiny size only, multi-wallet flow required, and still best kept in paper testing first.'
     },
     {
+        id: 'velocity',
+        label: 'Velocity',
+        subtitle: 'High-momentum launch sniping',
+        description: 'Built for the first 30 seconds of life. Loose distribution filters (launch is structurally top-heavy), strict momentum requirement (must be moving fast), tiny size, fast TP/SL. The mode to pick when nothing else is buying.'
+    },
+    {
         id: 'custom',
         label: 'Custom',
         subtitle: 'Manual control',
@@ -98,9 +104,10 @@ export function normalizeStrategyProfile(mode?: string): VisibleStrategyMode {
             return 'micro';
         case 'degen':
         case 'high':
-        case 'velocity':
         case 'scalp':
             return 'degen';
+        case 'velocity':
+            return 'velocity';
         case 'sniper':
         case 'first':
             return 'sniper';
@@ -178,7 +185,12 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxLiquidity: 140,
                     minVolume: 1.2,
                     minHolderCount: 6,
-                    maxTop10: 42,
+                    // The fallback holder estimator returns 52% when holderCount
+                    // is in the 15–24 range and 58% when 10–14. A 42% ceiling
+                    // was rejecting every fresh launch by definition; 55 lets
+                    // mid-stage tokens through while still flagging genuine
+                    // top-heavy distributions (>55% on >25 holders).
+                    maxTop10: 55,
                     maxDev: 8,
                     minBondingCurve: 1.5,
                     maxBondingCurve: 17,
@@ -214,6 +226,48 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     requireSocials: false,
                     avoidSnipers: true,
                     slippage: 12
+                }
+            };
+        case 'velocity':
+            return {
+                // Launch-sniper mode tuned for the first 30s of token life.
+                // Strategy: pay attention only to tokens that are *clearly
+                // moving* (high SOL/min momentum), accept that fresh launches
+                // are top-heavy by nature (don't filter on top10 at all
+                // pre-launch — the analyzer's launch-phase exemption handles
+                // that), and exit fast on either profit or fade.
+                mode: 'velocity',
+                amount: 0.0025,
+                takeProfit: 12,
+                stopLoss: 5,
+                maxConcurrentTrades: 2,
+                dynamicSizing: false,
+                advanced: {
+                    // Pump.fun launches at exactly 30 SOL. Sit just below it
+                    // so brief dips don't reject the entry.
+                    minLiquidity: 26,
+                    maxLiquidity: 90,
+                    // Volume can be very low in the first ~5s; rely on
+                    // velocity instead of volume as the entry signal.
+                    minVolume: 0.4,
+                    minHolderCount: 3,
+                    // High ceiling — at <10% curve the analyzer skips the
+                    // top10 check entirely, so this only matters once a real
+                    // base of holders exists. 65 leaves room for a still-
+                    // concentrated but viable post-launch token.
+                    maxTop10: 65,
+                    maxDev: 15,
+                    minBondingCurve: 0.1,
+                    maxBondingCurve: 12,
+                    // The defining filter: this mode REQUIRES strong velocity.
+                    // 1.2 SOL/min of curve growth is "this is moving" without
+                    // being absurdly high — typical for legitimate launches.
+                    minVelocity: 1.2,
+                    rugCheckStrictness: 'standard',
+                    requireSocials: false,
+                    avoidSnipers: true,
+                    // High slippage so we actually get filled on a fast tape.
+                    slippage: 30
                 }
             };
         case 'custom':

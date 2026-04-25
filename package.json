@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "stamp:version": "node scripts/stampVersion.js",
+    "predev": "node scripts/stampVersion.js",
+    "prebuild": "node scripts/stampVersion.js",
+    "preexport": "node scripts/stampVersion.js",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
