@@ -27,7 +27,19 @@ import {
     hasTp1Sell
 } from '../utils/tradeExit';
 import { computeDynamicBuySlippage, computeDynamicSellSlippage } from '../utils/slippageModel';
-import { flushSummary as flushRejectionSummary, recordEntryDecision, recordSeenToken } from '../utils/rejectionLog';
+import { flushSummary as flushRejectionSummary, recordEntryDecision, recordSeenToken, resetRejectionTelemetry } from '../utils/rejectionLog';
+import {
+    buildSessionReport,
+    defaultSessionReportPath,
+    formatSessionReport,
+    recordBuyAttempt,
+    recordBuyFailure,
+    recordBuyFill,
+    recordPositionClose,
+    startSession,
+    writeSessionReport
+} from '../utils/sessionReport';
+import path from 'path';
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -91,6 +103,17 @@ class PumpFunRunner {
         this.log(`Strategy: ${this.config.mode} | Trade amount: ${this.config.amountSol} SOL | Max trades: ${this.config.maxConcurrentTrades}`);
         this.log(`Risk rails: max ${this.config.maxConsecutiveLosses} consecutive losses, daily stop ${this.config.maxDailyLossSol.toFixed(4)} SOL, size band ${this.config.riskFloorMultiplier.toFixed(2)}x-${this.config.riskCeilingMultiplier.toFixed(2)}x`);
 
+        // Reset session-cumulative rejection counters and start a fresh
+        // session report. Without these resets the report would inherit
+        // counters from the previous run when the runner restarts in-process.
+        resetRejectionTelemetry();
+        startSession({
+            mode: this.config.mode,
+            walletAddress: this.config.walletAddress,
+            startingBalanceSol: balance,
+            isDryRun: this.config.dryRun
+        });
+
         await this.reconcileOpenPositions();
         this.startLoops();
         this.connectFeed();
@@ -106,6 +129,25 @@ class PumpFunRunner {
         if (this.telemetryLoop) clearInterval(this.telemetryLoop);
         if (this.ws) this.ws.close();
         await this.persistState();
+        // Build + emit the end-of-session report. Catch all errors so a
+        // report failure can never block clean shutdown (the operator's
+        // bot-state.json is the authoritative record either way).
+        try {
+            const report = buildSessionReport({
+                openPositions: this.state.openPositions,
+                runnerMode: this.config.mode,
+                isDryRun: this.config.dryRun
+            });
+            const formatted = formatSessionReport(report);
+            for (const line of formatted.split('\n')) {
+                this.log(line);
+            }
+            const reportPath = defaultSessionReportPath(path.dirname(this.config.statePath));
+            await writeSessionReport(reportPath, report);
+            this.log(`Session report written to ${reportPath}`);
+        } catch (error: any) {
+            this.log(`Failed to write session report: ${error.message || error}`);
+        }
     }
 
     private startLoops(): void {
@@ -711,11 +753,28 @@ class PumpFunRunner {
 
         this.processingMints.add(token.mint);
 
+        // Record the attempt up front so the session report can show how
+        // many candidates *tried* to buy vs. how many actually filled.
+        recordBuyAttempt({
+            mint: token.mint,
+            symbol: token.symbol,
+            mode: this.config.mode,
+            amountSol,
+            analysisScore,
+            riskLevel: analysisRisk
+        });
+
         try {
             const pumpData = await getPumpData(token.mint, this.connection);
             const entryPrice = pumpData ? calculatePrice(pumpData.vSolInBondingCurve, pumpData.vTokensInBondingCurve) : 0;
             if (entryPrice <= 0) {
                 this.log(`Skipped ${token.symbol}: could not determine entry price`);
+                recordBuyFailure({
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    mode: this.config.mode,
+                    reason: 'no entry price'
+                });
                 return;
             }
 
@@ -750,6 +809,12 @@ class PumpFunRunner {
 
                 if (!Number.isFinite(buyExecution.fillPrice) || buyExecution.fillPrice <= 0 || buyExecution.tokensOut <= 0) {
                     this.log(`[DRY RUN] Skipped ${token.symbol}: could not simulate fill`);
+                    recordBuyFailure({
+                        mint: token.mint,
+                        symbol: token.symbol,
+                        mode: this.config.mode,
+                        reason: 'paper fill simulation produced invalid price'
+                    });
                     return;
                 }
 
@@ -782,6 +847,14 @@ class PumpFunRunner {
                 this.lastTradeTime = Date.now();
                 this.subscribeToMint(token.mint);
                 this.log(`[DRY RUN] Bought ${token.symbol} for ${totalSolOut.toFixed(4)} SOL @ ${buyExecution.fillPrice.toExponential(3)} (score ${analysisScore})`);
+                recordBuyFill({
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    mode: this.config.mode,
+                    amountSol: totalSolOut,
+                    fillPrice: buyExecution.fillPrice,
+                    isDryRun: true
+                });
                 await this.persistState();
                 return;
             }
@@ -793,6 +866,12 @@ class PumpFunRunner {
             const balance = await getBalance(this.wallet.publicKey.toBase58(), this.connection);
             if (balance === null || balance < amountSol + this.config.minBalanceReserveSol) {
                 this.log(`Skipped ${token.symbol}: insufficient balance for ${amountSol.toFixed(4)} SOL`);
+                recordBuyFailure({
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    mode: this.config.mode,
+                    reason: balance === null ? 'wallet balance unavailable' : `insufficient balance (${balance.toFixed(4)} SOL)`
+                });
                 return;
             }
 
@@ -856,6 +935,12 @@ class PumpFunRunner {
 
             const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
             if (confirmation.value.err) {
+                recordBuyFailure({
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    mode: this.config.mode,
+                    reason: `chain rejected buy tx ${signature.slice(0, 8)}`
+                });
                 this.state.openPositions = this.state.openPositions.filter((position) => position.txId !== signature);
                 await this.persistState();
                 throw new Error('buy transaction failed on chain');
@@ -879,7 +964,35 @@ class PumpFunRunner {
             } else {
                 this.log(`Buy confirmed for ${token.symbol}, but wallet token balance is still settling. Runner will keep reconciling the position.`);
             }
+            // Live fill recorded after on-chain confirmation. We use the
+            // entry price as fill-price proxy because the actual filled
+            // amount can still be settling — it'll be reconciled later in
+            // refreshPosition once the wallet balance is visible.
+            recordBuyFill({
+                mint: token.mint,
+                symbol: token.symbol,
+                mode: this.config.mode,
+                amountSol,
+                fillPrice: actualTokens > 0 ? amountSol / actualTokens : entryPrice,
+                isDryRun: false,
+                txId: signature
+            });
             await this.persistState();
+        } catch (error: any) {
+            // Anything that throws (rpc errors, signature failure, etc.)
+            // counts as a failure for the report. The chain-reject path
+            // above also throws, but it has already logged its own
+            // failure entry; recordBuyFailure is idempotent on the set
+            // of (mint,reason) so a duplicate is fine.
+            if (!String(error?.message || '').includes('chain rejected buy tx')) {
+                recordBuyFailure({
+                    mint: token.mint,
+                    symbol: token.symbol,
+                    mode: this.config.mode,
+                    reason: error?.message || 'unknown buy error'
+                });
+            }
+            throw error;
         } finally {
             this.processingMints.delete(token.mint);
         }
@@ -1257,13 +1370,14 @@ class PumpFunRunner {
     }
 
     private finalizeClosedPosition(position: ManagedPosition, reason: string): void {
-        this.state.openPositions = this.state.openPositions.filter((item) => item.mint !== position.mint);
-        this.state.closedPositions.unshift({
+        const closedPosition: ManagedPosition = {
             ...position,
             status: 'closed',
             closeReason: reason,
             closeTime: position.closeTime || Date.now()
-        });
+        };
+        this.state.openPositions = this.state.openPositions.filter((item) => item.mint !== position.mint);
+        this.state.closedPositions.unshift(closedPosition);
         this.state.closedPositions = this.state.closedPositions.slice(0, 200);
         this.state.totals.trades += 1;
         if (position.realizedProfitSol > 0) {
@@ -1271,6 +1385,14 @@ class PumpFunRunner {
         } else {
             this.state.totals.losses += 1;
         }
+        // Hand the closed position to the session report so the end-of-run
+        // summary can compute win-rate, hold time, top close reasons, etc.
+        recordPositionClose({
+            position: closedPosition,
+            mode: this.config.mode,
+            closeReason: reason,
+            isDryRun: this.config.dryRun
+        });
         clearMarketSnapshot(position.mint);
     }
 

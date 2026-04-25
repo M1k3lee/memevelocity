@@ -45,6 +45,15 @@ const seenMintGate = new Map<string, number>();
 const SUMMARY_INTERVAL_MS = 60_000;
 const FIRST_SEEN_TTL_MS = 10 * 60_000;
 
+// Session-cumulative mirrors of the rolling counters above. The rolling
+// counters get reset on every periodic flush so the operator sees a
+// "what just happened" view, but the session report needs the *whole
+// session* shape — these accumulators are only reset on
+// resetRejectionTelemetry() which the runner calls at startup.
+const sessionGateBuckets: Record<string, BucketCounts> = {};
+const sessionPassCounts: Record<string, number> = {};
+let sessionTotalSeen = 0;
+
 /**
  * Bucket a freeform reason string into a coarse category so the summary stays
  * readable. We stay deliberately generous with the buckets — the goal is "what
@@ -84,6 +93,7 @@ export function bucketReason(reason: string | undefined): string {
 
 export function recordSeenToken(): void {
     totalSeen += 1;
+    sessionTotalSeen += 1;
     maybeFlushSummary();
 }
 
@@ -103,6 +113,7 @@ export function recordEntryDecision(params: {
 
     if (status === 'pass') {
         passCounts[mode] = (passCounts[mode] || 0) + 1;
+        sessionPassCounts[mode] = (sessionPassCounts[mode] || 0) + 1;
         maybeFlushSummary();
         return;
     }
@@ -110,6 +121,12 @@ export function recordEntryDecision(params: {
     const bucket = bucketReason(reason);
     const statusBucket = status === 'wait' ? `wait:${bucket}` : `reject:${bucket}`;
     counters[key][gate][statusBucket] = (counters[key][gate][statusBucket] || 0) + 1;
+
+    // Mirror into session-cumulative store so the end-of-run report can see
+    // every rejection bucket from the entire session, not just the rolling
+    // 60s window.
+    if (!sessionGateBuckets[key]) sessionGateBuckets[key] = {};
+    sessionGateBuckets[key][statusBucket] = (sessionGateBuckets[key][statusBucket] || 0) + 1;
 
     // First-occurrence-per-mint-gate INFO log so Mike can see something is
     // happening on real tokens. Subsequent occurrences roll into the summary.
@@ -197,7 +214,31 @@ export function flushSummary(log: (line: string) => void = console.log): void {
 export function resetRejectionTelemetry(): void {
     Object.keys(counters).forEach((k) => delete counters[k]);
     Object.keys(passCounts).forEach((k) => delete passCounts[k]);
+    Object.keys(sessionGateBuckets).forEach((k) => delete sessionGateBuckets[k]);
+    Object.keys(sessionPassCounts).forEach((k) => delete sessionPassCounts[k]);
     seenMintGate.clear();
     totalSeen = 0;
+    sessionTotalSeen = 0;
     lastSummaryAt = Date.now();
+}
+
+/**
+ * Snapshot of the whole-session rejection telemetry, used by sessionReport
+ * to assemble the end-of-run summary. Returns deep-copied data so callers
+ * can safely sort and mutate it.
+ */
+export function getSessionTelemetry(): {
+    tokensSeen: number;
+    modePassCounts: Record<string, number>;
+    gateBuckets: Record<string, BucketCounts>;
+} {
+    const gateBuckets: Record<string, BucketCounts> = {};
+    for (const [key, buckets] of Object.entries(sessionGateBuckets)) {
+        gateBuckets[key] = { ...buckets };
+    }
+    return {
+        tokensSeen: sessionTotalSeen,
+        modePassCounts: { ...sessionPassCounts },
+        gateBuckets
+    };
 }
