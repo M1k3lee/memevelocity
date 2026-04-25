@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 4;
+export const STRATEGY_PRESET_VERSION = 5;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -120,7 +120,10 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 maxConcurrentTrades: 1,
                 dynamicSizing: true,
                 advanced: {
-                    minLiquidity: 36,
+                    // Pump.fun tokens launch at exactly 30 virtual SOL.
+                    // 36 was rejecting every fresh launch by definition;
+                    // 30 lets us see the actual launch + first few trades.
+                    minLiquidity: 30,
                     maxLiquidity: 125,
                     minVolume: 1.25,
                     minHolderCount: 12,
@@ -168,7 +171,10 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 32,
+                    // Pump.fun launches at 30 virtual SOL. 32 was filtering
+                    // out 100% of fresh launches; 28 lets us catch entries
+                    // even on tokens that briefly dip below the launch float.
+                    minLiquidity: 28,
                     maxLiquidity: 140,
                     minVolume: 1.2,
                     minHolderCount: 6,
@@ -192,7 +198,10 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
-                    minLiquidity: 31.2,
+                    // Sniper is the *earliest* probe mode — 31.2 was nonsense
+                    // since launches start at 30. Drop to 25 so we can probe
+                    // the first few trades before the curve fully fills.
+                    minLiquidity: 25,
                     maxLiquidity: 70,
                     minVolume: 0.75,
                     minHolderCount: 3,
