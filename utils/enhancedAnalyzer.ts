@@ -1013,7 +1013,21 @@ function applyConfigFilters({
     if (config.minBondingCurve !== undefined && bondingCurveProgress < config.minBondingCurve) {
         return `Too early on curve (${bondingCurveProgress.toFixed(1)}% < ${config.minBondingCurve}%)`;
     }
-    if (config.maxBondingCurve !== undefined && bondingCurveProgress > config.maxBondingCurve) {
+    // Velocity-aware curve cap: a token at 27% curve isn't necessarily
+    // "late" if it got there in 2 seconds — that's the definition of an
+    // explosive launch, not a late-chase setup. When the curve velocity
+    // is very high (>60 %/min, equivalent to a token that grew 30%+ in
+    // its first half-minute) AND the token is still fresh (<90s), the
+    // velocity itself is the early-stage signal and the absolute curve
+    // number is the wrong gate. Production logs showed UFO at 177,000
+    // SOL/min and 27% curve being rejected this way despite being
+    // textbook ignition.
+    const isExplosiveLaunch = curveVelocity >= 60 && age < 90;
+    if (
+        config.maxBondingCurve !== undefined &&
+        !isExplosiveLaunch &&
+        bondingCurveProgress > config.maxBondingCurve
+    ) {
         return `Too late on curve (${bondingCurveProgress.toFixed(1)}% > ${config.maxBondingCurve}%)`;
     }
 

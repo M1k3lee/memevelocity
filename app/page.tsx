@@ -1603,8 +1603,14 @@ export default function Home() {
           addLog(`   🎯 EARLY IGNITION: Token is launching with conviction. Entering trade.`);
 
           // TREND VERIFICATION
+          // The previous 1500ms wait was killing high-momentum entries —
+          // logs showed UFO at 177,777 SOL/min go from 0% to 27% curve
+          // *during* the verification sleep, then get rejected for being
+          // "too late on curve". 300ms is enough to confirm the price
+          // hasn't immediately reversed without giving the launch enough
+          // time to blow past our entry window.
           addLog(`🔎 Verifying Velocity Trend for ${token.symbol}...`);
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, 300));
           const freshData = await getPumpData(token.mint, connection);
           if (!freshData) { addLog(`⚠️ Verification failed for ${token.symbol}`); return; }
 
@@ -1612,7 +1618,9 @@ export default function Home() {
         const oldPrice = calculatePumpPrice(token.vSolInBondingCurve || 30, token.vTokensInBondingCurve || 1_073_000_000);
           const change = ((freshPrice - oldPrice) / oldPrice) * 100;
 
-          if (change < -0.5) {
+          // Tightened threshold from -0.5% to -2% to compensate for the
+          // shorter sample window — short windows have more noise.
+          if (change < -2) {
             addLog(`📉 FALLING KNIFE: ${token.symbol} dropped ${change.toFixed(2)}%. Velocity Reject.`);
             return;
           }
@@ -2632,11 +2640,22 @@ export default function Home() {
         return;
       }
 
-      const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'sniper', 'first', 'degen', 'high', 'velocity', 'scalp']);
+      // Velocity intentionally bypasses the live entry guard. The guard's
+      // job is to wait for "broader aggressive flow" before entering, but
+      // Velocity's whole thesis is that the velocity itself is the signal
+      // and waiting for a confirmed tape means missing the move. Production
+      // logs showed Billion/DARUDE/OVCA all getting parked in the guard's
+      // "Waiting for broader aggressive flow (0 trades, 1 wallets, 0.03 SOL)"
+      // wait state forever — exactly the failure Velocity is meant to avoid.
+      // Velocity's safety comes from: (a) the velocity preset's strict
+      // minVelocity floor in applyConfigFilters, (b) the velocity-mode
+      // early-sell-pressure check we added in onTokenDetected, and
+      // (c) the standard analyzer's rug detection.
+      const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'sniper', 'first', 'degen', 'high', 'scalp']);
       if (guardEligibleModes.has(config.mode)) {
-        // The live entry guard only knows the five canonical modes. Velocity
-        // and the legacy aliases share their tape gating with degen.
-        const guardMode = (config.mode === 'velocity' || config.mode === 'high' || config.mode === 'scalp')
+        // The live entry guard only knows the five canonical modes. Aliases
+        // are translated to their canonical sibling.
+        const guardMode = (config.mode === 'high' || config.mode === 'scalp')
           ? 'degen'
           : (config.mode === 'first' || config.mode === 'sniper')
           ? 'sniper'
