@@ -1,4 +1,5 @@
 import type { EnhancedAnalysis } from './enhancedAnalyzer';
+import { isCreatorDumpingLaunch, isDeadTapeNow } from './entrySignals';
 import { getMarketSnapshot } from './marketData';
 import type { TokenData } from '../types/token';
 import { getTokenAgeSeconds } from './tokenTiming';
@@ -168,21 +169,22 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
         };
     }
 
-    if (creatorSellCount > 0 && age <= 180) {
+    const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? 0;
+    if (isCreatorDumpingLaunch({
+        creatorSellCount,
+        creatorNetFlowSol,
+        creatorVolumeShare,
+        age
+    })) {
         return {
             status: 'reject',
-            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+            reason: `Creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}, ${creatorNetFlowSol.toFixed(2)} SOL net)`
         };
     }
 
-    // Dead-tape filter — even sniper needs the launch to actually have moved
-    // forward.  retardick-bpdnih dipped ~3% below the open price early then
-    // limped back to a slight positive, which is the classic dead-tape pattern.
-    // minPriceChangePercent persists across the snapshot, so a tape that ever
-    // went underwater more than 3% gets rejected even after a cosmetic recovery.
     const probePriceDrift = snapshot?.priceChangePercent ?? 0;
     const probeMinDrift = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 15 && tradeCount >= 3 && (probePriceDrift <= 0 || probeMinDrift <= -3)) {
+    if (age >= 12 && tradeCount >= 3 && isDeadTapeNow(probePriceDrift, probeMinDrift)) {
         return age < 75
             ? {
                 status: 'wait',
@@ -256,12 +258,12 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     // 2) flowEngage: small confirming probe with a couple of wallets joining.
     // 3) confirmedTape: the original "perfect" pattern, kept for completeness.
     const earlyEngage =
-        age >= 4 &&
-        age <= 35 &&
+        age >= 3 &&
+        age <= 40 &&
         buyCount >= 2 &&
         tradeCount >= 2 &&
         uniqueTraderCount >= 2 &&
-        buyPressure >= 0.55 &&
+        buyPressure >= 0.52 &&
         netFlow > 0;
     // flowEngage is the small-confluence path: a couple of wallets joining the
     // probe within the first minute. The age >= 4 floor mirrors earlyEngage —
@@ -269,14 +271,14 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
     // that is about to absorb a creator dump (see wig-fvyutt where the creator
     // sells at t=3 after a heavy whale buy at t=0).
     const flowEngage =
-        age >= 4 &&
-        age <= 60 &&
-        buyCount >= 3 &&
+        age >= 3 &&
+        age <= 65 &&
+        buyCount >= 2 &&
         tradeCount >= 3 &&
         uniqueTraderCount >= 2 &&
-        observedVolume >= 0.4 &&
-        buyPressure >= 0.55 &&
-        netFlow >= 0.1;
+        observedVolume >= 0.3 &&
+        buyPressure >= 0.52 &&
+        netFlow >= 0.08;
     const confirmedTape =
         age >= 4 &&
         tradeCount >= 6 &&
@@ -338,19 +340,19 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     // an hour. We add a faster early-momentum path so the bot engages on the
     // larger set of healthy launches.
     const earlyMomentum =
-        age >= 5 &&
-        age <= 50 &&
-        tradeCount >= 3 &&
+        age >= 4 &&
+        age <= 55 &&
+        tradeCount >= 2 &&
         uniqueTraderCount >= 2 &&
-        observedVolume >= 0.4 &&
-        buyPressure >= 0.55 &&
+        observedVolume >= 0.3 &&
+        buyPressure >= 0.52 &&
         netFlow > 0;
     const continuationTape =
-        tradeCount >= 5 &&
+        tradeCount >= 4 &&
         uniqueTraderCount >= 3 &&
-        observedVolume >= 0.8 &&
-        buyPressure >= 0.55 &&
-        netFlow >= 0.15;
+        observedVolume >= 0.6 &&
+        buyPressure >= 0.52 &&
+        netFlow >= 0.1;
     const strongContinuationTape =
         sellCount >= 1 &&
         tradeCount >= 8 &&
@@ -368,10 +370,16 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         observedVolume <= 0.2 &&
         liquidityGrowth > 0.25;
 
-    if (creatorSellCount > 0 && age <= 180) {
+    const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? analysis.metrics.creatorNetFlowSol ?? 0;
+    if (isCreatorDumpingLaunch({
+        creatorSellCount,
+        creatorNetFlowSol,
+        creatorVolumeShare,
+        age
+    })) {
         return {
             status: 'reject',
-            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+            reason: `Creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}, ${creatorNetFlowSol.toFixed(2)} SOL net)`
         };
     }
 
@@ -382,16 +390,9 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
-    // Dead-tape filter — degen requires the launch to actually be moving forward
-    // before entering. retardick-bpdnih has interleaved buys/sells where the
-    // curve drifts ~3% below the open early on, then drifts back up to a slight
-    // positive on a single 1-SOL print at t=65; aggregate buyPressure looks OK
-    // by then but the tape never had real displacement.  We use minPrice (the
-    // worst dip vs first observed price) so that any tape which went underwater
-    // earlier still gets rejected even after a cosmetic recovery.
     const priceDriftPercent = snapshot?.priceChangePercent ?? 0;
     const minPriceDriftPercent = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 15 && tradeCount >= 3 && (priceDriftPercent <= 0 || minPriceDriftPercent <= -3)) {
+    if (age >= 12 && tradeCount >= 3 && isDeadTapeNow(priceDriftPercent, minPriceDriftPercent)) {
         return age < 90
             ? {
                 status: 'wait',
@@ -556,10 +557,16 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
-    if (creatorSellCount > 0 && age <= 180) {
+    const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? analysis.metrics.creatorNetFlowSol ?? 0;
+    if (isCreatorDumpingLaunch({
+        creatorSellCount,
+        creatorNetFlowSol,
+        creatorVolumeShare,
+        age
+    })) {
         return {
             status: 'reject',
-            reason: `Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`
+            reason: `Creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}, ${creatorNetFlowSol.toFixed(2)} SOL net)`
         };
     }
 
@@ -658,10 +665,10 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     // launch failed them. We keep god mode meaningfully stricter than micro/
     // custom but still place the bars within reach of healthy-but-not-perfect
     // launches.
-    const minimumTrades = isGodMode ? (reclaimLaneActive ? 5 : 6) : 4;
+    const minimumTrades = isGodMode ? (reclaimLaneActive ? 5 : 5) : 3;
     const minimumWallets = isGodMode ? 4 : 3;
-    const minimumVolume = isGodMode ? (reclaimLaneActive ? 0.8 : 1.0) : 0.6;
-    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.55 : 0.57) : 0.53;
+    const minimumVolume = isGodMode ? (reclaimLaneActive ? 0.7 : 0.8) : 0.45;
+    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.54 : 0.55) : 0.5;
     const maximumImpact = isGodMode ? (reclaimLaneActive ? 2.2 : 2.0) : 2.6;
     const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.45 : 0.4) : 0.45;
     const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.66 : 0.6) : 0.68;
@@ -775,7 +782,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     // floors (74/78) basically required a textbook breakout. Composite score
     // is itself a sum of bonuses/penalties that gets harder to achieve as more
     // gates fire — keeping the floor moderate prevents over-rejection.
-    const scoreFloor = isGodMode ? (reclaimLaneActive ? 60 : 64) : 56;
+    const scoreFloor = isGodMode ? (reclaimLaneActive ? 56 : 58) : 52;
 
     if (score < scoreFloor) {
         return age < 110
@@ -820,7 +827,7 @@ export function evaluateLiveEntryGuard(
             const current = snapshot.priceChangePercent ?? 0;
             const giveback = Math.max(0, peak - current);
             const givebackFraction = peak > 0 ? Math.min(1, giveback / peak) : 0;
-            if (peak >= 30 && givebackFraction >= 0.6) {
+            if (peak >= 35 && givebackFraction >= 0.65) {
                 return {
                     status: 'reject',
                     reason: `Post-peak entry rejected (peak ${peak.toFixed(0)}%, now ${current.toFixed(0)}%, ${Math.round(givebackFraction * 100)}% of move already given back)`

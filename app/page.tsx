@@ -18,6 +18,7 @@ import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
 import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
+import { isCreatorDumpingLaunch } from '../utils/entrySignals';
 import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
 import { getStrategyPresetConfig, normalizeStrategyProfile, STRATEGY_PRESET_VERSION } from '../utils/strategyProfiles';
 import { APP_VERSION_LABEL, APP_VERSION_DATE } from '../utils/version';
@@ -1674,11 +1675,11 @@ export default function Home() {
         const velocityScoreFloor = isLiveMicro ? 64 : (isLiveMicroWallet ? 50 : 56);
         const capitalEfficiencyFloor = isLiveMicro ? 0.07 : (isLiveMicroWallet ? 0.045 : 0.06);
         const capitalEfficiencyCeiling = isLiveMicro ? 0.9 : (isLiveMicroWallet ? 1.15 : 1.0);
-        const minAgeSeconds = isLiveMicro ? 26 : (isLiveMicroWallet ? 18 : 22);
-        const minObservedSeconds = isLiveMicro ? 18 : (isLiveMicroWallet ? 12 : 15);
-        const minTradeCount = isLiveMicro ? 10 : (isLiveMicroWallet ? 6 : 8);
-        const minUniqueTraders = isLiveMicro ? 7 : (isLiveMicroWallet ? 5 : 6);
-        const minObservedVolume = isLiveMicro ? 0.95 : (isLiveMicroWallet ? 0.45 : 0.65);
+        const minAgeSeconds = isLiveMicro ? 14 : (isLiveMicroWallet ? 12 : 16);
+        const minObservedSeconds = isLiveMicro ? 10 : (isLiveMicroWallet ? 8 : 10);
+        const minTradeCount = isLiveMicro ? 6 : (isLiveMicroWallet ? 5 : 6);
+        const minUniqueTraders = isLiveMicro ? 4 : (isLiveMicroWallet ? 4 : 5);
+        const minObservedVolume = isLiveMicro ? 0.5 : (isLiveMicroWallet ? 0.35 : 0.5);
         const reclaimPressureFloor = isLiveMicro ? 0.58 : (isLiveMicroWallet ? 0.54 : 0.56);
         const reclaimNetFlowFloor = isLiveMicro ? 0.28 : (isLiveMicroWallet ? 0.12 : 0.22);
         const reclaimDiversityFloor = isLiveMicro ? 0.52 : (isLiveMicroWallet ? 0.4 : 0.48);
@@ -2026,8 +2027,14 @@ export default function Home() {
           return;
         }
 
-        if (creatorSellCount > 0 && age <= 180) {
-          addLog(`GOD Reject: ${token.symbol} creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}).`);
+        const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? 0;
+        if (isCreatorDumpingLaunch({
+          creatorSellCount,
+          creatorNetFlowSol,
+          creatorVolumeShare,
+          age
+        })) {
+          addLog(`GOD Reject: ${token.symbol} creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}, ${creatorNetFlowSol.toFixed(2)} SOL net).`);
           return;
         }
 
@@ -2089,13 +2096,13 @@ export default function Home() {
             traderDiversity >= (config.isDemo ? 0.42 : 0.42)
           )
           : (
-            buyCount >= (config.isDemo ? 5 : 6) &&
-            tradeCount >= (config.isDemo ? 7 : 9) &&
-            uniqueTraderCount >= (config.isDemo ? 5 : 6) &&
-            observedVolume >= (config.isDemo ? 1.0 : 1.25) &&
-            buyPressure >= (config.isDemo ? 0.58 : 0.6) &&
-            netFlow >= (config.isDemo ? 0.32 : 0.45) &&
-            traderDiversity >= (config.isDemo ? 0.4 : 0.44)
+            buyCount >= (config.isDemo ? 4 : 5) &&
+            tradeCount >= (config.isDemo ? 5 : 6) &&
+            uniqueTraderCount >= (config.isDemo ? 4 : 5) &&
+            observedVolume >= (config.isDemo ? 0.7 : 0.8) &&
+            buyPressure >= (config.isDemo ? 0.55 : 0.56) &&
+            netFlow >= (config.isDemo ? 0.22 : 0.3) &&
+            traderDiversity >= (config.isDemo ? 0.36 : 0.4)
           );
         const curveReady = reclaimLaneActive
           ? (
@@ -2127,9 +2134,9 @@ export default function Home() {
           );
 
         const needsShakeoutConfirmation =
-          age >= 18 &&
-          observedVolume >= (config.isDemo ? 1.0 : 1.25) &&
-          tradeCount >= (config.isDemo ? 5 : 7) &&
+          age >= 24 &&
+          observedVolume >= (config.isDemo ? 0.9 : 1.0) &&
+          tradeCount >= (config.isDemo ? 7 : 8) &&
           sellCount < 1;
 
         if (needsShakeoutConfirmation) {
@@ -2167,9 +2174,9 @@ export default function Home() {
           ...config.advanced,
           minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 32 : 36),
           maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? (reclaimLaneActive ? 170 : 150) : (reclaimLaneActive ? 130 : 125)),
-          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 1.0 : 1.25),
-          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 12 : 12),
-          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 28 : 22),
+          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 0.5 : 0.55),
+          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 6 : 6),
+          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 32 : 28),
           maxDev: Math.min(config.advanced?.maxDev ?? 100, 3),
           minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 1.0 : 1.5),
           maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? (reclaimLaneActive ? 18 : 15) : (reclaimLaneActive ? 16 : 14)),
@@ -2208,7 +2215,7 @@ export default function Home() {
           topTwoTraderVolumeShare,
           creatorSellCount
         });
-        const godScoreFloor = config.isDemo ? (reclaimLaneActive ? 70 : 72) : (reclaimLaneActive ? 76 : 78);
+        const godScoreFloor = config.isDemo ? (reclaimLaneActive ? 64 : 66) : (reclaimLaneActive ? 68 : 70);
 
         if (godScore < godScoreFloor) {
           if (age < 95) {
@@ -2252,7 +2259,17 @@ export default function Home() {
           return;
         }
 
-        if (freshLargestTraderShare > (config.isDemo ? 0.34 : 0.3) || freshCreatorSellCount > 0) {
+        const freshCreatorNetFlow = freshSnapshot?.creatorNetFlowSol ?? creatorNetFlowSol;
+        const freshCreatorVolumeShare = freshSnapshot?.creatorVolumeShare ?? creatorVolumeShare;
+        if (
+          freshLargestTraderShare > (config.isDemo ? 0.38 : 0.34) ||
+          isCreatorDumpingLaunch({
+            creatorSellCount: freshCreatorSellCount,
+            creatorNetFlowSol: freshCreatorNetFlow,
+            creatorVolumeShare: freshCreatorVolumeShare,
+            age
+          })
+        ) {
           addLog(`GOD Reject: ${token.symbol} confirmation stayed too concentrated or creator-led (top1 ${(freshLargestTraderShare * 100).toFixed(0)}%, creator sells ${freshCreatorSellCount}).`);
           return;
         }
@@ -2445,21 +2462,21 @@ export default function Home() {
         // Enhanced analysis for real tokens (based on research)
         // Pass risk mode to analyzer so it can adjust strictness
         // Mapping: Maps new modes (runner, sniper, degen) to analyzer logic
-        const riskModeMap: Record<string, 'runner' | 'sniper' | 'degen' | 'god' | 'safe' | 'medium' | 'high' | 'velocity'> = {
-          'runner': 'runner',
-          'safe': 'runner',
-          'medium': 'runner',
-          'god': 'god',
-          'sniper': 'sniper',
-          'first': 'sniper',
-          'degen': 'degen',
-          'micro': 'velocity',
-          'high': 'degen',
-          'velocity': 'degen',
-          'scalp': 'degen',
-          'custom': 'medium'
+        const riskModeMap: Record<string, 'god' | 'micro' | 'degen' | 'sniper' | 'custom'> = {
+          runner: 'god',
+          safe: 'god',
+          medium: 'god',
+          god: 'god',
+          micro: 'micro',
+          sniper: 'sniper',
+          first: 'sniper',
+          degen: 'degen',
+          high: 'degen',
+          velocity: 'degen',
+          scalp: 'degen',
+          custom: 'custom'
         };
-        const riskMode = riskModeMap[config.mode] || 'medium';
+        const riskMode = riskModeMap[config.mode] || 'degen';
         const analysisConfig = config.advanced;
         // @ts-ignore
         analysis = await analyzeEnhanced(token, connection, config.heliusKey, riskMode as any, analysisConfig);
@@ -2568,12 +2585,12 @@ export default function Home() {
           return;
         }
 
-        if (sellCount > Math.max(2, Math.floor(tradeCount * 0.4)) && age <= 90) {
+        if (sellCount > Math.max(3, Math.floor(tradeCount * 0.5)) && age <= 90) {
           addLog(`🚫 Degen Reject: ${token.symbol} already shows too much sell pressure (${sellCount}/${tradeCount} sells).`);
           return;
         }
 
-        if (tradeCount >= 4 && buyPressure < 0.55) {
+        if (tradeCount >= 5 && buyPressure < 0.5) {
           addLog(`🚫 Degen Reject: ${token.symbol} buy pressure is too weak for aggressive mode (${(buyPressure * 100).toFixed(0)}%).`);
           return;
         }
@@ -2651,17 +2668,15 @@ export default function Home() {
       // minVelocity floor in applyConfigFilters, (b) the velocity-mode
       // early-sell-pressure check we added in onTokenDetected, and
       // (c) the standard analyzer's rug detection.
-      const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'sniper', 'first', 'degen', 'high', 'scalp']);
+      const guardEligibleModes = new Set(['runner', 'safe', 'medium', 'god', 'micro', 'custom', 'sniper', 'first', 'degen', 'high', 'scalp', 'velocity']);
       if (guardEligibleModes.has(config.mode)) {
-        // The live entry guard only knows the five canonical modes. Aliases
-        // are translated to their canonical sibling.
-        const guardMode = (config.mode === 'high' || config.mode === 'scalp')
+        const guardMode = (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'velocity')
           ? 'degen'
           : (config.mode === 'first' || config.mode === 'sniper')
           ? 'sniper'
           : (config.mode === 'safe' || config.mode === 'medium' || config.mode === 'runner')
           ? 'god'
-          : config.mode;
+          : (config.mode === 'micro' ? 'micro' : config.mode === 'custom' ? 'custom' : config.mode);
         const guardDecision = evaluateLiveEntryGuard(guardMode as any, token, analysis, config.amount);
         if (guardDecision.status === 'wait') {
           scheduleRetry(5000, `⏳ ${token.symbol} guard: ${guardDecision.reason || 'waiting for cleaner confirmation'}`);

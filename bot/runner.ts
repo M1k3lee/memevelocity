@@ -363,7 +363,7 @@ class PumpFunRunner {
                 // Treat tape-not-ready style rejections as `wait` so we re-evaluate
                 // as the snapshot fills in. A creator-sell or tier-0 fail is terminal.
                 const isTapeNotReady = /trades|wallets|buy pressure|volume|tape|shakeout|absorb|net flow|tier 4/i.test(reason);
-                const isTerminal = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|incentive/i.test(reason);
+                const isTerminal = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|incentive|creator is exiting/i.test(reason);
                 const status: 'wait' | 'reject' = (!isTerminal && isTapeNotReady) ? 'wait' : 'reject';
                 recordEntryDecision({
                     mode: this.config.mode,

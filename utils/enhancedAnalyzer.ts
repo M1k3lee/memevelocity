@@ -5,6 +5,7 @@ import { getMarketSnapshot, type MarketSnapshot } from './marketData';
 import { calculateBondingCurveProgress } from './pumpMath';
 import { getTokenAgeSeconds, getTokenLaunchTimestamp } from './tokenTiming';
 import { createEmptyPumpLaunchFlags, detectPumpLaunchFlags, type PumpLaunchFlags } from './pumpLaunchFlags';
+import { isCreatorDumpingLaunch, top10DistributionMeaningful } from './entrySignals';
 
 type ContractSecurity = {
     freezeAuthority: boolean;
@@ -129,8 +130,8 @@ export async function analyzeEnhanced(
     // loop in place we no longer need to hard-reject here — soft floors let
     // the pipeline keep evaluating as data arrives, and the final pass
     // criteria block actually-bad setups.
-    const tier2Floor = isGodMode ? 50 : 35;
-    const tier4Floor = isGodMode ? 40 : 30;
+    const tier2Floor = isGodMode ? 40 : 30;
+    const tier4Floor = isGodMode ? 32 : 25;
 
     try {
         const rpcPumpData = await getPumpData(token.mint, connection);
@@ -328,14 +329,19 @@ export async function analyzeEnhanced(
         // Pump.fun tokens routinely give back 30-40% off the peak as part of a
         // healthy consolidation, so we need the peak to be material (30%+) AND
         // most of it gone (60%+) before calling it a late chase.
-        if (!isSniperMode && marketSnapshot && maxPriceChangePercent >= 30 && peakGivebackFraction >= 0.6) {
+        if (!isSniperMode && marketSnapshot && maxPriceChangePercent >= 35 && peakGivebackFraction >= 0.65) {
             const reason = `Post-peak entry rejected: ${Math.round(peakGivebackFraction * 100)}% of the ${maxPriceChangePercent.toFixed(0)}% move already given back`;
             reasons.push(reason);
             return createRejectResult(reason, reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
         }
 
-        if (creatorSellCount > 0 && age <= 180) {
-            reasons.push(`Creator already sold into the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`);
+        if (isCreatorDumpingLaunch({
+            creatorSellCount,
+            creatorNetFlowSol,
+            creatorVolumeShare,
+            age
+        })) {
+            reasons.push(`Creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'})`);
             return createRejectResult(reasons[0], reasons, warnings, strengths, bondingCurveProgress, liquidity, contractSecurity);
         }
 
@@ -433,15 +439,25 @@ export async function analyzeEnhanced(
         // focuses on safety (tier 0, creator dump, hard blocks) and leaves
         // tape-shape decisions to the live guard. This keeps a single gate of
         // truth and lets the rescan loop re-evaluate as the tape develops.
+        const godTop10Meaningful = top10DistributionMeaningful(bondingCurveProgress, holderMetrics.holderCount);
+        const godTop10Ok =
+            !godTop10Meaningful ||
+            (holderMetrics.top10Concentration <= 55 &&
+                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 15));
+
         if (isGodMode) {
             passed =
                 tier0.score >= 100 &&
-                tier2.score >= 60 &&
-                tier4.score >= 45 &&
-                bondingCurveProgress >= 0.4 &&
-                holderMetrics.top10Concentration <= 45 &&
-                (holderMetrics.deployerHoldings < 0 || holderMetrics.deployerHoldings <= 12) &&
-                creatorSellCount === 0 &&
+                tier2.score >= 45 &&
+                tier4.score >= 35 &&
+                bondingCurveProgress >= 0.3 &&
+                godTop10Ok &&
+                !isCreatorDumpingLaunch({
+                    creatorSellCount,
+                    creatorNetFlowSol,
+                    creatorVolumeShare,
+                    age
+                }) &&
                 !launchFlags.hardBlock &&
                 !launchFlags.incentiveMode;
             riskLevel = passed ? 'low' : 'high';
@@ -449,10 +465,15 @@ export async function analyzeEnhanced(
             // Micro / custom — slightly more permissive than god, still safety-first.
             passed =
                 tier0.score >= 100 &&
-                tier2.score >= 50 &&
-                tier4.score >= 40 &&
-                bondingCurveProgress >= 0.4 &&
-                creatorSellCount === 0 &&
+                tier2.score >= 40 &&
+                tier4.score >= 30 &&
+                bondingCurveProgress >= 0.3 &&
+                !isCreatorDumpingLaunch({
+                    creatorSellCount,
+                    creatorNetFlowSol,
+                    creatorVolumeShare,
+                    age
+                }) &&
                 !launchFlags.hardBlock;
             riskLevel = passed ? 'low' : 'high';
         } else if (isSniperMode) {
@@ -481,9 +502,14 @@ export async function analyzeEnhanced(
             passed =
                 tier0.score >= tier0PassFloor &&
                 age < 100 &&
-                bondingCurveProgress <= 14 &&
+                bondingCurveProgress <= 16 &&
                 healthyDistribution &&
-                creatorSellCount === 0 &&
+                !isCreatorDumpingLaunch({
+                    creatorSellCount,
+                    creatorNetFlowSol,
+                    creatorVolumeShare,
+                    age
+                }) &&
                 !launchFlags.hardBlock;
             riskLevel = passed ? 'high' : 'critical';
         } else if (isDegenMode) {
@@ -509,10 +535,15 @@ export async function analyzeEnhanced(
 
             passed =
                 tier0.score >= tier0PassFloor &&
-                liquidity >= 30 &&
-                bondingCurveProgress <= 22 &&
+                liquidity >= 29.5 &&
+                bondingCurveProgress <= 24 &&
                 healthyDistribution &&
-                creatorSellCount === 0 &&
+                !isCreatorDumpingLaunch({
+                    creatorSellCount,
+                    creatorNetFlowSol,
+                    creatorVolumeShare,
+                    age
+                }) &&
                 !launchFlags.hardBlock;
             riskLevel = passed ? 'high' : 'critical';
         } else {
@@ -1032,11 +1063,21 @@ function applyConfigFilters({
     }
 
     const minObservedVolume = config.minVolume24h ?? config.minVolume;
-    if (minObservedVolume !== undefined && age > 15 && observedVolume < minObservedVolume) {
-        return `Observed volume too low (${observedVolume.toFixed(1)} < ${minObservedVolume} SOL)`;
+    if (minObservedVolume !== undefined && age > 10) {
+        const effectiveMinVolume = age <= 35
+            ? Math.min(minObservedVolume, 0.35)
+            : age <= 60
+                ? Math.min(minObservedVolume, minObservedVolume * 0.7)
+                : minObservedVolume;
+        if (observedVolume < effectiveMinVolume) {
+            return `Observed volume too low (${observedVolume.toFixed(1)} < ${effectiveMinVolume} SOL)`;
+        }
     }
-    if (config.minVelocity !== undefined && curveVelocity < config.minVelocity) {
-        return `Curve velocity too low (${curveVelocity.toFixed(2)} < ${config.minVelocity})`;
+    if (config.minVelocity !== undefined) {
+        const effectiveMinVelocity = age < 45 ? config.minVelocity * 0.55 : config.minVelocity;
+        if (curveVelocity < effectiveMinVelocity) {
+            return `Curve velocity too low (${curveVelocity.toFixed(2)} < ${effectiveMinVelocity})`;
+        }
     }
     if (config.requireSocials && hasSocials === false) {
         return 'Required socials missing';

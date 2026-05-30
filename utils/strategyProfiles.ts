@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'velocity' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 7;
+export const STRATEGY_PRESET_VERSION = 8;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -132,13 +132,13 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     // 30 lets us see the actual launch + first few trades.
                     minLiquidity: 30,
                     maxLiquidity: 125,
-                    minVolume: 1.25,
-                    minHolderCount: 12,
-                    maxTop10: 22,
+                    minVolume: 0.55,
+                    minHolderCount: 8,
+                    maxTop10: 28,
                     maxDev: 3,
                     minBondingCurve: 1.5,
                     maxBondingCurve: 14,
-                    minVelocity: 0.65,
+                    minVelocity: 0.45,
                     rugCheckStrictness: 'strict',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -183,8 +183,8 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     // even on tokens that briefly dip below the launch float.
                     minLiquidity: 28,
                     maxLiquidity: 140,
-                    minVolume: 1.2,
-                    minHolderCount: 6,
+                    minVolume: 0.45,
+                    minHolderCount: 4,
                     // The fallback holder estimator returns 52% when holderCount
                     // is in the 15–24 range and 58% when 10–14. A 42% ceiling
                     // was rejecting every fresh launch by definition; 55 lets
@@ -194,7 +194,7 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     maxDev: 8,
                     minBondingCurve: 1.5,
                     maxBondingCurve: 17,
-                    minVelocity: 0.55,
+                    minVelocity: 0.35,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
@@ -269,7 +269,7 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                     // The defining filter: this mode REQUIRES strong velocity.
                     // 1.2 SOL/min of curve growth is "this is moving" without
                     // being absurdly high — typical for legitimate launches.
-                    minVelocity: 1.2,
+                    minVelocity: 0.75,
                     rugCheckStrictness: 'standard',
                     requireSocials: false,
                     avoidSnipers: true,
