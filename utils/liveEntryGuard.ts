@@ -184,7 +184,7 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
 
     const probePriceDrift = snapshot?.priceChangePercent ?? 0;
     const probeMinDrift = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 12 && tradeCount >= 3 && isDeadTapeNow(probePriceDrift, probeMinDrift)) {
+    if (age >= 12 && tradeCount >= 3 && (isDeadTapeNow(probePriceDrift, probeMinDrift) || probeMinDrift <= -3 || probePriceDrift <= 0)) {
         return age < 75
             ? {
                 status: 'wait',
@@ -392,7 +392,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
 
     const priceDriftPercent = snapshot?.priceChangePercent ?? 0;
     const minPriceDriftPercent = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 12 && tradeCount >= 3 && isDeadTapeNow(priceDriftPercent, minPriceDriftPercent)) {
+    if (age >= 12 && tradeCount >= 3 && (isDeadTapeNow(priceDriftPercent, minPriceDriftPercent) || minPriceDriftPercent <= -3 || priceDriftPercent <= 0)) {
         return age < 90
             ? {
                 status: 'wait',
@@ -444,7 +444,8 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         };
     }
 
-    if (waitingOnSnapshot && (analysis.marketCap >= 32 || liquidityGrowth >= 0.8)) {
+    if (waitingOnSnapshot) {
+        // Always retry when snapshot hasn't populated yet
         return {
             status: 'wait',
             reason: `Early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)`
@@ -665,14 +666,14 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
     // launch failed them. We keep god mode meaningfully stricter than micro/
     // custom but still place the bars within reach of healthy-but-not-perfect
     // launches.
-    const minimumTrades = isGodMode ? (reclaimLaneActive ? 5 : 5) : 3;
-    const minimumWallets = isGodMode ? 4 : 3;
-    const minimumVolume = isGodMode ? (reclaimLaneActive ? 0.7 : 0.8) : 0.45;
-    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.54 : 0.55) : 0.5;
-    const maximumImpact = isGodMode ? (reclaimLaneActive ? 2.2 : 2.0) : 2.6;
-    const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.45 : 0.4) : 0.45;
-    const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.66 : 0.6) : 0.68;
-    const maxCreatorVolumeShare = isGodMode ? 0.35 : 0.4;
+    const minimumTrades = isGodMode ? (reclaimLaneActive ? 5 : 4) : 3;       // was 5/5
+    const minimumWallets = isGodMode ? 3 : 2;                                  // was 4/3
+    const minimumVolume = isGodMode ? (reclaimLaneActive ? 0.6 : 0.6) : 0.35; // was 0.7/0.8/0.45
+    const minimumBuyPressure = isGodMode ? (reclaimLaneActive ? 0.52 : 0.52) : 0.5; // was 0.54/0.55
+    const maximumImpact = isGodMode ? (reclaimLaneActive ? 2.4 : 2.2) : 2.8;  // was 2.2/2.0/2.6
+    const maxLargestTraderShare = isGodMode ? (reclaimLaneActive ? 0.48 : 0.44) : 0.5; // was 0.45/0.4/0.45
+    const maxTopTwoTraderShare = isGodMode ? (reclaimLaneActive ? 0.70 : 0.65) : 0.72; // was 0.66/0.6/0.68
+    const maxCreatorVolumeShare = isGodMode ? 0.38 : 0.45;                     // was 0.35/0.4
 
     if (concentrationSampleReady && largestTraderVolumeShare > maxLargestTraderShare) {
         return {
@@ -704,16 +705,17 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
 
     // Shakeout confirmation only applies to god mode now. Micro/custom can
     // engage on continuous up-tape; god still wants the cleaner setup but not
-    // strictly enough to reject every clean continuation. The threshold has
-    // been lifted to require both extended age AND high volume AND zero sells.
+    // strictly enough to reject every clean continuation. Require a well-developed
+    // tape (10+ trades, 8+ wallets) before flagging zero-sells as suspicious.
     const needsShakeoutConfirmation =
         isGodMode &&
-        age >= 35 &&
-        observedVolume >= minimumVolume * 1.5 &&
-        tradeCount >= minimumTrades + 1 &&
+        age >= 40 &&
+        observedVolume >= minimumVolume * 1.8 &&
+        tradeCount >= minimumTrades + 5 &&
+        uniqueTraderCount >= 8 &&
         sellCount === 0;
     if (needsShakeoutConfirmation) {
-        return age < 75
+        return age < 80
             ? {
                 status: 'wait',
                 reason: `Waiting for the first shakeout (${tradeCount} trades, no sells yet)`
@@ -724,8 +726,9 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
             };
     }
 
-    if (isGodMode && age >= 30 && buyPressure > 0.95 && sellCount === 0 && uniqueTraderCount < minimumWallets + 4) {
-        return age < 60
+    // One-sided flow: only flag if old enough AND enough traders that zero sells is suspicious
+    if (isGodMode && age >= 35 && buyPressure > 0.95 && sellCount === 0 && uniqueTraderCount < minimumWallets + 5) {
+        return age < 70
             ? {
                 status: 'wait',
                 reason: `Order flow is still too one-sided to trust (${(buyPressure * 100).toFixed(0)}% buy pressure, no sells yet)`
@@ -749,7 +752,7 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         observedVolume < minimumVolume ||
         buyPressure < minimumBuyPressure
     ) {
-        return age < 110
+        return age < 130
             ? {
                 status: 'wait',
                 reason: `Runner tape not ready (${tradeCount} trades, ${uniqueTraderCount} wallets, ${(buyPressure * 100).toFixed(0)}% buy pressure, ${observedVolume.toFixed(2)} SOL observed)`
@@ -777,15 +780,13 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         topTwoTraderVolumeShare,
         creatorSellCount
     });
-    // Score floor reflects the reality that god mode wants HIGH-quality setups
-    // but a "good enough" setup needs to actually be reachable. The previous
-    // floors (74/78) basically required a textbook breakout. Composite score
-    // is itself a sum of bonuses/penalties that gets harder to achieve as more
-    // gates fire — keeping the floor moderate prevents over-rejection.
-    const scoreFloor = isGodMode ? (reclaimLaneActive ? 56 : 58) : 52;
+    // Score floor: god mode wants quality setups but the floor must be reachable.
+    // The composite score starts at 28 and accumulates bonuses — a floor of 74+
+    // required near-perfect conditions on every dimension simultaneously.
+    const scoreFloor = isGodMode ? (reclaimLaneActive ? 52 : 54) : 48;
 
     if (score < scoreFloor) {
-        return age < 110
+        return age < 120
             ? {
                 status: 'wait',
                 reason: `Composite runner score is still weak (${score}/100)`

@@ -1178,7 +1178,7 @@ export default function Home() {
   const pendingRetries = useRef<Set<string>>(new Set());
   const lastCapacityLogAt = useRef(0);
   const lastRiskPauseLogAt = useRef(0);
-  const normalAnalysisCooldownMs = 25000;
+  const normalAnalysisCooldownMs = 8000;  // was 25000 — 25s was silently dropping most tokens
   const retryAnalysisCooldownMs = 8000;
 
   useEffect(() => {
@@ -1197,19 +1197,26 @@ export default function Home() {
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) return;
 
+    // scheduleRetry: only blocks if a retry is *already in flight* for this mint.
+    // Clears itself when the timeout fires so subsequent retries can be scheduled.
     const scheduleRetry = (waitTime: number, message: string) => {
       if (pendingRetries.current.has(token.mint)) {
-        return;
+        return; // a retry is already queued — don't double-schedule
       }
 
       pendingRetries.current.add(token.mint);
       addLog(message);
-      window.setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), waitTime);
+      window.setTimeout(() => {
+        pendingRetries.current.delete(token.mint); // clear BEFORE firing so the retry can re-queue if needed
+        onTokenDetected(getLatestToken(token.mint) || token, true);
+      }, waitTime);
     };
 
     token = getLatestToken(token.mint) || token;
 
     if (isRetrying) {
+      // pendingRetries was already cleared by the setTimeout wrapper above,
+      // but clear again defensively in case of direct recursive calls.
       pendingRetries.current.delete(token.mint);
       addLog(`🔄 Re-analyzing ${token.symbol} (Wait period over)...`);
     }
@@ -1988,7 +1995,7 @@ export default function Home() {
         const stressBuySizeSol = config.isDemo ? 0.35 : Math.max(0.25, Math.min(0.5, config.amount * 40));
         const stressImpactPercent = estimateCurveBuyImpactPercent(liquidity, stressBuySizeSol);
         const waitingOnSnapshot =
-          age <= 30 &&
+          age <= 45 &&   // was 30 — give the snapshot more time to populate
           tradeCount === 0 &&
           observedVolume <= 0.2 &&
           liquidityGrowth > 0.3;
@@ -2066,8 +2073,8 @@ export default function Home() {
           return;
         }
 
-        const godMaxLargestTraderShare = reclaimLaneActive ? (config.isDemo ? 0.4 : 0.38) : (config.isDemo ? 0.34 : 0.3);
-        const godMaxTopTwoTraderShare = reclaimLaneActive ? (config.isDemo ? 0.58 : 0.56) : (config.isDemo ? 0.55 : 0.48);
+        const godMaxLargestTraderShare = reclaimLaneActive ? (config.isDemo ? 0.42 : 0.4) : (config.isDemo ? 0.38 : 0.36); // was 0.4/0.38/0.34/0.3
+        const godMaxTopTwoTraderShare = reclaimLaneActive ? (config.isDemo ? 0.62 : 0.6) : (config.isDemo ? 0.58 : 0.54); // was 0.58/0.56/0.55/0.48
 
         if (largestTraderVolumeShare > godMaxLargestTraderShare) {
           addLog(`GOD Reject: ${token.symbol} early flow is too concentrated in one wallet (${(largestTraderVolumeShare * 100).toFixed(0)}%).`);
@@ -2079,14 +2086,14 @@ export default function Home() {
           return;
         }
 
-        if (creatorVolumeShare > (config.isDemo ? 0.3 : 0.24) && age >= 15) {
+        if (creatorVolumeShare > (config.isDemo ? 0.35 : 0.3) && age >= 15) {  // was 0.3/0.24
           addLog(`GOD Reject: ${token.symbol} creator-linked flow is too dominant (${(creatorVolumeShare * 100).toFixed(0)}% of observed volume).`);
           return;
         }
 
         const participationReady = reclaimLaneActive
           ? (
-            buyCount >= (config.isDemo ? 6 : 7) &&
+            buyCount >= (config.isDemo ? 6 : 6) &&
             tradeCount >= (config.isDemo ? 8 : 8) &&
             uniqueTraderCount >= (config.isDemo ? 6 : 6) &&
             observedVolume >= (config.isDemo ? 1.2 : 1.25) &&
@@ -2096,29 +2103,29 @@ export default function Home() {
             traderDiversity >= (config.isDemo ? 0.42 : 0.42)
           )
           : (
-            buyCount >= (config.isDemo ? 4 : 5) &&
-            tradeCount >= (config.isDemo ? 5 : 6) &&
-            uniqueTraderCount >= (config.isDemo ? 4 : 5) &&
-            observedVolume >= (config.isDemo ? 0.7 : 0.8) &&
-            buyPressure >= (config.isDemo ? 0.55 : 0.56) &&
-            netFlow >= (config.isDemo ? 0.22 : 0.3) &&
-            traderDiversity >= (config.isDemo ? 0.36 : 0.4)
+            buyCount >= (config.isDemo ? 3 : 4) &&       // was 4/5
+            tradeCount >= (config.isDemo ? 4 : 5) &&     // was 5/6
+            uniqueTraderCount >= (config.isDemo ? 3 : 4) && // was 4/5
+            observedVolume >= (config.isDemo ? 0.5 : 0.6) && // was 0.7/0.8
+            buyPressure >= (config.isDemo ? 0.52 : 0.54) && // was 0.55/0.56
+            netFlow >= (config.isDemo ? 0.15 : 0.2) &&   // was 0.22/0.3
+            traderDiversity >= (config.isDemo ? 0.32 : 0.36) // was 0.36/0.4
           );
         const curveReady = reclaimLaneActive
           ? (
             bondingCurveProgress >= (config.isDemo ? 4 : 5) &&
             bondingCurveProgress <= (config.isDemo ? 18 : 16) &&
-            curveVelocity >= (config.isDemo ? 0.45 : 0.55) &&
+            curveVelocity >= (config.isDemo ? 0.4 : 0.45) &&
             curveVelocity <= (config.isDemo ? 10 : 10) &&
-            momentum >= (config.isDemo ? 0.55 : 0.65) &&
+            momentum >= (config.isDemo ? 0.5 : 0.6) &&
             priceChangePercent <= (config.isDemo ? 30 : 28) &&
             priceChangePercent > -1.25
           )
           : (
             bondingCurveProgress >= (config.isDemo ? 1.0 : 1.5) &&
             bondingCurveProgress <= (config.isDemo ? 15 : 14) &&
-            curveVelocity >= (config.isDemo ? 0.55 : 0.7) &&
-            momentum >= (config.isDemo ? 0.75 : 0.9) &&
+            curveVelocity >= (config.isDemo ? 0.4 : 0.5) &&   // was 0.55/0.7 — too strict
+            momentum >= (config.isDemo ? 0.6 : 0.75) &&        // was 0.75/0.9
             priceChangePercent > -0.75
           );
         const executionReady = reclaimLaneActive
@@ -2128,15 +2135,20 @@ export default function Home() {
             sellCount <= Math.max(2, Math.floor(tradeCount * 0.48))
           )
           : (
-            capitalEfficiency >= (config.isDemo ? 0.08 : 0.09) &&
-            stressImpactPercent <= (config.isDemo ? 2.2 : 1.7) &&
-            sellCount <= Math.max(2, Math.floor(tradeCount * 0.42))
+            capitalEfficiency >= (config.isDemo ? 0.06 : 0.07) && // was 0.08/0.09
+            stressImpactPercent <= (config.isDemo ? 2.5 : 2.2) && // was 2.2/1.7
+            sellCount <= Math.max(2, Math.floor(tradeCount * 0.45)) // was 0.42
           );
 
+        // Shakeout confirmation: only require a sell if the tape is already
+        // well-developed AND the token is old enough that a zero-sell tape
+        // is genuinely suspicious (coordinated wash). Fresh launches with
+        // strong buy pressure and no sells yet are often the best setups.
         const needsShakeoutConfirmation =
-          age >= 24 &&
-          observedVolume >= (config.isDemo ? 0.9 : 1.0) &&
-          tradeCount >= (config.isDemo ? 7 : 8) &&
+          age >= 35 &&
+          observedVolume >= (config.isDemo ? 1.2 : 1.4) &&
+          tradeCount >= (config.isDemo ? 9 : 10) &&
+          uniqueTraderCount >= (config.isDemo ? 7 : 8) &&
           sellCount < 1;
 
         if (needsShakeoutConfirmation) {
@@ -2148,8 +2160,10 @@ export default function Home() {
           return;
         }
 
-        if (age >= 20 && buyPressure > 0.92 && sellCount === 0 && uniqueTraderCount < (config.isDemo ? 8 : 9)) {
-          if (age < 60) {
+        // Only flag one-sided flow if the token is old enough AND has enough traders
+        // that zero sells is genuinely suspicious (not just a very fresh launch).
+        if (age >= 30 && buyPressure > 0.95 && sellCount === 0 && uniqueTraderCount < (config.isDemo ? 10 : 11)) {
+          if (age < 70) {
             scheduleRetry(5000, `GOD wait: ${token.symbol} order flow is still too one-sided to trust (${(buyPressure * 100).toFixed(0)}% buys, no sells yet).`);
           } else {
             addLog(`GOD Reject: ${token.symbol} stayed too one-sided and looks coordinated.`);
@@ -2157,7 +2171,7 @@ export default function Home() {
           return;
         }
 
-        if ((!participationReady || !curveReady || !executionReady) && (age < 105 || waitingOnSnapshot)) {
+        if ((!participationReady || !curveReady || !executionReady) && (age < 130 || waitingOnSnapshot)) {
           scheduleRetry(
             5000,
             `GOD wait: ${token.symbol} needs cleaner runner confirmation (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, eff ${capitalEfficiency.toFixed(3)}, impact ${stressImpactPercent.toFixed(2)}%).`
@@ -2172,15 +2186,15 @@ export default function Home() {
 
         const godAnalysisConfig = {
           ...config.advanced,
-          minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 32 : 36),
+          minLiquidity: Math.max(config.advanced?.minLiquidity ?? 0, config.isDemo ? 30 : 30), // launches start at 30 SOL
           maxLiquidity: Math.min(config.advanced?.maxLiquidity ?? 9999, config.isDemo ? (reclaimLaneActive ? 170 : 150) : (reclaimLaneActive ? 130 : 125)),
-          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 0.5 : 0.55),
-          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 6 : 6),
-          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 32 : 28),
-          maxDev: Math.min(config.advanced?.maxDev ?? 100, 3),
-          minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 1.0 : 1.5),
+          minVolume: Math.max(config.advanced?.minVolume ?? 0, config.isDemo ? 0.4 : 0.45),    // was 0.5/0.55
+          minHolderCount: Math.max(config.advanced?.minHolderCount ?? 0, config.isDemo ? 4 : 5), // was 6/6
+          maxTop10: Math.min(config.advanced?.maxTop10 ?? 100, config.isDemo ? 38 : 32),        // was 32/28
+          maxDev: Math.min(config.advanced?.maxDev ?? 100, 5),                                  // was 3 — too strict
+          minBondingCurve: Math.max(config.advanced?.minBondingCurve ?? 0, config.isDemo ? 0.5 : 1.0), // was 1.0/1.5
           maxBondingCurve: Math.min(config.advanced?.maxBondingCurve ?? 100, config.isDemo ? (reclaimLaneActive ? 18 : 15) : (reclaimLaneActive ? 16 : 14)),
-          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? (reclaimLaneActive ? 0.45 : 0.6) : (reclaimLaneActive ? 0.55 : 0.7)),
+          minVelocity: Math.max(config.advanced?.minVelocity ?? 0, config.isDemo ? (reclaimLaneActive ? 0.35 : 0.45) : (reclaimLaneActive ? 0.45 : 0.55)), // was 0.45-0.7
           rugCheckStrictness: 'strict',
           requireSocials: false,
           avoidSnipers: true,
@@ -2189,7 +2203,7 @@ export default function Home() {
         const analysis = await analyzeEnhanced(token, connection, config.heliusKey, 'god', godAnalysisConfig);
 
         if (!analysis.passed) {
-          if (age < 110) {
+          if (age < 130) {
             scheduleRetry(7000, `GOD wait: ${token.symbol} still lacks safe runner structure (${analysis.reasons[0] || 'analysis pending'}).`);
           } else {
             addLog(`GOD Reject: ${token.symbol} - ${analysis.reasons.join(', ') || 'analysis rejected trade'}`);
@@ -2215,10 +2229,10 @@ export default function Home() {
           topTwoTraderVolumeShare,
           creatorSellCount
         });
-        const godScoreFloor = config.isDemo ? (reclaimLaneActive ? 64 : 66) : (reclaimLaneActive ? 68 : 70);
+        const godScoreFloor = config.isDemo ? (reclaimLaneActive ? 58 : 60) : (reclaimLaneActive ? 62 : 64); // was 64/66/68/70
 
         if (godScore < godScoreFloor) {
-          if (age < 95) {
+          if (age < 115) {
             scheduleRetry(6000, `GOD wait: ${token.symbol} composite score ${godScore}/100 is not there yet.`);
           } else {
             addLog(`GOD Reject: ${token.symbol} composite score ${godScore}/100 is below the runner floor.`);
@@ -2274,8 +2288,14 @@ export default function Home() {
           return;
         }
 
-        if (verifiedLiquidity <= 0 || freshUniqueTraders < uniqueTraderCount) {
+        if (verifiedLiquidity <= 0) {
           scheduleRetry(6000, `GOD wait: ${token.symbol} verification snapshot is still settling.`);
+          return;
+        }
+
+        // Only retry if unique trader count dropped significantly (not just a snapshot lag of 1)
+        if (freshUniqueTraders < uniqueTraderCount - 1) {
+          scheduleRetry(6000, `GOD wait: ${token.symbol} verification snapshot is still settling (traders ${freshUniqueTraders} vs ${uniqueTraderCount}).`);
           return;
         }
 
@@ -2395,11 +2415,9 @@ export default function Home() {
 
       if (age < 30 && config.mode !== 'high' && config.mode !== 'first' && config.mode !== 'scalp') {
         if (liquidityGrowth < 0.1 && momentum < 1.5) {
-          if (!pendingRetries.current.has(token.mint)) {
-            pendingRetries.current.add(token.mint);
-            addLog(`⏳ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
-            setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), 15000);
-          }
+          // Use scheduleRetry so the pending flag is cleared before the callback fires,
+          // allowing subsequent retries if the token still isn't ready.
+          scheduleRetry(15000, `⏳ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
           return;
         } else if (momentum >= 1.5) {
           addLog(`🚀 High Momentum detected for ${token.symbol} (${momentum.toFixed(1)} SOL/min)! Bypassing wait...`);
@@ -2548,11 +2566,11 @@ export default function Home() {
         const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
         const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
         const strongFlowConfirmation =
-          buyCount >= 4 &&
-          tradeCount >= 6 &&
-          uniqueTraderCount >= 4 &&
-          observedVolume >= 1.2 &&
-          buyPressure >= 0.64;
+          buyCount >= 3 &&       // was 4
+          tradeCount >= 5 &&     // was 6
+          uniqueTraderCount >= 3 && // was 4
+          observedVolume >= 0.8 && // was 1.2
+          buyPressure >= 0.60;   // was 0.64
         const steadyTapeConfirmation =
           tradeCount >= 20 &&
           uniqueTraderCount >= 6 &&
@@ -2562,9 +2580,9 @@ export default function Home() {
           age <= 45 &&
           tradeCount >= 2 &&
           uniqueTraderCount >= 2 &&
-          liquidityGrowth >= 1.0 &&
-          momentum >= 1.55 &&
-          buyPressure >= 0.55;
+          liquidityGrowth >= 0.8 &&   // was 1.0
+          momentum >= 1.2 &&           // was 1.55
+          buyPressure >= 0.52;         // was 0.55
         const curveReady =
           (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 18) ||
           (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
@@ -2580,7 +2598,8 @@ export default function Home() {
           observedVolume <= 0.2 &&
           liquidityGrowth > 0.25;
 
-        if (waitingOnSnapshot && (feedMomentumConfirmation || analysis.marketCap >= 32)) {
+        if (waitingOnSnapshot) {
+          // Always retry when snapshot hasn't populated yet — don't require momentum confirmation
           scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }
@@ -2600,7 +2619,7 @@ export default function Home() {
             scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
             return;
           }
-          addLog(`ðŸš« Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          addLog(`🚫 Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }
       }
@@ -2644,8 +2663,7 @@ export default function Home() {
         // PERSISTENT MONITORING: If rejected for being 'too early', retry until it's at least 60s old
         if (analysis.reasons.some(r => r.includes('Too early')) && age < 60) {
           const waitTime = isRetrying ? 20000 : 15000;
-          addLog(`⏳ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
-          setTimeout(() => onTokenDetected(getLatestToken(token.mint) || token, true), waitTime);
+          scheduleRetry(waitTime, `⏳ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
           return;
         }
 
