@@ -237,3 +237,68 @@ export function clearMarketSnapshot(mint: string): void {
 export function clearAllMarketSnapshots(): void {
     snapshots.clear();
 }
+
+// Seed the market snapshot for a token by fetching its recent trades from the
+// Pump.fun public API. This is called when the WebSocket trade subscription
+// hasn't delivered events yet (snapshot shows 0 trades). Without this, every
+// token sits in "early flow snapshot still syncing" forever.
+const snapshotSeedInFlight = new Set<string>();
+
+export async function seedMarketSnapshotFromApi(mint: string, creatorWallet?: string): Promise<boolean> {
+    // Don't double-fetch
+    if (snapshotSeedInFlight.has(mint)) return false;
+
+    const existing = snapshots.get(mint);
+    // Already has real trade data — no need to seed
+    if (existing && existing.tradeCount >= 2) return false;
+
+    snapshotSeedInFlight.add(mint);
+    try {
+        const url = `https://frontend-api-v3.pump.fun/trades/all/${mint}?limit=20&minimumSize=0`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+        if (!res.ok) return false;
+
+        const trades: Array<{
+            is_buy: boolean;
+            sol_amount: number;
+            token_amount: number;
+            user: string;
+            timestamp: number;
+            virtual_sol_reserves?: number;
+            virtual_token_reserves?: number;
+        }> = await res.json();
+
+        if (!Array.isArray(trades) || trades.length === 0) return false;
+
+        // Replay trades into the snapshot in chronological order
+        const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp);
+        for (const trade of sorted) {
+            const solAmount = normalizeSolValue(trade.sol_amount);
+            if (solAmount <= 0) continue;
+
+            // Build a minimal TokenData-like object for recordMarketEvent
+            const fakeToken = {
+                mint,
+                traderPublicKey: trade.user || '',
+                creatorPublicKey: creatorWallet || '',
+                txType: trade.is_buy ? 'buy' : 'sell' as 'buy' | 'sell',
+                vSolInBondingCurve: trade.virtual_sol_reserves ? normalizeSolValue(trade.virtual_sol_reserves) : 0,
+                vTokensInBondingCurve: trade.virtual_token_reserves || 0,
+                initialBuy: 0,
+                bondingCurveKey: '',
+                marketCapSol: 0,
+                name: existing?.name || '',
+                symbol: existing?.symbol || '',
+                uri: '',
+                timestamp: trade.timestamp * 1000,
+            };
+            recordMarketEvent(fakeToken as any);
+        }
+
+        return true;
+    } catch {
+        return false;
+    } finally {
+        snapshotSeedInFlight.delete(mint);
+    }
+}

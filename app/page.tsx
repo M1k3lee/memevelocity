@@ -9,7 +9,7 @@ import { AlertOctagon, Terminal, LayoutDashboard, Wallet, Settings, Activity, Ra
 import { quickFirstBuyerCheck, analyzeFirstBuyer } from '../utils/firstBuyer';
 import { quickSpeedCheck, analyzeSpeedTrade } from '../utils/speedTrader';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
-import { getAllMarketSnapshots, getMarketSnapshot, type MarketSnapshot } from '../utils/marketData';
+import { getAllMarketSnapshots, getMarketSnapshot, seedMarketSnapshotFromApi, type MarketSnapshot } from '../utils/marketData';
 import { getLatestToken } from '../utils/liveTokenStore';
 import { fitTradeAmountToBalance } from '../utils/tradeSizing';
 import { getTokenIdentityKey, hasUsableTokenIdentity } from '../utils/tokenIdentity';
@@ -1366,6 +1366,17 @@ export default function Home() {
         addLog(`🚨 Rejected ${token.symbol}: Liquidity too low (${liquidity.toFixed(2)} SOL) - honeypot risk`);
         return;
       }
+
+    // Seed the market snapshot from the Pump.fun API if the WebSocket trade
+    // subscription hasn't delivered events yet. This fixes the "0 trades, 0%
+    // buy pressure" problem where every token gets stuck in the snapshot-syncing
+    // wait loop. We do this silently — no log spam, just populate the data.
+    {
+      const existingSnap = getMarketSnapshot(token.mint);
+      if (!existingSnap || existingSnap.tradeCount < 2) {
+        await seedMarketSnapshotFromApi(token.mint, token.creatorPublicKey);
+      }
+    }
 
     // For demo mode with RPC issues, use token data from WebSocket directly
     // This allows trading even when RPC is rate-limited
