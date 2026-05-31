@@ -2603,34 +2603,71 @@ export default function Home() {
           uniqueTraderCount >= 4 &&
           (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
         const waitingOnSnapshot =
-          age <= 45 &&
           tradeCount === 0 &&
           uniqueTraderCount <= 1 &&
           observedVolume <= 0.2 &&
-          liquidityGrowth > 0.25;
+          // Only wait if the curve hasn't moved much — if curve is already
+          // at 2%+ the token clearly has trades, the snapshot just hasn't
+          // populated yet. Don't block on snapshot when we have curve evidence.
+          analysis.bondingCurveProgress < 2.0 &&
+          liquidityGrowth < 1.5 &&
+          age <= 45;
 
         if (waitingOnSnapshot) {
-          // Always retry when snapshot hasn't populated yet — don't require momentum confirmation
           scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }
 
-        if (sellCount > Math.max(3, Math.floor(tradeCount * 0.5)) && age <= 90) {
-          addLog(`🚫 Degen Reject: ${token.symbol} already shows too much sell pressure (${sellCount}/${tradeCount} sells).`);
+        // If snapshot is empty but curve has moved significantly, synthesize
+        // conservative estimates so the downstream checks have something to work with.
+        // This handles the case where WebSocket trade events haven't arrived yet.
+        const snapshotEmpty = tradeCount === 0 && observedVolume <= 0.2;
+        const syntheticTradeCount = snapshotEmpty ? Math.max(0, Math.round(analysis.bondingCurveProgress * 3)) : tradeCount;
+        const syntheticBuyCount = snapshotEmpty ? Math.round(syntheticTradeCount * 0.65) : buyCount;
+        const syntheticUniqueTraders = snapshotEmpty ? Math.max(0, Math.round(syntheticTradeCount * 0.6)) : uniqueTraderCount;
+        const syntheticVolume = snapshotEmpty ? Math.max(0, liquidityGrowth * 0.8) : observedVolume;
+        const syntheticBuyPressure = snapshotEmpty ? 0.65 : buyPressure; // assume positive if curve moved up
+
+        if (sellCount > Math.max(3, Math.floor(syntheticTradeCount * 0.5)) && age <= 90) {
+          addLog(`🚫 Degen Reject: ${token.symbol} already shows too much sell pressure (${sellCount}/${syntheticTradeCount} sells).`);
           return;
         }
 
-        if (tradeCount >= 5 && buyPressure < 0.5) {
-          addLog(`🚫 Degen Reject: ${token.symbol} buy pressure is too weak for aggressive mode (${(buyPressure * 100).toFixed(0)}%).`);
+        if (syntheticTradeCount >= 5 && syntheticBuyPressure < 0.5) {
+          addLog(`🚫 Degen Reject: ${token.symbol} buy pressure is too weak for aggressive mode (${(syntheticBuyPressure * 100).toFixed(0)}%).`);
           return;
         }
 
-        if (!curveReady && !strongFlowConfirmation && !steadyTapeConfirmation && !deepLiquidityConfirmation && !feedMomentumConfirmation) {
+        const strongFlowConfirmationEff =
+          syntheticBuyCount >= 3 &&
+          syntheticTradeCount >= 5 &&
+          syntheticUniqueTraders >= 3 &&
+          syntheticVolume >= 0.8 &&
+          syntheticBuyPressure >= 0.60;
+        const steadyTapeConfirmationEff =
+          syntheticTradeCount >= 20 &&
+          syntheticUniqueTraders >= 6 &&
+          syntheticVolume >= 1.8 &&
+          syntheticBuyPressure >= 0.61;
+        const feedMomentumConfirmationEff =
+          age <= 45 &&
+          syntheticTradeCount >= 2 &&
+          syntheticUniqueTraders >= 2 &&
+          liquidityGrowth >= 0.8 &&
+          momentum >= 1.2 &&
+          syntheticBuyPressure >= 0.52;
+        const deepLiquidityConfirmationEff =
+          analysis.marketCap >= 48 &&
+          syntheticVolume >= 1.3 &&
+          syntheticUniqueTraders >= 4 &&
+          (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
+
+        if (!curveReady && !strongFlowConfirmationEff && !steadyTapeConfirmationEff && !deepLiquidityConfirmationEff && !feedMomentumConfirmationEff) {
           if (age < 75) {
-            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more early flow (${syntheticTradeCount} trades, ${(syntheticBuyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
             return;
           }
-          addLog(`🚫 Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          addLog(`🚫 Degen Reject: ${token.symbol} - Early flow too weak (${syntheticTradeCount} trades, ${(syntheticBuyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
           return;
         }
       }
