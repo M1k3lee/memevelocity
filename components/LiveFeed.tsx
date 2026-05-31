@@ -302,6 +302,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const previous = analysisDispatchRef.current.get(token.mint);
         const snapshot = getMarketSnapshot(token.mint);
 
+        // Always dispatch on token creation
         if (token.txType === "create" || !previous) {
             analysisDispatchRef.current.set(token.mint, {
                 lastDispatchedAt: now,
@@ -310,6 +311,7 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             return true;
         }
 
+        // Don't dispatch for very old tokens
         if ((now - token.timestamp) >= 120000) {
             return false;
         }
@@ -318,9 +320,17 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const relativeLiquidityDelta = previous.lastLiquidity > 0
             ? liquidityDelta / previous.lastLiquidity
             : liquidityDelta;
-        const hasMeaningfulMove = liquidityDelta >= 1 || relativeLiquidityDelta >= 0.08;
-        const earlyLifecycle = !!snapshot && (now - snapshot.firstSeenAt) <= 30000;
-        const cooledDown = (now - previous.lastDispatchedAt) >= (earlyLifecycle ? 6000 : 20000);
+
+        // Dispatch on ANY trade event in the first 90s — this is when the
+        // market snapshot is building and the bot needs fresh data to decide.
+        // The previous 1 SOL / 8% threshold was blocking most early trade events.
+        const earlyLifecycle = !!snapshot && (now - snapshot.firstSeenAt) <= 90000;
+        const hasMeaningfulMove = earlyLifecycle
+            ? (liquidityDelta >= 0.05 || token.txType === 'buy' || token.txType === 'sell')
+            : (liquidityDelta >= 1 || relativeLiquidityDelta >= 0.08);
+
+        // Cooldown: short in early lifecycle so the bot gets fresh snapshots quickly
+        const cooledDown = (now - previous.lastDispatchedAt) >= (earlyLifecycle ? 3000 : 20000);
 
         if (!hasMeaningfulMove || !cooledDown) {
             return false;
