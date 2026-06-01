@@ -331,25 +331,16 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         (analysis.bondingCurveProgress >= 0.6 && analysis.bondingCurveProgress <= 22) ||
         (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
 
-    // Only wait for snapshot if the curve hasn't moved — if curve is 2%+ the token
-    // clearly has trades, the WebSocket subscription just hasn't delivered them yet.
+    // Wait for real trade data — never enter on 0 trades
     const waitingOnSnapshot =
-        tradeCount === 0 && uniqueTraderCount <= 1 && observedVolume <= 0.2 &&
-        analysis.bondingCurveProgress < 2.0 && liquidityGrowth < 1.5 && age <= 45;
+        tradeCount === 0 &&
+        uniqueTraderCount <= 1 &&
+        observedVolume <= 0.2 &&
+        age <= 90;
 
     if (waitingOnSnapshot) {
-        return { status: 'wait', reason: `Early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` };
+        return { status: 'wait', reason: `Waiting for real trade data (${tradeCount} trades, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` };
     }
-
-    // When snapshot is empty but curve has moved, synthesize conservative estimates
-    const snapshotEmpty = tradeCount === 0 && observedVolume <= 0.2;
-    const effTradeCount = snapshotEmpty ? Math.max(0, Math.round(analysis.bondingCurveProgress * 3)) : tradeCount;
-    const effBuyCount = snapshotEmpty ? Math.round(effTradeCount * 0.65) : buyCount;
-    const effSellCount = snapshotEmpty ? 0 : sellCount;
-    const effUniqueTraders = snapshotEmpty ? Math.max(0, Math.round(effTradeCount * 0.6)) : uniqueTraderCount;
-    const effVolume = snapshotEmpty ? Math.max(0, liquidityGrowth * 0.8) : observedVolume;
-    const effBuyPressure = snapshotEmpty ? 0.65 : buyPressure;
-    const effNetFlow = snapshotEmpty ? Math.max(0, liquidityGrowth * 0.7) : netFlow;
 
     const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? analysis.metrics.creatorNetFlowSol ?? 0;
     if (isCreatorDumpingLaunch({ creatorSellCount, creatorNetFlowSol, creatorVolumeShare, age })) {
@@ -362,37 +353,36 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
 
     const priceDriftPercent = snapshot?.priceChangePercent ?? 0;
     const minPriceDriftPercent = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 12 && effTradeCount >= 3 && !snapshotEmpty && (isDeadTapeNow(priceDriftPercent, minPriceDriftPercent) || minPriceDriftPercent <= -3 || priceDriftPercent <= 0)) {
+    if (age >= 12 && tradeCount >= 3 && (isDeadTapeNow(priceDriftPercent, minPriceDriftPercent) || minPriceDriftPercent <= -3 || priceDriftPercent <= 0)) {
         return age < 90
-            ? { status: 'wait', reason: `Aggressive tape isn't moving forward cleanly (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%, ${effTradeCount} trades)` }
+            ? { status: 'wait', reason: `Aggressive tape isn't moving forward cleanly (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%, ${tradeCount} trades)` }
             : { status: 'reject', reason: `Aggressive tape never built clean displacement (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%)` };
     }
 
-    const concentrationSampleReadyEff = effTradeCount >= 4 || effUniqueTraders >= 3;
-    if (!concentrationSampleReadyEff) {
+    const concentrationSampleReady = tradeCount >= 4 || uniqueTraderCount >= 3;
+    if (!concentrationSampleReady) {
         return age < 35
-            ? { status: 'wait', reason: `Waiting for broader aggressive flow (${effTradeCount} trades, ${effUniqueTraders} wallets, ${effVolume.toFixed(2)} SOL observed)` }
-            : { status: 'reject', reason: `Aggressive flow never broadened beyond the opening wallets (${effTradeCount} trades, ${effUniqueTraders} wallets)` };
+            ? { status: 'wait', reason: `Waiting for broader aggressive flow (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)` }
+            : { status: 'reject', reason: `Aggressive flow never broadened beyond the opening wallets (${tradeCount} trades, ${uniqueTraderCount} wallets)` };
     }
 
-    if (!snapshotEmpty && largestTraderVolumeShare > 0.5 && effTradeCount >= 5) {
+    if (largestTraderVolumeShare > 0.5 && tradeCount >= 5) {
         return { status: 'reject', reason: `One wallet still dominates the aggressive tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)` };
     }
-    if (!snapshotEmpty && topTwoTraderVolumeShare > 0.78 && effTradeCount >= 6 && effUniqueTraders < 8) {
+    if (topTwoTraderVolumeShare > 0.78 && tradeCount >= 6 && uniqueTraderCount < 8) {
         return { status: 'reject', reason: `Too much aggressive flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)` };
     }
-    if (!snapshotEmpty && creatorVolumeShare > 0.45 && age >= 18) {
+    if (creatorVolumeShare > 0.45 && age >= 18) {
         return { status: 'reject', reason: `Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)` };
     }
-    if (!snapshotEmpty && repeatTraderRatio > 0.7 && effTradeCount >= 8) {
+    if (repeatTraderRatio > 0.7 && tradeCount >= 8) {
         return { status: 'reject', reason: `Aggressive tape is too dependent on repeat wallets (${(repeatTraderRatio * 100).toFixed(0)}%)` };
     }
-
-    if (effSellCount > Math.max(3, Math.floor(effTradeCount * 0.55)) && age <= 90) {
-        return { status: 'reject', reason: `Sell pressure is already too heavy (${effSellCount}/${effTradeCount} sells)` };
+    if (sellCount > Math.max(3, Math.floor(tradeCount * 0.55)) && age <= 90) {
+        return { status: 'reject', reason: `Sell pressure is already too heavy (${sellCount}/${tradeCount} sells)` };
     }
-    if (effTradeCount >= 5 && effBuyPressure < 0.5) {
-        return { status: 'reject', reason: `Momentum faded before entry (${(effBuyPressure * 100).toFixed(0)}% buy pressure)` };
+    if (tradeCount >= 5 && buyPressure < 0.5) {
+        return { status: 'reject', reason: `Momentum faded before entry (${(buyPressure * 100).toFixed(0)}% buy pressure)` };
     }
     if (impact > 2.5) {
         return { status: 'reject', reason: `Entry would hit the curve too hard (${impact.toFixed(2)}% impact)` };
@@ -402,24 +392,23 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
             ? { status: 'wait', reason: `Aggressive mode still needs a deeper liquidity base (${liquidity.toFixed(2)} SOL)` }
             : { status: 'reject', reason: `Aggressive liquidity never built enough depth (${liquidity.toFixed(2)} SOL)` };
     }
-    if (!snapshotEmpty && effNetFlow < -0.2 && age >= 30) {
-        return { status: 'reject', reason: `Net flow turned solidly negative (${effNetFlow.toFixed(2)} SOL)` };
+    if (netFlow < -0.2 && age >= 30) {
+        return { status: 'reject', reason: `Net flow turned solidly negative (${netFlow.toFixed(2)} SOL)` };
     }
-
     if (!curveReady) {
         return age < 90
-            ? { status: 'wait', reason: `Curve still needs to expand (${effTradeCount} trades, ${(effBuyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` }
+            ? { status: 'wait', reason: `Curve still needs to expand (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` }
             : { status: 'reject', reason: `Aggressive curve never reached a clean continuation window (${analysis.bondingCurveProgress.toFixed(1)}%)` };
     }
 
-    const earlyMomentumEff = age >= 4 && age <= 55 && effTradeCount >= 2 && effUniqueTraders >= 2 && effVolume >= 0.3 && effBuyPressure >= 0.52 && effNetFlow > 0;
-    const continuationTapeEff = effTradeCount >= 4 && effUniqueTraders >= 3 && effVolume >= 0.6 && effBuyPressure >= 0.52 && effNetFlow >= 0.1;
-    const strongContinuationTapeEff = effSellCount >= 1 && effTradeCount >= 8 && effUniqueTraders >= 5 && effVolume >= 1.5 && effBuyPressure >= 0.58 && effNetFlow >= 0.35;
+    const earlyMomentum = age >= 4 && age <= 55 && tradeCount >= 2 && uniqueTraderCount >= 2 && observedVolume >= 0.3 && buyPressure >= 0.52 && netFlow > 0;
+    const continuationTape = tradeCount >= 4 && uniqueTraderCount >= 3 && observedVolume >= 0.6 && buyPressure >= 0.52 && netFlow >= 0.1;
+    const strongContinuationTape = sellCount >= 1 && tradeCount >= 8 && uniqueTraderCount >= 5 && observedVolume >= 1.5 && buyPressure >= 0.58 && netFlow >= 0.35;
 
-    if (!(earlyMomentumEff || continuationTapeEff || strongContinuationTapeEff)) {
+    if (!(earlyMomentum || continuationTape || strongContinuationTape)) {
         return age < 90
-            ? { status: 'wait', reason: `Needs stronger continuation tape (${effTradeCount} trades, ${(effBuyPressure * 100).toFixed(0)}% buy pressure)` }
-            : { status: 'reject', reason: `Aggressive tape never confirmed clean continuation (${effTradeCount} trades)` };
+            ? { status: 'wait', reason: `Needs stronger continuation tape (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure)` }
+            : { status: 'reject', reason: `Aggressive tape never confirmed clean continuation (${tradeCount} trades)` };
     }
 
     return { status: 'pass' };

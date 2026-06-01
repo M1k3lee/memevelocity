@@ -302,8 +302,21 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const previous = analysisDispatchRef.current.get(token.mint);
         const snapshot = getMarketSnapshot(token.mint);
 
-        // Always dispatch on token creation
-        if (token.txType === "create" || !previous) {
+        // On token creation: subscribe to trades but DON'T dispatch to the bot yet.
+        // The bot needs real trade data (buy/sell events) before it can make a
+        // meaningful decision. Dispatching on create always results in 0 trades/
+        // 0% buy pressure and the bot either buys blind or loops forever.
+        if (token.txType === "create") {
+            analysisDispatchRef.current.set(token.mint, {
+                lastDispatchedAt: now,
+                lastLiquidity: currentLiquidity
+            });
+            return false; // wait for actual trade events
+        }
+
+        // First trade event after creation — always dispatch so the bot gets
+        // real data as soon as the first buy/sell arrives.
+        if (!previous) {
             analysisDispatchRef.current.set(token.mint, {
                 lastDispatchedAt: now,
                 lastLiquidity: currentLiquidity
@@ -321,15 +334,12 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             ? liquidityDelta / previous.lastLiquidity
             : liquidityDelta;
 
-        // Dispatch on ANY trade event in the first 90s — this is when the
-        // market snapshot is building and the bot needs fresh data to decide.
-        // The previous 1 SOL / 8% threshold was blocking most early trade events.
+        // In the first 90s dispatch on any trade event or meaningful liquidity move
         const earlyLifecycle = !!snapshot && (now - snapshot.firstSeenAt) <= 90000;
         const hasMeaningfulMove = earlyLifecycle
             ? (liquidityDelta >= 0.05 || token.txType === 'buy' || token.txType === 'sell')
             : (liquidityDelta >= 1 || relativeLiquidityDelta >= 0.08);
 
-        // Cooldown: short in early lifecycle so the bot gets fresh snapshots quickly
         const cooledDown = (now - previous.lastDispatchedAt) >= (earlyLifecycle ? 3000 : 20000);
 
         if (!hasMeaningfulMove || !cooledDown) {
