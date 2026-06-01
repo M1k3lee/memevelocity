@@ -303,20 +303,28 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const snapshot = getMarketSnapshot(token.mint);
 
         // On token creation: subscribe to trades but DON'T dispatch to the bot yet.
-        // The bot needs real trade data (buy/sell events) before it can make a
-        // meaningful decision. Dispatching on create always results in 0 trades/
-        // 0% buy pressure and the bot either buys blind or loops forever.
+        // Mark as seen so trade events can find the entry, but set lastDispatchedAt=0
+        // so the first trade event passes the cooldown check immediately.
         if (token.txType === "create") {
             analysisDispatchRef.current.set(token.mint, {
-                lastDispatchedAt: now,
+                lastDispatchedAt: 0,  // 0 = never dispatched, first trade will always pass cooldown
                 lastLiquidity: currentLiquidity
             });
             return false; // wait for actual trade events
         }
 
-        // First trade event after creation — always dispatch so the bot gets
-        // real data as soon as the first buy/sell arrives.
+        // First real trade event — always dispatch immediately
         if (!previous) {
+            analysisDispatchRef.current.set(token.mint, {
+                lastDispatchedAt: now,
+                lastLiquidity: currentLiquidity
+            });
+            return true;
+        }
+
+        // previous.lastDispatchedAt === 0 means we've seen the create but never
+        // dispatched a trade event yet — dispatch immediately on the first trade.
+        if (previous.lastDispatchedAt === 0) {
             analysisDispatchRef.current.set(token.mint, {
                 lastDispatchedAt: now,
                 lastLiquidity: currentLiquidity
