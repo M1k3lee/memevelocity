@@ -2609,7 +2609,10 @@ export default function Home() {
           tradeCount === 0 &&
           uniqueTraderCount <= 1 &&
           observedVolume <= 0.2 &&
-          liquidityGrowth > 0.25;
+          liquidityGrowth > 0.25 &&
+          // If curve has moved 2%+ there are clearly real trades — stop waiting
+          // and let the analysis proceed with whatever data we have
+          analysis.bondingCurveProgress < 2.0;
 
         if (waitingOnSnapshot) {
           scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);

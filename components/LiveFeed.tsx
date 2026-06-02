@@ -191,87 +191,82 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         }, 3000);
     };
 
-    // Helius WebSocket — subscribes to pump.fun program logs to get real buy/sell
-    // trade events. This is the replacement for PumpPortal's subscribeTokenTrade
-    // which now requires a paid API key. Helius gives us on-chain log events for
-    // every pump.fun transaction, which we parse to extract mint + trade direction.
+    // Helius WebSocket — uses logsSubscribe on the pump.fun program to detect
+    // buy/sell transactions and populate market snapshots with real trade data.
+    // PumpPortal's subscribeTokenTrade requires a paid key since May 2026.
     const connectHeliusWs = (key: string) => {
         if (!key || heliusWsRef.current?.readyState === WebSocket.OPEN) return;
         try {
             const ws = new WebSocket(`wss://mainnet.helius-rpc.com/?api-key=${key}`);
             heliusWsRef.current = ws;
+            let subId: number | null = null;
 
             ws.onopen = () => {
-                // Subscribe to logs mentioning the pump.fun bonding curve program
                 ws.send(JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: 1,
+                    jsonrpc: '2.0', id: 1,
                     method: 'logsSubscribe',
-                    params: [
-                        { mentions: [PUMP_PROGRAM] },
-                        { commitment: 'processed' }
-                    ]
+                    params: [{ mentions: [PUMP_PROGRAM] }, { commitment: 'processed' }]
                 }));
             };
 
             ws.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
-                    // Subscription confirmation — ignore
-                    if (msg.result !== undefined) return;
-                    const logs: string[] = msg?.params?.result?.value?.logs || [];
-                    const signature: string = msg?.params?.result?.value?.signature || '';
+                    if (msg.result !== undefined && subId === null) { subId = msg.result; return; }
+                    if (!msg?.params?.result?.value) return;
+
+                    const value = msg.params.result.value;
+                    const logs: string[] = value.logs || [];
+                    const accountKeys: string[] = value.accountKeys || [];
                     if (!logs.length) return;
 
-                    // Parse mint address and trade direction from pump.fun logs
-                    // Pump.fun logs contain lines like:
-                    //   "Program log: Instruction: Buy" or "Program log: Instruction: Sell"
-                    // and account keys include the mint
+                    // Determine trade direction
                     const isBuy = logs.some((l: string) => l.includes('Instruction: Buy'));
                     const isSell = logs.some((l: string) => l.includes('Instruction: Sell'));
                     if (!isBuy && !isSell) return;
 
-                    // Extract virtual reserves from logs if available
-                    // Pump.fun logs: "Program log: virtual_sol_reserves: 30500000000"
+                    // Extract virtual reserves from pump.fun event logs
+                    // Format: "Program log: virtual_sol_reserves: 30500000000"
                     let vSol = 0;
                     let vTokens = 0;
+                    let traderWallet = '';
                     for (const log of logs) {
-                        const solMatch = log.match(/virtual_sol_reserves:\s*(\d+)/);
-                        if (solMatch) vSol = parseInt(solMatch[1]) / 1e9;
-                        const tokMatch = log.match(/virtual_token_reserves:\s*(\d+)/);
-                        if (tokMatch) vTokens = parseInt(tokMatch[1]);
+                        const solM = log.match(/virtual_sol_reserves[:\s]+(\d+)/);
+                        if (solM) vSol = parseInt(solM[1]) / 1_000_000_000;
+                        const tokM = log.match(/virtual_token_reserves[:\s]+(\d+)/);
+                        if (tokM) vTokens = parseInt(tokM[1]);
+                    }
+                    // The first non-program account key is usually the trader
+                    for (const ak of accountKeys) {
+                        if (!ak.startsWith('6EF8') && !ak.startsWith('11111')) {
+                            traderWallet = ak; break;
+                        }
                     }
 
-                    // Find the mint from accounts in the transaction
-                    // The accounts array is in msg.params.result.value.accounts (not always present)
-                    // Fall back to checking tokenCacheRef for recently seen mints
-                    // that match the log pattern
-                    const accountKeys: string[] = msg?.params?.result?.value?.accountKeys || [];
+                    // Match to a tracked token by checking which mint in our cache
+                    // appears in the account keys list
                     let mint = '';
-                    for (const key of accountKeys) {
-                        if (tokenCacheRef.current.has(key)) {
-                            mint = key;
-                            break;
-                        }
+                    for (const ak of accountKeys) {
+                        if (tokenCacheRef.current.has(ak)) { mint = ak; break; }
                     }
                     if (!mint) return;
 
                     const existing = tokenCacheRef.current.get(mint);
                     if (!existing) return;
 
+                    // Build a synthetic trade event and feed it through processMarketEvent
+                    // so it gets recorded into the market snapshot
                     const tradeEvent: TokenData = {
                         ...existing,
                         txType: isBuy ? 'buy' : 'sell',
                         vSolInBondingCurve: vSol > 0 ? vSol : existing.vSolInBondingCurve,
                         vTokensInBondingCurve: vTokens > 0 ? vTokens : existing.vTokensInBondingCurve,
+                        traderPublicKey: traderWallet || existing.traderPublicKey,
                         timestamp: Date.now(),
                         lastSeenAt: Date.now(),
-                        traderPublicKey: accountKeys[0] || existing.traderPublicKey,
                     };
                     processMarketEvent(tradeEvent);
-                } catch {
-                    // Ignore malformed messages
-                }
+                } catch { /* ignore malformed */ }
             };
 
             ws.onclose = () => {
@@ -283,12 +278,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                     }, 5000);
                 }
             };
-            ws.onerror = () => {
-                heliusWsRef.current = null;
-            };
-        } catch {
-            // Helius WS unavailable — fall back to PumpPortal-only mode
-        }
+            ws.onerror = () => { heliusWsRef.current = null; };
+        } catch { /* Helius WS unavailable */ }
     };
 
     const connectWs = () => {

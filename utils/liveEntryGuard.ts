@@ -332,11 +332,14 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
 
     // Wait for real trade data — never enter on 0 trades
+    // Exception: if curve has moved 2%+ the token clearly has trades,
+    // the Helius subscription just hasn't delivered them yet — proceed.
     const waitingOnSnapshot =
         tradeCount === 0 &&
         uniqueTraderCount <= 1 &&
         observedVolume <= 0.2 &&
-        age <= 90;
+        age <= 90 &&
+        analysis.bondingCurveProgress < 2.0;
 
     if (waitingOnSnapshot) {
         return { status: 'wait', reason: `Waiting for real trade data (${tradeCount} trades, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` };
