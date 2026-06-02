@@ -1292,8 +1292,7 @@ export default function Home() {
     analyzingMints.current.add(token.mint);
     analysisCooldowns.current.set(token.mint, Date.now());
 
-    try {
-      // 2. RATE LIMITING & CONCURRENCY (Return but DON'T mark as processed, so we can retry)
+    // 2. RATE LIMITING & CONCURRENCY
       const timeSinceLastTrade = Date.now() - lastTradeTime;
       if (timeSinceLastTrade < dynamicMinTimeBetweenTrades) {
         if ((isLiveMicroMode || isLiveGodMode) && recentLiveLossStreak >= 1) {
@@ -1539,8 +1538,9 @@ export default function Home() {
         const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0; // SOL per minute
 
         // FAST TRACK: Very new tokens (<60s) with strong momentum
-        // BUT: Must pass basic rug checks (liquidity, not crashed, etc.)
-        if (age < 60 && momentum > 1.5 && liquidityGrowth > 2 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1) {
+        // Require at least 1 real trade — don't buy on 0 data
+        const highFastSnap1 = getMarketSnapshot(token.mint);
+        if (age < 60 && momentum > 1.5 && liquidityGrowth > 2 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1 && (highFastSnap1?.tradeCount || 0) >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ NEW + MOMENTUM: Early momentum play (rug checks passed)`);
 
@@ -1572,8 +1572,9 @@ export default function Home() {
         }
 
         // FAST TRACK: New tokens (<2 min) with very strong momentum (>3 SOL/min)
-        // BUT: Must pass basic rug checks
-        if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1) {
+        // Require at least 1 real trade — don't buy on 0 data
+        const highFastSnap2 = getMarketSnapshot(token.mint);
+        if (age < 120 && momentum > 3 && liquidityGrowth > 5 && liquidityGrowth >= 0 && (token.vSolInBondingCurve || 30) >= 1 && (highFastSnap2?.tradeCount || 0) >= 1) {
           addLog(`🚀 HIGH RISK FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum, +${liquidityGrowth.toFixed(2)} SOL`);
           addLog(`   ⚡ STRONG MOMENTUM: High buy activity detected (rug checks passed)`);
 
@@ -1617,7 +1618,8 @@ export default function Home() {
           token.name.toLowerCase().includes("test") ||
           token.symbol.toLowerCase().includes("rug");
 
-        if (!isObviousRug && age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1) {
+        const velFastSnap = getMarketSnapshot(token.mint);
+        if (!isObviousRug && age < 60 && momentum > 1.0 && liquidityGrowth > 1.5 && (token.vSolInBondingCurve || 30) >= 1 && (velFastSnap?.tradeCount || 0) >= 1) {
           addLog(`🏎️ VELOCITY FAST TRACK: ${token.symbol} - ${age.toFixed(0)}s old, ${momentum.toFixed(1)} SOL/min momentum`);
           addLog(`   🎯 EARLY IGNITION: Token is launching with conviction. Entering trade.`);
 
@@ -2891,11 +2893,7 @@ export default function Home() {
         addLog(`🚫 Fallback blocked: ${token.symbol} analysis failed, so no trade was placed.`);
       }
     }
-    } catch (outerError: any) {
-      addLog(`❌ Processing Error for ${token.symbol}: ${outerError.message}`);
-    } finally {
-      analyzingMints.current.delete(token.mint);
-    }
+    analyzingMints.current.delete(token.mint);
   }, [config.isRunning, config.isDemo, config.mode, config.amount, config.heliusKey, wallet, activeTrades, tradeHistory, buyToken, realBalance, connection, addLog]);
 
   // Automated Sell Logic (TP/SL + Speed Trading)

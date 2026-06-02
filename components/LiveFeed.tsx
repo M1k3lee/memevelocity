@@ -135,6 +135,8 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const [lastError, setLastError] = useState<string>("");
 
     const wsRef = useRef<WebSocket | null>(null);
+    const heliusWsRef = useRef<WebSocket | null>(null);
+    const heliusReconnectRef = useRef<NodeJS.Timeout | null>(null);
     const simulationInterval = useRef<NodeJS.Timeout | null>(null);
     const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
     const onTokenDetectedRef = useRef(onTokenDetected);
@@ -146,6 +148,12 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
     const subscribedMintsRef = useRef<Set<string>>(new Set());
     const lastFeedEventAtRef = useRef(Date.now());
     const MAX_TRACKED_MINTS = 200;
+    // Prune caches every 5 minutes to prevent memory leaks
+    const CACHE_PRUNE_INTERVAL = 5 * 60 * 1000;
+    const lastPruneRef = useRef(Date.now());
+
+    // Pump.fun bonding curve program ID
+    const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 
     // Keep terminal updates inside the panel instead of scrolling the page viewport.
     const logContainerRef = useRef<HTMLDivElement>(null);
@@ -181,6 +189,106 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             reconnectTimeout.current = null;
             connectWs();
         }, 3000);
+    };
+
+    // Helius WebSocket — subscribes to pump.fun program logs to get real buy/sell
+    // trade events. This is the replacement for PumpPortal's subscribeTokenTrade
+    // which now requires a paid API key. Helius gives us on-chain log events for
+    // every pump.fun transaction, which we parse to extract mint + trade direction.
+    const connectHeliusWs = (key: string) => {
+        if (!key || heliusWsRef.current?.readyState === WebSocket.OPEN) return;
+        try {
+            const ws = new WebSocket(`wss://mainnet.helius-rpc.com/?api-key=${key}`);
+            heliusWsRef.current = ws;
+
+            ws.onopen = () => {
+                // Subscribe to logs mentioning the pump.fun bonding curve program
+                ws.send(JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'logsSubscribe',
+                    params: [
+                        { mentions: [PUMP_PROGRAM] },
+                        { commitment: 'processed' }
+                    ]
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    // Subscription confirmation — ignore
+                    if (msg.result !== undefined) return;
+                    const logs: string[] = msg?.params?.result?.value?.logs || [];
+                    const signature: string = msg?.params?.result?.value?.signature || '';
+                    if (!logs.length) return;
+
+                    // Parse mint address and trade direction from pump.fun logs
+                    // Pump.fun logs contain lines like:
+                    //   "Program log: Instruction: Buy" or "Program log: Instruction: Sell"
+                    // and account keys include the mint
+                    const isBuy = logs.some((l: string) => l.includes('Instruction: Buy'));
+                    const isSell = logs.some((l: string) => l.includes('Instruction: Sell'));
+                    if (!isBuy && !isSell) return;
+
+                    // Extract virtual reserves from logs if available
+                    // Pump.fun logs: "Program log: virtual_sol_reserves: 30500000000"
+                    let vSol = 0;
+                    let vTokens = 0;
+                    for (const log of logs) {
+                        const solMatch = log.match(/virtual_sol_reserves:\s*(\d+)/);
+                        if (solMatch) vSol = parseInt(solMatch[1]) / 1e9;
+                        const tokMatch = log.match(/virtual_token_reserves:\s*(\d+)/);
+                        if (tokMatch) vTokens = parseInt(tokMatch[1]);
+                    }
+
+                    // Find the mint from accounts in the transaction
+                    // The accounts array is in msg.params.result.value.accounts (not always present)
+                    // Fall back to checking tokenCacheRef for recently seen mints
+                    // that match the log pattern
+                    const accountKeys: string[] = msg?.params?.result?.value?.accountKeys || [];
+                    let mint = '';
+                    for (const key of accountKeys) {
+                        if (tokenCacheRef.current.has(key)) {
+                            mint = key;
+                            break;
+                        }
+                    }
+                    if (!mint) return;
+
+                    const existing = tokenCacheRef.current.get(mint);
+                    if (!existing) return;
+
+                    const tradeEvent: TokenData = {
+                        ...existing,
+                        txType: isBuy ? 'buy' : 'sell',
+                        vSolInBondingCurve: vSol > 0 ? vSol : existing.vSolInBondingCurve,
+                        vTokensInBondingCurve: vTokens > 0 ? vTokens : existing.vTokensInBondingCurve,
+                        timestamp: Date.now(),
+                        lastSeenAt: Date.now(),
+                        traderPublicKey: accountKeys[0] || existing.traderPublicKey,
+                    };
+                    processMarketEvent(tradeEvent);
+                } catch {
+                    // Ignore malformed messages
+                }
+            };
+
+            ws.onclose = () => {
+                heliusWsRef.current = null;
+                if (!paused && !isSimulating) {
+                    heliusReconnectRef.current = setTimeout(() => {
+                        heliusReconnectRef.current = null;
+                        connectHeliusWs(key);
+                    }, 5000);
+                }
+            };
+            ws.onerror = () => {
+                heliusWsRef.current = null;
+            };
+        } catch {
+            // Helius WS unavailable — fall back to PumpPortal-only mode
+        }
     };
 
     const connectWs = () => {
@@ -302,19 +410,11 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
         const previous = analysisDispatchRef.current.get(token.mint);
         const snapshot = getMarketSnapshot(token.mint);
 
-        // On token creation: subscribe to trades but DON'T dispatch to the bot yet.
-        // Mark as seen so trade events can find the entry, but set lastDispatchedAt=0
-        // so the first trade event passes the cooldown check immediately.
+        // Dispatch on token creation — this is the primary signal since PumpPortal's
+        // subscribeTokenTrade requires a paid API key. We dispatch immediately on
+        // create so the bot can start monitoring, but the waitingOnSnapshot check
+        // in onTokenDetected will hold it until real trade data arrives via Helius.
         if (token.txType === "create") {
-            analysisDispatchRef.current.set(token.mint, {
-                lastDispatchedAt: 0,  // 0 = never dispatched, first trade will always pass cooldown
-                lastLiquidity: currentLiquidity
-            });
-            return false; // wait for actual trade events
-        }
-
-        // First real trade event — always dispatch immediately
-        if (!previous) {
             analysisDispatchRef.current.set(token.mint, {
                 lastDispatchedAt: now,
                 lastLiquidity: currentLiquidity
@@ -322,9 +422,9 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             return true;
         }
 
-        // previous.lastDispatchedAt === 0 means we've seen the create but never
-        // dispatched a trade event yet — dispatch immediately on the first trade.
-        if (previous.lastDispatchedAt === 0) {
+        // Trade events (buy/sell) — dispatch immediately if we haven't recently,
+        // or if this is the first trade event we've seen for this token.
+        if (!previous || previous.lastDispatchedAt === 0) {
             analysisDispatchRef.current.set(token.mint, {
                 lastDispatchedAt: now,
                 lastLiquidity: currentLiquidity
@@ -371,6 +471,20 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
             subscribeToTokenTrades(mergedToken.mint);
         }
 
+        // Prune caches periodically to prevent memory leaks over long sessions
+        const now = Date.now();
+        if (now - lastPruneRef.current > CACHE_PRUNE_INTERVAL) {
+            lastPruneRef.current = now;
+            const cutoff = now - CACHE_PRUNE_INTERVAL;
+            for (const [mint, dispatch] of analysisDispatchRef.current.entries()) {
+                if (dispatch.lastDispatchedAt < cutoff) {
+                    analysisDispatchRef.current.delete(mint);
+                    tokenCacheRef.current.delete(mint);
+                    rugChecksRef.current.delete(mint);
+                }
+            }
+        }
+
         const rugCheck = detectRug(mergedToken, 'medium');
         rugChecksRef.current.set(mergedToken.mint, rugCheck);
         updateGemState(mergedToken, rugCheck);
@@ -413,12 +527,18 @@ export default function LiveFeed({ onTokenDetected, isDemo = false, isSimulating
                 processMarketEvent(token);
             }, 3000);
         } else connectWs();
+        if (heliusKey && !isSimulating) connectHeliusWs(heliusKey);
         return () => {
             if (simulationInterval.current) clearInterval(simulationInterval.current);
             if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+            if (heliusReconnectRef.current) clearTimeout(heliusReconnectRef.current);
             if (wsRef.current) {
                 wsRef.current.close();
                 wsRef.current = null;
+            }
+            if (heliusWsRef.current) {
+                heliusWsRef.current.close();
+                heliusWsRef.current = null;
             }
             analysisDispatchRef.current.clear();
             rugChecksRef.current.clear();
