@@ -2524,13 +2524,13 @@ export default function Home() {
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'god') minScore = 75;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
-      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 20;
+      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 38;
       else if (config.mode === 'micro') minScore = 45;
-      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 20 : 22);
+      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 35 : 38);
       // Velocity mode is intentionally permissive on score — its discipline
       // comes from the velocity filter and the launch-phase entry guard,
       // not from a high score floor. We just want to make sure it's not 0.
-      if (config.mode === 'velocity') minScore = Math.max(minScore, config.isDemo ? 15 : 20);
+      if (config.mode === 'velocity') minScore = Math.max(minScore, config.isDemo ? 32 : 35);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -2576,11 +2576,12 @@ export default function Home() {
         const liquidityGrowth = liquidity - 30;
 
         // Minimum requirements before considering entry:
-        // Loosened for explosive launches: if momentum is extreme (>= 8.0 SOL/min),
-        // we only need a tiny bit of curve confirmation (0.1%).
+        // Loosened for explosive launches: if momentum is extreme (>= 12.0 SOL/min),
+        // we only need a tiny bit of curve confirmation (0.1%), BUT it must have
+        // a higher quality score (>= 45) to avoid sniper traps.
         const hasMinActivity =
           (analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
-          (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1);
+          (momentum >= 12.0 && analysis.bondingCurveProgress >= 0.1 && analysis.score >= 45);
 
         if (!hasMinActivity) {
           if (age < 90) {
@@ -2607,8 +2608,8 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 30   // Lowered from 35 to 30: Catch high-momentum plays like the 32-34 scores in logs
-        : config.mode === 'velocity' ? 28                 // Lowered from 30
+      const hardMinScore = config.mode === 'degen' ? 40   // Raised to 40: Block toxic 'momentum traps' and low-quality snipes
+        : config.mode === 'velocity' ? 38                 // Raised to 38
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
         : config.mode === 'god' ? 50
@@ -3016,8 +3017,8 @@ export default function Home() {
       }
 
       const isFastCompoundTrade = !!exitStrategy.maxHoldTime && exitStrategy.maxHoldTime <= 90;
-      const fastKillSeconds = exitStrategy.fastKillSeconds || 6;
-      const fastKillLoss = Math.abs(exitStrategy.fastKillLoss || 4);
+      const fastKillSeconds = isAggressiveAlias ? 3 : (exitStrategy.fastKillSeconds || 6); // Faster trigger for Degen
+      const fastKillLoss = isAggressiveAlias ? 1.8 : Math.abs(exitStrategy.fastKillLoss || 4); // Tighter trigger for Degen
       const givebackSeconds = exitStrategy.givebackSeconds || 10;
       const givebackPeakTrigger = exitStrategy.givebackPeakTrigger || 4;
       const givebackFloor = exitStrategy.givebackFloor || 0;
@@ -3026,6 +3027,13 @@ export default function Home() {
       if (isFastCompoundTrade && !runnerActive && trade.buyPrice > 0 && trade.currentPrice > 0) {
         if (holdTimeSeconds >= fastKillSeconds && currentPnl <= -fastKillLoss) {
           addLog(`⚡ FAST KILL: ${trade.symbol} hit ${currentPnl.toFixed(1)}% inside the opening window. Exiting.`);
+          sellToken(trade.mint, 100);
+          return;
+        }
+
+        // Emergency "Trap" Detector: If price drops > 15% instantly after buy, sell immediately
+        if (currentPnl <= -15 && holdTimeSeconds <= 12) {
+          addLog(`🚨 TRAP DETECTED: ${trade.symbol} crashed ${currentPnl.toFixed(1)}% instantly. Emergency exit.`);
           sellToken(trade.mint, 100);
           return;
         }
