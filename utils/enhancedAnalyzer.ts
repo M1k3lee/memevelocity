@@ -256,7 +256,7 @@ export async function analyzeEnhanced(
 
         // === TIER 4: CURVE MOMENTUM ===
         const curveVelocity = age > 0 ? (bondingCurveProgress / age) * 60 : 0; // % per minute
-        const tier4 = calculateTier4(bondingCurveProgress, curveVelocity, isRunnerMode ? 5 : 0, isRunnerMode ? 15 : 100);
+        const tier4 = calculateTier4(bondingCurveProgress, curveVelocity, riskMode);
 
         if (isRunnerMode && tier4.score < tier4Floor) {
             if (config?.rugCheckStrictness !== 'lenient') {
@@ -298,9 +298,9 @@ export async function analyzeEnhanced(
                 warnings.push('Degen confirmation: bypassing early curve floor due to strong early follow-through');
             }
 
-            if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 8) {
-                effectiveConfig.minHolderCount = 8;
-                warnings.push('Degen fallback: relaxing holder floor to 8 while RPC holder data is unavailable');
+            if (pumpData.source === 'feed' && (effectiveConfig.minHolderCount ?? 0) > 5) {
+                effectiveConfig.minHolderCount = 5;
+                warnings.push('Degen fallback: relaxing holder floor to 5 while RPC holder data is unavailable');
             }
         }
 
@@ -731,7 +731,14 @@ function calculateTier2(metrics: HolderMetrics, age: number) {
     if (metrics.holderCount >= 20) score += 30;
     else if (metrics.holderCount >= 15) score += 25;
     else if (metrics.holderCount >= 10) score += 15;
-    else score -= 30;
+    else {
+        // Less punishing for very fresh tokens (< 45s) since distribution takes time to print
+        if (age < 45) {
+            score += 10; // Neutral/Positive start for fresh launches
+        } else {
+            score -= 30;
+        }
+    }
 
     // 2. Creator Involvement (Deployer Holdings)
     if (metrics.deployerHoldings >= 0) {
@@ -743,9 +750,16 @@ function calculateTier2(metrics: HolderMetrics, age: number) {
     // 3. Concentration
     if (metrics.top10Concentration < 10) score += 20;
     else if (metrics.top10Concentration < 20) score += 10;
-    else if (metrics.top10Concentration > 50) score -= 40;
+    else if (metrics.top10Concentration > 50) {
+        // Less punishing for very fresh tokens (< 45s) where top-10 is naturally high
+        if (age < 45) {
+            score -= 10;
+        } else {
+            score -= 40;
+        }
+    }
 
-    if (score >= 60) strengths.push("Strong Holder Distribution");
+    if (score >= 40) strengths.push("Strong Holder Distribution");
 
     return { score, strengths };
 }
@@ -769,9 +783,10 @@ function calculateTier3(hasSocials: boolean | null, metadata: any, age: number) 
     return { score, strengths };
 }
 
-function calculateTier4(progress: number, velocity: number, minProgress: number, maxProgress: number) {
+function calculateTier4(progress: number, velocity: number, mode: string = 'god') {
     let score = 0;
     const strengths: string[] = [];
+    const isAggressive = mode === 'degen' || mode === 'sniper' || mode === 'high' || mode === 'velocity' || mode === 'scalp';
 
     // 1. Progression Rate (5-15% ideal)
     if (progress >= 5 && progress <= 15) {
@@ -792,7 +807,13 @@ function calculateTier4(progress: number, velocity: number, minProgress: number,
     } else if (velocity >= 0.1 && velocity <= 0.5) {
         score += 15; // Steady
     } else if (velocity > 10) {
-        score -= 20; // Flash pump risk
+        if (isAggressive) {
+            // No penalty for high velocity in aggressive modes — it's the signal!
+            score += 35;
+            strengths.push(`Explosive Growth Velocity (${velocity.toFixed(1)}%/min)`);
+        } else {
+            score -= 20; // Flash pump risk for conservative modes
+        }
     } else if (velocity <= 0) {
         score -= 20; // Decelerating
     }
@@ -933,17 +954,18 @@ function estimateDegenHolderDistribution(marketSnapshot: MarketSnapshot | null, 
     const tradeCount = marketSnapshot?.tradeCount || 0;
     const observedVolume = marketSnapshot?.observedVolumeSol || 0;
 
+    // Give more credit for holders in very fresh launches to avoid hard-rejections
     const holderCount = Math.max(
         uniqueTraderCount,
         Math.ceil(tradeCount * 0.65),
-        Math.floor(curveProgress * 1.5) + 6,
-        observedVolume >= 3 ? 10 : 0
+        Math.floor(curveProgress * 2.0) + 12,
+        observedVolume >= 2 ? 15 : 0
     );
 
     const top10Concentration =
         holderCount >= 25 ? 42 :
             holderCount >= 15 ? 52 :
-                holderCount >= 10 ? 58 : 68;
+                holderCount >= 10 ? 58 : 65;
 
     return {
         holderCount,

@@ -2524,13 +2524,13 @@ export default function Home() {
       else if (config.mode === 'medium' || config.mode === 'custom') minScore = 50;
       else if (config.mode === 'god') minScore = 75;
       else if (config.mode === 'sniper' || config.mode === 'first') minScore = 60; // Tier 0 must pass
-      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 35;
+      else if (config.mode === 'degen' || config.mode === 'velocity' || config.mode === 'high') minScore = 25;
       else if (config.mode === 'micro') minScore = 45;
-      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 35 : 38);
+      if (config.mode === 'degen') minScore = Math.max(minScore, config.isDemo ? 25 : 28);
       // Velocity mode is intentionally permissive on score — its discipline
       // comes from the velocity filter and the launch-phase entry guard,
       // not from a high score floor. We just want to make sure it's not 0.
-      if (config.mode === 'velocity') minScore = Math.max(minScore, config.isDemo ? 25 : 30);
+      if (config.mode === 'velocity') minScore = Math.max(minScore, config.isDemo ? 20 : 25);
 
       // For high-risk mode with strong momentum, we can be slightly more lenient
       // But still maintain minimum quality.
@@ -2607,8 +2607,8 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 32   // lowered from 38 to catch more momentum plays
-        : config.mode === 'velocity' ? 25
+      const hardMinScore = config.mode === 'degen' ? 25   // lowered from 32 to catch explosive launches
+        : config.mode === 'velocity' ? 20                 // lowered from 25
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
         : config.mode === 'god' ? 50
