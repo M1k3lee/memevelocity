@@ -2571,72 +2571,25 @@ export default function Home() {
         // Don't wait — fall through to the buy. The whole point of this
         // mode is that we already filtered on velocity upstream.
       } else if (config.mode === 'degen') {
-        const snapshot = getMarketSnapshot(token.mint);
-        const tradeCount = snapshot?.tradeCount || analysis.metrics.tradeCount || 0;
-        const buyCount = snapshot?.buyCount || 0;
-        const sellCount = snapshot?.sellCount || 0;
-        const uniqueTraderCount = snapshot?.uniqueTraderCount || analysis.metrics.uniqueTraderCount || 0;
-        const observedVolume = snapshot?.observedVolumeSol || analysis.metrics.observedVolume || 0;
-        const buyPressure = snapshot?.buyPressure ?? analysis.metrics.buyPressure ?? 0;
-        const strongFlowConfirmation =
-          buyCount >= 3 &&       // was 4
-          tradeCount >= 5 &&     // was 6
-          uniqueTraderCount >= 3 && // was 4
-          observedVolume >= 0.8 && // was 1.2
-          buyPressure >= 0.60;   // was 0.64
-        const steadyTapeConfirmation =
-          tradeCount >= 20 &&
-          uniqueTraderCount >= 6 &&
-          observedVolume >= 1.8 &&
-          buyPressure >= 0.61;
-        const feedMomentumConfirmation =
-          age <= 45 &&
-          tradeCount >= 2 &&
-          uniqueTraderCount >= 2 &&
-          liquidityGrowth >= 0.8 &&   // was 1.0
-          momentum >= 1.2 &&           // was 1.55
-          buyPressure >= 0.52;         // was 0.55
-        const curveReady =
-          (analysis.bondingCurveProgress >= 2 && analysis.bondingCurveProgress <= 18) ||
-          (analysis.bondingCurveProgress >= 1.75 && liquidityGrowth >= 0.8);
-        const deepLiquidityConfirmation =
-          analysis.marketCap >= 48 &&
-          observedVolume >= 1.3 &&
-          uniqueTraderCount >= 4 &&
-          (analysis.bondingCurveProgress >= 2 || liquidityGrowth >= 1.0);
-        const waitingOnSnapshot =
-          age <= 45 &&
-          tradeCount === 0 &&
-          uniqueTraderCount <= 1 &&
-          observedVolume <= 0.2 &&
-          liquidityGrowth > 0.25 &&
-          // If curve has moved 2%+ there are clearly real trades — stop waiting
-          // and let the analysis proceed with whatever data we have
-          analysis.bondingCurveProgress < 2.0;
+        // Relaxed curve-based requirement for degen mode when snapshot data is unavailable
+        const liquidity = token.vSolInBondingCurve || 30;
+        const liquidityGrowth = liquidity - 30;
 
-        if (waitingOnSnapshot) {
-          scheduleRetry(5000, `⏳ Degen wait: ${token.symbol} early flow snapshot still syncing (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
-          return;
-        }
+        // Minimum requirements before considering entry:
+        const hasMinActivity =
+          analysis.bondingCurveProgress >= 1.0 && // token has had real activity
+          liquidityGrowth > 0;                    // liquidity has increased since launch
 
-        if (sellCount > Math.max(3, Math.floor(tradeCount * 0.5)) && age <= 90) {
-          addLog(`🚫 Degen Reject: ${token.symbol} already shows too much sell pressure (${sellCount}/${tradeCount} sells).`);
-          return;
-        }
-
-        if (tradeCount >= 5 && buyPressure < 0.5) {
-          addLog(`🚫 Degen Reject: ${token.symbol} buy pressure is too weak for aggressive mode (${(buyPressure * 100).toFixed(0)}%).`);
-          return;
-        }
-
-        if (!curveReady && !strongFlowConfirmation && !steadyTapeConfirmation && !deepLiquidityConfirmation && !feedMomentumConfirmation) {
-          if (age < 75) {
-            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more early flow (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+        if (!hasMinActivity) {
+          if (age < 90) {
+            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more curve activity (${analysis.bondingCurveProgress.toFixed(1)}% curve, +${liquidityGrowth.toFixed(2)} SOL).`);
             return;
           }
-          addLog(`🚫 Degen Reject: ${token.symbol} - Early flow too weak (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%).`);
+          addLog(`🚫 Degen Reject: ${token.symbol} - Not enough curve activity (${analysis.bondingCurveProgress.toFixed(1)}% curve, +${liquidityGrowth.toFixed(2)} SOL).`);
           return;
         }
+
+        // Downstream checks for tradeCount/buyPressure are removed as they'll always be 0 without snapshot data
       }
 
       // If RPC is failing (analysis might be incomplete), be very lenient
@@ -2652,8 +2605,8 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 30
-        : config.mode === 'velocity' ? 22
+      const hardMinScore = config.mode === 'degen' ? 38   // raised from 30 — compensates for no snapshot data
+        : config.mode === 'velocity' ? 25
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
         : config.mode === 'god' ? 50

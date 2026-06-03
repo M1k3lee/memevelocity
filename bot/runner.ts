@@ -635,6 +635,9 @@ class PumpFunRunner {
         // sub-1-SOL sell during the 1s confirmation pause would flunk a 30 SOL
         // pool. Confirmation is meant to catch a clear fade between observation
         // and entry, not noise.
+        // If tradeCount is 0, snapshot data is unavailable, so we skip the buy
+        // pressure check and rely on liquidity/curve/price delta.
+        const skipBuyPressureCheck = tradeCount === 0;
         const minBuyPressure = isSelectiveMode ? 0.5 : (isProbeMode ? 0.5 : (isAggressiveMode ? 0.5 : 0.48));
         const maxLiquidityDrop = isSelectiveMode ? -10 : (isProbeMode ? -12 : (isAggressiveMode ? -12 : -14));
         const maxCurveRollback = isSelectiveMode ? -2.5 : (isProbeMode ? -3 : (isAggressiveMode ? -3 : -3.5));
@@ -644,9 +647,9 @@ class PumpFunRunner {
             liquidityDeltaPercent < maxLiquidityDrop ||
             curveDelta < maxCurveRollback ||
             priceDeltaPercent < maxPriceFade ||
-            freshBuyPressure < minBuyPressure
+            (!skipBuyPressureCheck && freshBuyPressure < minBuyPressure)
         ) {
-            return `confirmation faded (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${(freshBuyPressure * 100).toFixed(0)}% buy pressure)`;
+            return `confirmation faded (${liquidityDeltaPercent.toFixed(1)}% liquidity, ${curveDelta.toFixed(1)} curve pts, ${priceDeltaPercent.toFixed(1)}% price, ${skipBuyPressureCheck ? 'N/A' : (freshBuyPressure * 100).toFixed(0) + '%'} buy pressure)`;
         }
 
         if (tradeCount >= 5 && freshNetFlow < -0.1) {

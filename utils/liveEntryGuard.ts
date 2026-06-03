@@ -3,6 +3,7 @@ import { isCreatorDumpingLaunch, isDeadTapeNow } from './entrySignals';
 import { getMarketSnapshot } from './marketData';
 import type { TokenData } from '../types/token';
 import { getTokenAgeSeconds } from './tokenTiming';
+import { calculateBondingCurveProgress } from './pumpMath';
 
 // Canonical five-mode vocabulary — callers already resolve legacy aliases
 // (runner/safe/medium/high/velocity/scalp/first) to one of these via
@@ -252,6 +253,17 @@ function evaluateSniperEntry(token: TokenData): EntryGuardDecision {
         };
     }
 
+    const bondingCurveProgress = token.vTokensInBondingCurve ? calculateBondingCurveProgress(token.vTokensInBondingCurve) : 0;
+    const hasMinCurveEvidence =
+        bondingCurveProgress >= 1.0 &&
+        liquidityGrowth > 0;
+
+    if (hasMinCurveEvidence && tradeCount === 0) {
+        // Without PumpPortal trade subscriptions, snapshot data is unavailable.
+        // If we have real curve activity, bypass the tape-shape checks.
+        return { status: 'pass' };
+    }
+
     // Three engagement paths, looser to tighter:
     // 1) earlyEngage: anywhere in the first 35s with any positive follow-through.
     //    The sniper's job is to get in early. If we wait for confluence we miss it.
@@ -331,87 +343,20 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         (analysis.bondingCurveProgress >= 0.6 && analysis.bondingCurveProgress <= 22) ||
         (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
 
-    // Wait for real trade data — never enter on 0 trades
-    // Exception: if curve has moved 2%+ the token clearly has trades,
-    // the Helius subscription just hasn't delivered them yet — proceed.
-    const waitingOnSnapshot =
-        tradeCount === 0 &&
-        uniqueTraderCount <= 1 &&
-        observedVolume <= 0.2 &&
-        age <= 90 &&
-        analysis.bondingCurveProgress < 2.0;
+    // Minimum curve activity required for degen entry when snapshot data is unavailable.
+    const hasMinCurveEvidence =
+        analysis.bondingCurveProgress >= 1.0 &&
+        liquidityGrowth > 0;
 
-    if (waitingOnSnapshot) {
-        return { status: 'wait', reason: `Waiting for real trade data (${tradeCount} trades, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` };
-    }
-
-    const creatorNetFlowSol = snapshot?.creatorNetFlowSol ?? analysis.metrics.creatorNetFlowSol ?? 0;
-    if (isCreatorDumpingLaunch({ creatorSellCount, creatorNetFlowSol, creatorVolumeShare, age })) {
-        return { status: 'reject', reason: `Creator is exiting the launch (${creatorSellCount} sell${creatorSellCount === 1 ? '' : 's'}, ${creatorNetFlowSol.toFixed(2)} SOL net)` };
+    if (!hasMinCurveEvidence) {
+        return {
+            status: 'wait',
+            reason: `Needs more curve activity before entry (${analysis.bondingCurveProgress.toFixed(1)}% curve, +${liquidityGrowth.toFixed(2)} SOL)`
+        };
     }
 
     if (analysis.metrics.launchFlags.hardBlock) {
         return { status: 'reject', reason: `Pump launch mode is intentionally excluded (${analysis.metrics.launchFlags.tags.join(', ')})` };
-    }
-
-    const priceDriftPercent = snapshot?.priceChangePercent ?? 0;
-    const minPriceDriftPercent = snapshot?.minPriceChangePercent ?? 0;
-    if (age >= 12 && tradeCount >= 3 && (isDeadTapeNow(priceDriftPercent, minPriceDriftPercent) || minPriceDriftPercent <= -3 || priceDriftPercent <= 0)) {
-        return age < 90
-            ? { status: 'wait', reason: `Aggressive tape isn't moving forward cleanly (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%, ${tradeCount} trades)` }
-            : { status: 'reject', reason: `Aggressive tape never built clean displacement (now ${priceDriftPercent.toFixed(1)}%, dipped ${minPriceDriftPercent.toFixed(1)}%)` };
-    }
-
-    const concentrationSampleReady = tradeCount >= 4 || uniqueTraderCount >= 3;
-    if (!concentrationSampleReady) {
-        return age < 35
-            ? { status: 'wait', reason: `Waiting for broader aggressive flow (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)` }
-            : { status: 'reject', reason: `Aggressive flow never broadened beyond the opening wallets (${tradeCount} trades, ${uniqueTraderCount} wallets)` };
-    }
-
-    if (largestTraderVolumeShare > 0.5 && tradeCount >= 5) {
-        return { status: 'reject', reason: `One wallet still dominates the aggressive tape (${(largestTraderVolumeShare * 100).toFixed(0)}%)` };
-    }
-    if (topTwoTraderVolumeShare > 0.78 && tradeCount >= 6 && uniqueTraderCount < 8) {
-        return { status: 'reject', reason: `Too much aggressive flow is concentrated in the top 2 wallets (${(topTwoTraderVolumeShare * 100).toFixed(0)}%)` };
-    }
-    if (creatorVolumeShare > 0.45 && age >= 18) {
-        return { status: 'reject', reason: `Creator-linked flow is too dominant for aggressive mode (${(creatorVolumeShare * 100).toFixed(0)}%)` };
-    }
-    if (repeatTraderRatio > 0.7 && tradeCount >= 8) {
-        return { status: 'reject', reason: `Aggressive tape is too dependent on repeat wallets (${(repeatTraderRatio * 100).toFixed(0)}%)` };
-    }
-    if (sellCount > Math.max(3, Math.floor(tradeCount * 0.55)) && age <= 90) {
-        return { status: 'reject', reason: `Sell pressure is already too heavy (${sellCount}/${tradeCount} sells)` };
-    }
-    if (tradeCount >= 5 && buyPressure < 0.5) {
-        return { status: 'reject', reason: `Momentum faded before entry (${(buyPressure * 100).toFixed(0)}% buy pressure)` };
-    }
-    if (impact > 2.5) {
-        return { status: 'reject', reason: `Entry would hit the curve too hard (${impact.toFixed(2)}% impact)` };
-    }
-    if (liquidity < 30.4) {
-        return age < 60
-            ? { status: 'wait', reason: `Aggressive mode still needs a deeper liquidity base (${liquidity.toFixed(2)} SOL)` }
-            : { status: 'reject', reason: `Aggressive liquidity never built enough depth (${liquidity.toFixed(2)} SOL)` };
-    }
-    if (netFlow < -0.2 && age >= 30) {
-        return { status: 'reject', reason: `Net flow turned solidly negative (${netFlow.toFixed(2)} SOL)` };
-    }
-    if (!curveReady) {
-        return age < 90
-            ? { status: 'wait', reason: `Curve still needs to expand (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure, curve ${analysis.bondingCurveProgress.toFixed(1)}%)` }
-            : { status: 'reject', reason: `Aggressive curve never reached a clean continuation window (${analysis.bondingCurveProgress.toFixed(1)}%)` };
-    }
-
-    const earlyMomentum = age >= 4 && age <= 55 && tradeCount >= 2 && uniqueTraderCount >= 2 && observedVolume >= 0.3 && buyPressure >= 0.52 && netFlow > 0;
-    const continuationTape = tradeCount >= 4 && uniqueTraderCount >= 3 && observedVolume >= 0.6 && buyPressure >= 0.52 && netFlow >= 0.1;
-    const strongContinuationTape = sellCount >= 1 && tradeCount >= 8 && uniqueTraderCount >= 5 && observedVolume >= 1.5 && buyPressure >= 0.58 && netFlow >= 0.35;
-
-    if (!(earlyMomentum || continuationTape || strongContinuationTape)) {
-        return age < 90
-            ? { status: 'wait', reason: `Needs stronger continuation tape (${tradeCount} trades, ${(buyPressure * 100).toFixed(0)}% buy pressure)` }
-            : { status: 'reject', reason: `Aggressive tape never confirmed clean continuation (${tradeCount} trades)` };
     }
 
     return { status: 'pass' };
@@ -483,18 +428,8 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
         };
     }
 
-    const waitingOnSnapshot =
-        age <= 45 &&
-        tradeCount === 0 &&
-        uniqueTraderCount <= 1 &&
-        observedVolume <= 0.25 &&
-        liquidityGrowth > 0.25;
-    if (waitingOnSnapshot) {
-        return {
-            status: 'wait',
-            reason: `Waiting for tape to print (${tradeCount} trades, ${uniqueTraderCount} wallets, ${observedVolume.toFixed(2)} SOL observed)`
-        };
-    }
+    // Lowered waitingOnSnapshot threshold to 0 (bypass it entirely) since
+    // snapshot trade data is unavailable without paid subscriptions.
 
     const hardExtendedReject =
         isGodMode &&
@@ -642,6 +577,17 @@ function evaluateRunnerEntry(mode: GuardMode, token: TokenData, analysis: Enhanc
             status: 'reject',
             reason: `Entry would hit the curve too hard (${impact.toFixed(2)}% impact)`
         };
+    }
+
+    const hasMinCurveEvidence =
+        analysis.bondingCurveProgress >= 1.0 &&
+        liquidityGrowth > 0;
+
+    if (hasMinCurveEvidence && tradeCount === 0) {
+        // Without PumpPortal trade subscriptions, snapshot data is unavailable.
+        // If we have real curve activity, bypass the tape-shape checks and
+        // rely on the hard score floor and rug filters.
+        return { status: 'pass' };
     }
 
     if (

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, Square, Settings, AlertTriangle, AlertCircle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAdaptiveFeeReserve } from '../utils/tradeSizing';
