@@ -795,7 +795,9 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
     } else if (progress > 15 && progress <= 30) {
         score += 15;
     } else if (progress > 0 && progress < 5) {
-        score += 10;
+        // Minor penalty for being TOO early (under 1.5%) even if moving fast
+        if (progress < 1.5) score -= 15;
+        else score += 10;
     } else if (progress > 60) {
         score -= 60; // Flash pump or dead
     }

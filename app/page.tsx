@@ -2607,8 +2607,8 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 25   // lowered from 32 to catch explosive launches
-        : config.mode === 'velocity' ? 20                 // lowered from 25
+      const hardMinScore = config.mode === 'degen' ? 38   // Re-tightened from 25 to 38: stop buying low-quality 'trash'
+        : config.mode === 'velocity' ? 32                 // Raised from 20
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
         : config.mode === 'god' ? 50

@@ -348,8 +348,9 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     // we only need a tiny bit of curve confirmation (0.1%).
     const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
     const hasMinCurveEvidence =
-        (analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
-        (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1);
+        ((analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
+        (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1)) &&
+        (tradeCount >= 2 || uniqueTraderCount >= 2); // REQUIRE at least 2 trades/wallets to avoid absolute zero-volume trash
 
     if (!hasMinCurveEvidence) {
         return {
