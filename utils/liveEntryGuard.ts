@@ -350,7 +350,7 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
     const hasMinCurveEvidence =
         ((analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
         (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1)) &&
-        (tradeCount >= 2 || uniqueTraderCount >= 2); // REQUIRE at least 2 trades/wallets to avoid absolute zero-volume trash
+        (tradeCount >= 2 || uniqueTraderCount >= 2 || liquidityGrowth >= 0.5 || analysis.bondingCurveProgress >= 1.5); // Loosened: Trust curve/liquidity if snapshot trade data is missing
 
     if (!hasMinCurveEvidence) {
         return {
