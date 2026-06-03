@@ -344,9 +344,12 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
 
     // Minimum curve activity required for degen entry when snapshot data is unavailable.
+    // Loosened for explosive launches: if momentum is extreme (>= 8.0 SOL/min),
+    // we only need a tiny bit of curve confirmation (0.1%).
+    const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
     const hasMinCurveEvidence =
-        analysis.bondingCurveProgress >= 1.0 &&
-        liquidityGrowth > 0;
+        (analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
+        (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1);
 
     if (!hasMinCurveEvidence) {
         return {

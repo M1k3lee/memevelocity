@@ -2576,9 +2576,11 @@ export default function Home() {
         const liquidityGrowth = liquidity - 30;
 
         // Minimum requirements before considering entry:
+        // Loosened for explosive launches: if momentum is extreme (>= 8.0 SOL/min),
+        // we only need a tiny bit of curve confirmation (0.1%).
         const hasMinActivity =
-          analysis.bondingCurveProgress >= 1.0 && // token has had real activity
-          liquidityGrowth > 0;                    // liquidity has increased since launch
+          (analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
+          (momentum >= 8.0 && analysis.bondingCurveProgress >= 0.1);
 
         if (!hasMinActivity) {
           if (age < 90) {
@@ -2605,7 +2607,7 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 38   // raised from 30 — compensates for no snapshot data
+      const hardMinScore = config.mode === 'degen' ? 32   // lowered from 38 to catch more momentum plays
         : config.mode === 'velocity' ? 25
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
