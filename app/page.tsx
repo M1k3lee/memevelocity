@@ -3017,8 +3017,9 @@ export default function Home() {
       }
 
       const isFastCompoundTrade = !!exitStrategy.maxHoldTime && exitStrategy.maxHoldTime <= 90;
-      const fastKillSeconds = isAggressiveAlias ? 3 : (exitStrategy.fastKillSeconds || 6); // Faster trigger for Degen
-      const fastKillLoss = isAggressiveAlias ? 1.8 : Math.abs(exitStrategy.fastKillLoss || 4); // Tighter trigger for Degen
+      const isAggressiveMode = config.mode === 'degen' || config.mode === 'high' || config.mode === 'velocity' || config.mode === 'scalp';
+      const fastKillSeconds = isAggressiveMode ? 3 : (exitStrategy.fastKillSeconds || 6); // Faster trigger for Degen
+      const fastKillLoss = isAggressiveMode ? 1.8 : Math.abs(exitStrategy.fastKillLoss || 4); // Tighter trigger for Degen
       const givebackSeconds = exitStrategy.givebackSeconds || 10;
       const givebackPeakTrigger = exitStrategy.givebackPeakTrigger || 4;
       const givebackFloor = exitStrategy.givebackFloor || 0;
