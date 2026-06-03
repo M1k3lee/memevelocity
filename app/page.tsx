@@ -2608,8 +2608,8 @@ export default function Home() {
       // what the analyzer's pass/fail says. The analyzer can mark a token as
       // "passed" on a fast-path with incomplete data; the score is a better
       // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 40   // Raised to 40: Block toxic 'momentum traps' and low-quality snipes
-        : config.mode === 'velocity' ? 38                 // Raised to 38
+      const hardMinScore = config.mode === 'degen' ? 38   // Balanced at 38: Block the 31-35 "traps" while allowing 39-40+ "quality"
+        : config.mode === 'velocity' ? 35                 // Balanced at 35
         : config.mode === 'sniper' || config.mode === 'first' ? 28
         : config.mode === 'micro' ? 38
         : config.mode === 'god' ? 50

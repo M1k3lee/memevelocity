@@ -812,7 +812,7 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
     } else if (velocity > 10) {
         if (isAggressive) {
             // No penalty for high velocity in aggressive modes — it's the signal!
-            score += 45; // Increased from 35 to 45 to give more weight to momentum
+            score += 50; // Increased from 45 to 50: give massive weight to explosive starts
             strengths.push(`Explosive Growth Velocity (${velocity.toFixed(1)}%/min)`);
         } else {
             score -= 20; // Flash pump risk for conservative modes
