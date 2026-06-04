@@ -1078,11 +1078,12 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             return;
         }
 
-        if (!wallet) return;
         if (activeTrades.some(t => t.mint === mint) && !isTopUp) {
             processingMintsRef.current.delete(mint);
             return;
         }
+
+        if (!wallet) return;
 
         try {
             const balanceBeforeBuy = await getBalance(wallet.publicKey.toBase58(), connection);
@@ -1254,8 +1255,10 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     const syncTrades = async () => {
         // Portfolio sync is needed in both live and demo to reconcile
         // actual wallet balances/prices with the local state.
-        addLog("Syncing portfolio...");
         const tradesToSync = activeTradesRef.current.filter(t => t.status === "open");
+        if (tradesToSync.length === 0) return;
+
+        addLog("Syncing portfolio...");
         
         if (isDemo) {
             for (const trade of tradesToSync) {
@@ -1276,6 +1279,27 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
         }
 
         if (!wallet) return;
+        for (const trade of tradesToSync) {
+            try {
+                const balanceChecks = (trade.amountTokens || 0) <= 0 ? 3 : 1;
+                const bal = await confirmLiveTokenBalance(trade.mint, balanceChecks, 1000);
+                if (bal > 0) {
+                    const normalizedBuyPrice = (trade.amountSolPaid || 0) > 0 ? (trade.amountSolPaid || 0) / bal : trade.buyPrice;
+                    setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
+                        ...t,
+                        amountTokens: bal,
+                        buyPrice: normalizedBuyPrice > 0 ? normalizedBuyPrice : t.buyPrice,
+                        currentPrice: t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.currentPrice),
+                        highestPrice: t.highestPrice && t.highestPrice > 0
+                            ? t.highestPrice
+                            : (t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.highestPrice))
+                    } : t));
+                } else if (Date.now() - (trade.buyTime || 0) > 60000) {
+                    addLog(`Sync: ${trade.symbol} still has no verified token balance after repeated checks. Keeping the trade open for manual or later recovery.`);
+                }
+            } catch (e) { }
+        }
+    };
 
     const cleanupWaste = async () => {
         if (!wallet || isDemo) return;
