@@ -795,9 +795,8 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
     } else if (progress > 15 && progress <= 30) {
         score += 15;
     } else if (progress > 0 && progress < 5) {
-        // Minor penalty for being TOO early (under 1.0%) even if moving fast
-        // Adjusted from 1.5% to 1.0% to be slightly more aggressive
-        if (progress < 1.0) score -= 15;
+        // Penalty for being TOO early (< 3.0%) — these are often creator-only pumps
+        if (progress < 3.0) score -= 30;
         else score += 10;
     } else if (progress > 60) {
         score -= 60; // Flash pump or dead
@@ -811,9 +810,9 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
         score += 15; // Steady
     } else if (velocity > 10) {
         if (isAggressive) {
-            // No penalty for high velocity in aggressive modes — it's the signal!
-            score += 50; // Increased from 45 to 50: give massive weight to explosive starts
-            strengths.push(`Explosive Growth Velocity (${velocity.toFixed(1)}%/min)`);
+            // Balanced bonus for high velocity — don't let it overpower poor quality
+            score += 25; 
+            strengths.push(`High Growth Velocity (${velocity.toFixed(1)}%/min)`);
         } else {
             score -= 20; // Flash pump risk for conservative modes
         }
