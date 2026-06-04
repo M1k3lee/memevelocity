@@ -1070,8 +1070,11 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
             };
             setActiveTrades(prev => [newTrade, ...prev]);
             subscribeToToken(mint);
+            addLog(`[DEMO] Success: Bought ${symbol} at ${formatTokenPrice(buyPrice)} SOL`);
             toast.success(`[DEMO] Bought ${symbol}`);
             processingMintsRef.current.delete(mint);
+            // Small pause to let state settle
+            setTimeout(() => { void syncTrades(); }, 1500);
             return;
         }
 
@@ -1249,29 +1252,30 @@ export const usePumpTrader = (wallet: Keypair | null, connection: Connection, he
     };
 
     const syncTrades = async () => {
-        if (isDemo || !wallet) return;
+        // Portfolio sync is needed in both live and demo to reconcile
+        // actual wallet balances/prices with the local state.
         addLog("Syncing portfolio...");
-        for (const trade of activeTradesRef.current.filter(t => t.status === "open")) {
-            try {
-                const balanceChecks = (trade.amountTokens || 0) <= 0 ? 3 : 1;
-                const bal = await confirmLiveTokenBalance(trade.mint, balanceChecks, 1000);
-                if (bal > 0) {
-                    const normalizedBuyPrice = (trade.amountSolPaid || 0) > 0 ? (trade.amountSolPaid || 0) / bal : trade.buyPrice;
-                    setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
-                        ...t,
-                        amountTokens: bal,
-                        buyPrice: normalizedBuyPrice > 0 ? normalizedBuyPrice : t.buyPrice,
-                        currentPrice: t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.currentPrice),
-                        highestPrice: t.highestPrice && t.highestPrice > 0
-                            ? t.highestPrice
-                            : (t.currentPrice > 0 ? t.currentPrice : (normalizedBuyPrice > 0 ? normalizedBuyPrice : t.highestPrice))
-                    } : t));
-                } else if (Date.now() - (trade.buyTime || 0) > 60000) {
-                    addLog(`Sync: ${trade.symbol} still has no verified token balance after repeated checks. Keeping the trade open for manual or later recovery.`);
-                }
-            } catch (e) { }
+        const tradesToSync = activeTradesRef.current.filter(t => t.status === "open");
+        
+        if (isDemo) {
+            for (const trade of tradesToSync) {
+                try {
+                    const price = await getPumpPrice(trade.mint, connection);
+                    if (price > 0) {
+                        setActiveTrades(prev => prev.map(t => t.mint === trade.mint ? {
+                            ...t,
+                            currentPrice: price,
+                            highestPrice: Math.max(t.highestPrice || 0, price),
+                            pnlPercent: t.buyPrice > 0 ? ((price - t.buyPrice) / t.buyPrice) * 100 : 0,
+                            lastPriceUpdate: Date.now()
+                        } : t));
+                    }
+                } catch (e) { }
+            }
+            return;
         }
-    };
+
+        if (!wallet) return;
 
     const cleanupWaste = async () => {
         if (!wallet || isDemo) return;
