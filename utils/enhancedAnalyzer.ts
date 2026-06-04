@@ -795,8 +795,9 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
     } else if (progress > 15 && progress <= 30) {
         score += 15;
     } else if (progress > 0 && progress < 5) {
-        // Penalty for being TOO early (< 3.0%) — these are often creator-only pumps
-        if (progress < 3.0) score -= 30;
+        // Penalty for being TOO early (< 1.5%) — these are often creator-only pumps
+        // Window lowered from 3.0% to 1.5% and penalty reduced from -30 to -15
+        if (progress < 1.5) score -= 15;
         else score += 10;
     } else if (progress > 60) {
         score -= 60; // Flash pump or dead
