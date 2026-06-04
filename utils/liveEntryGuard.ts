@@ -344,13 +344,12 @@ function evaluateMomentumEntry(token: TokenData, analysis: EnhancedAnalysis, amo
         (analysis.bondingCurveProgress >= 0.3 && liquidityGrowth >= 0.4 && analysis.bondingCurveProgress <= 25);
 
     // Minimum curve activity required for degen entry when snapshot data is unavailable.
-    // Re-balanced: momentum bypass now requires a score of (50) and 
-    // real tape activity (tradeCount >= 5) to avoid creator-only traps.
+    // Re-balanced for faster strikes: require (3) trades and score (45) for bypass.
     const momentum = age > 0 ? (liquidityGrowth / age) * 60 : 0;
     const hasMinCurveEvidence =
         ((analysis.bondingCurveProgress >= 1.5 && liquidityGrowth > 0) ||
-        (momentum >= 12.0 && analysis.bondingCurveProgress >= 0.5 && analysis.score >= 50)) &&
-        (tradeCount >= 5 || uniqueTraderCount >= 4); 
+        (momentum >= 12.0 && analysis.bondingCurveProgress >= 0.5 && analysis.score >= 45)) &&
+        (tradeCount >= 3 || uniqueTraderCount >= 3); 
 
     if (!hasMinCurveEvidence) {
         return {

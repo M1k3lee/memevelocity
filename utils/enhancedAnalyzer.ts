@@ -811,9 +811,9 @@ function calculateTier4(progress: number, velocity: number, mode: string = 'god'
         score += 15; // Steady
     } else if (velocity > 10) {
         if (isAggressive) {
-            // Balanced bonus for high velocity — don't let it overpower poor quality
-            score += 25; 
-            strengths.push(`High Growth Velocity (${velocity.toFixed(1)}%/min)`);
+            // No penalty for high velocity in aggressive modes — it's the signal!
+            score += 60; // Increased from 50 to 60: give even more weight to explosive starts
+            strengths.push(`Explosive Growth Velocity (${velocity.toFixed(1)}%/min)`);
         } else {
             score -= 20; // Flash pump risk for conservative modes
         }
