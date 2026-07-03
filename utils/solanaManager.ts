@@ -1,4 +1,5 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from "@solana/web3.js";
+import { createCloseAccountInstruction } from "@solana/spl-token";
 import bs58 from "bs58";
 import { calculateBondingCurveProgress, calculatePumpPrice } from "./pumpMath";
 
@@ -393,6 +394,44 @@ export const getHolderStats = async (mintAddress: string, conn: Connection = con
             return null;
         }
     });
+};
+
+/**
+ * Close any empty token accounts for the given mint so the ~0.00204 SOL of
+ * account rent flows back to the wallet. Without this, every full round trip
+ * silently leaves the rent behind — a fixed loss that dwarfed the take-profit
+ * on small positions. Returns the number of accounts closed.
+ */
+export const closeEmptyTokenAccounts = async (
+    owner: Keypair,
+    mintAddress: string,
+    conn: Connection = connection
+): Promise<number> => {
+    try {
+        const accounts = await conn.getParsedTokenAccountsByOwner(owner.publicKey, {
+            mint: new PublicKey(mintAddress)
+        });
+
+        const emptyAccounts = accounts.value.filter(
+            (acc) => (acc.account.data.parsed.info.tokenAmount.uiAmount || 0) === 0
+        );
+        if (emptyAccounts.length === 0) return 0;
+
+        const tx = new Transaction();
+        for (const acc of emptyAccounts) {
+            tx.add(createCloseAccountInstruction(acc.pubkey, owner.publicKey, owner.publicKey));
+        }
+
+        await sendAndConfirmTransaction(conn, tx, [owner], {
+            commitment: 'confirmed',
+            skipPreflight: false
+        });
+        return emptyAccounts.length;
+    } catch (error) {
+        // Rent recovery is opportunistic — never let it break the sell path.
+        console.warn(`[closeEmptyTokenAccounts] failed for ${mintAddress}:`, (error as any)?.message || error);
+        return 0;
+    }
 };
 
 export const getConnection = () => connection;

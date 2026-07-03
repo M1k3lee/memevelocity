@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { clearTokenBalanceCache, createConnection, getBalance, getPumpData, getTokenBalance } from '../utils/solanaManager';
+import { clearTokenBalanceCache, closeEmptyTokenAccounts, createConnection, getBalance, getPumpData, getTokenBalance } from '../utils/solanaManager';
 import { getTradeTransaction, signAndSendTransaction } from '../utils/pumpPortal';
 import { detectRug } from '../utils/rugDetector';
 import { analyzeEnhanced, type EnhancedAnalysis } from '../utils/enhancedAnalyzer';
@@ -84,6 +84,7 @@ class PumpFunRunner {
     private shuttingDown = false;
     private saveChain: Promise<void> = Promise.resolve();
     private lastRiskPauseLogAt = 0;
+    private loggedCostGateWarning = false;
 
     constructor(private readonly config: RunnerConfig, private readonly state: BotState) {
         this.connection = createConnection(this.config.heliusKey);
@@ -360,27 +361,29 @@ class PumpFunRunner {
             const analysis = await analyzeEnhanced(token, this.connection, this.config.heliusKey, this.config.mode, this.config.advanced);
             if (!analysis.passed) {
                 const reason = analysis.reasons[0] || 'analysis rejected trade';
-                // Treat tape-not-ready style rejections as `wait` so we re-evaluate
-                // as the snapshot fills in. A creator-sell or tier-0 fail is terminal.
-                const isTapeNotReady = /trades|wallets|buy pressure|volume|tape|shakeout|absorb|net flow|tier 4/i.test(reason);
-                const isTerminal = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|incentive|creator is exiting/i.test(reason);
-                const status: 'wait' | 'reject' = (!isTerminal && isTapeNotReady) ? 'wait' : 'reject';
-                recordEntryDecision({
-                    mode: this.config.mode,
-                    gate: 'analyzer',
-                    status,
-                    reason,
-                    mint: token.mint,
-                    symbol: token.symbol,
-                    log: (line) => this.log(line)
-                });
-                if (status === 'wait') {
-                    this.queueWait(token);
-                } else {
+                // The analyzer is authoritative ONLY for hard security facts
+                // (tier-0 fail, freeze/mint authority, honeypot, hard-blocked
+                // launch types, creator exiting). Everything else — tape shape,
+                // holder estimates, tier scores — is advisory; the flow entry
+                // guard below is the single decision layer for tape quality.
+                // Before this change, two independent gates each had to agree,
+                // which is why the bot oscillated between never-trades and
+                // whack-a-mole threshold tuning.
+                const isTerminal = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|creator is exiting/i.test(reason);
+                if (isTerminal) {
+                    recordEntryDecision({
+                        mode: this.config.mode,
+                        gate: 'analyzer',
+                        status: 'reject',
+                        reason,
+                        mint: token.mint,
+                        symbol: token.symbol,
+                        log: (line) => this.log(line)
+                    });
                     this.analysisCooldowns.set(token.mint, Date.now());
                     this.waitingMints.delete(token.mint);
+                    return;
                 }
-                return;
             }
 
             const amountSol = await this.getTradeSize(analysis);
@@ -526,6 +529,23 @@ class PumpFunRunner {
         let amount = this.config.amountSol * this.getRiskAdjustedSizeMultiplier(analysis);
 
         amount = Number(amount.toFixed(4));
+
+        // Cost-coverage gate: a trade is only worth taking if the TP1 win
+        // clearly beats the fixed cost stack (priority fees both legs plus
+        // network fees). At the old preset sizes (0.002-0.008 SOL) fixed
+        // costs exceeded the maximum possible win, which made every trade a
+        // guaranteed loser regardless of entry quality.
+        const buyPriorityFee = amount <= 0.05 ? 0.0003 : Math.max(0.001, Math.min(0.003, amount * 0.05));
+        const sellPriorityFee = amount <= 0.05 ? 0.0003 : Math.max(0.0005, Math.min(0.002, amount * 0.02));
+        const fixedCostSol = buyPriorityFee + sellPriorityFee + 0.00002;
+        const tp1WinSol = amount * (this.config.defaultExit.takeProfit / 100);
+        if (tp1WinSol < fixedCostSol * 2.5) {
+            if (!this.loggedCostGateWarning) {
+                this.loggedCostGateWarning = true;
+                this.log(`Cost gate: trade size ${amount.toFixed(4)} SOL cannot clear the fee stack (TP1 win ${tp1WinSol.toFixed(5)} SOL vs ~${fixedCostSol.toFixed(5)} SOL fixed costs). Raise BOT_TRADE_AMOUNT_SOL to at least ${(fixedCostSol * 2.5 / (this.config.defaultExit.takeProfit / 100)).toFixed(3)} SOL.`);
+            }
+            return 0;
+        }
 
         if (!this.wallet) {
             return amount;
@@ -1024,6 +1044,17 @@ class PumpFunRunner {
                 }
             }
 
+            // Creator-sell instant exit. In captured live data, 36 of 42
+            // launches ended as creator-exits, and the first creator sell was
+            // the earliest reliable signal. Entries require zero creator
+            // sells, so any positive count while holding means the rug just
+            // started — get out before the crowd does.
+            const liveSnapshot = getMarketSnapshot(mint);
+            if (liveSnapshot && liveSnapshot.creatorSellCount > 0) {
+                await this.executeSell(mint, 100, `creator sold (${liveSnapshot.creatorSellCount} sell${liveSnapshot.creatorSellCount === 1 ? '' : 's'})`);
+                return;
+            }
+
             const pumpData = await getPumpData(mint, this.connection);
             if (!pumpData) return;
 
@@ -1254,9 +1285,17 @@ class PumpFunRunner {
             }
 
             await delay(2000);
-            const balanceAfter = await getBalance(this.wallet.publicKey.toBase58(), this.connection);
             clearTokenBalanceCache(this.wallet.publicKey.toBase58(), mint);
             const actualRemaining = await getTokenBalance(this.wallet.publicKey.toBase58(), mint, this.connection);
+            // Full exit: reclaim the token-account rent (~0.00204 SOL) before
+            // measuring revenue so the refund is counted in realized P&L.
+            if (normalizedPercent >= 100 && actualRemaining <= 0.000001) {
+                const closed = await closeEmptyTokenAccounts(this.wallet, mint, this.connection);
+                if (closed > 0) {
+                    this.log(`Recovered rent from ${closed} token account(s) for ${position.symbol}`);
+                }
+            }
+            const balanceAfter = await getBalance(this.wallet.publicKey.toBase58(), this.connection);
             const revenue = (balanceAfter ?? 0) - (balanceBefore ?? 0);
             const costBasis = position.amountSolPaid * sellFraction;
             const realizedProfit = revenue - costBasis;
@@ -1321,13 +1360,16 @@ class PumpFunRunner {
             failureSeed
         });
 
-        const revenue = sellExecution.netProceedsSol;
+        const remainingFraction = Math.max(0, 1 - sellFraction);
+        // Full close recovers the token-account rent, mirroring the live
+        // path's closeEmptyTokenAccounts call.
+        const rentRefund = remainingFraction <= 0.000001 ? PAPER_TOKEN_ACCOUNT_RENT_SOL : 0;
+        const revenue = sellExecution.netProceedsSol + rentRefund;
         const costBasis = position.amountSolPaid * sellFraction;
         const realizedProfit = revenue - costBasis;
 
         this.state.totals.realizedProfitSol += realizedProfit;
 
-        const remainingFraction = Math.max(0, 1 - sellFraction);
         const updatedPosition: ManagedPosition = {
             ...position,
             status: remainingFraction > 0.000001 ? 'open' : 'closed',

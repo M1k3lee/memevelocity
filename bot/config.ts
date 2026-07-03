@@ -52,167 +52,47 @@ export function getPresetAdvancedConfig(mode: BotMode): AdvancedConfig {
     };
 }
 
-function getPresetExitStrategy(mode: BotMode): ManagedExitStrategy {
-    switch (mode) {
-        case 'god':
-            return {
-                takeProfit: 24,
-                takeProfit2: 60,
-                stopLoss: 6,
-                maxHoldTime: 210,
-                trailingStop: false,
-                fastKillLoss: 3.8,
-                fastKillSeconds: 11,
-                givebackPeakTrigger: 7,
-                givebackFloor: 4,
-                givebackSeconds: 30,
-                stagnationSeconds: 65,
-                stagnationFloor: 0.5,
-                tp1SellPercent: 45,
-                tp2SellPercent: 25,
-                postTp1FloorPercent: 6,
-                postTp2FloorPercent: 14,
-                runnerMaxHoldTime: 480,
-                runnerTrailingStopPercent: 16,
-                runnerActivationProfit: 28,
-                runnerTimeExitFloor: 8
-            };
-        case 'micro':
-            // Reclaim-first compounding: tighter profit-take than god to
-            // compound gains faster, but still a real runner window so we
-            // don't cap a move. Previously this mode silently fell through
-            // to the catch-all 32% TP / 270s hold — way too long for a
-            // reclaim strategy. That was a latent bug from Phase 0.
-            return {
-                takeProfit: 12,
-                takeProfit2: 28,
-                stopLoss: 6,
-                maxHoldTime: 150,
-                trailingStop: false,
-                fastKillLoss: 3.5,
-                fastKillSeconds: 10,
-                givebackPeakTrigger: 5,
-                givebackFloor: 3,
-                givebackSeconds: 22,
-                stagnationSeconds: 50,
-                stagnationFloor: -0.5,
-                tp1SellPercent: 50,
-                tp2SellPercent: 25,
-                postTp1FloorPercent: 5,
-                postTp2FloorPercent: 10,
-                runnerMaxHoldTime: 360,
-                runnerTrailingStopPercent: 14,
-                runnerActivationProfit: 18,
-                runnerTimeExitFloor: 5
-            };
-        case 'sniper':
-            return {
-                takeProfit: 10,
-                takeProfit2: 18,
-                stopLoss: 6,
-                maxHoldTime: 45,
-                trailingStop: false,
-                fastKillLoss: 3.2,
-                fastKillSeconds: 8,
-                givebackPeakTrigger: 4,
-                givebackFloor: 2.5,
-                givebackSeconds: 16,
-                stagnationSeconds: 22,
-                stagnationFloor: -1.5,
-                tp1SellPercent: 55,
-                tp2SellPercent: 25,
-                postTp1FloorPercent: 3.5,
-                postTp2FloorPercent: 8,
-                runnerMaxHoldTime: 120,
-                runnerTrailingStopPercent: 10,
-                runnerActivationProfit: 10,
-                runnerTimeExitFloor: 3
-            };
-        case 'degen':
-            return {
-                takeProfit: 10,
-                takeProfit2: 18,
-                stopLoss: 5.5,
-                maxHoldTime: 55,
-                trailingStop: false,
-                fastKillLoss: 3.2,
-                fastKillSeconds: 9,
-                givebackPeakTrigger: 4,
-                givebackFloor: 2.2,
-                givebackSeconds: 16,
-                stagnationSeconds: 22,
-                stagnationFloor: -1.5,
-                tp1SellPercent: 50,
-                tp2SellPercent: 25,
-                postTp1FloorPercent: 3.5,
-                postTp2FloorPercent: 8,
-                runnerMaxHoldTime: 130,
-                runnerTrailingStopPercent: 9,
-                runnerActivationProfit: 10,
-                runnerTimeExitFloor: 3
-            };
-        case 'custom':
-        default:
-            return {
-                takeProfit: 32,
-                takeProfit2: 95,
-                stopLoss: 9,
-                maxHoldTime: 270,
-                trailingStop: false,
-                fastKillLoss: 5,
-                fastKillSeconds: 14,
-                givebackPeakTrigger: 10,
-                givebackFloor: 5,
-                givebackSeconds: 32,
-                stagnationSeconds: 90,
-                stagnationFloor: -0.5,
-                tp1SellPercent: 40,
-                tp2SellPercent: 30,
-                postTp1FloorPercent: 8,
-                postTp2FloorPercent: 16,
-                runnerMaxHoldTime: 960,
-                runnerTrailingStopPercent: 20,
-                runnerActivationProfit: 30,
-                runnerTimeExitFloor: 12
-            };
-    }
-}
+import { getPresetExitStrategy } from '../utils/exitPresets';
+export { getPresetExitStrategy };
 
+// Risk rails scale with position size: a stop-loss exit costs roughly
+// size * (SL% + slippage), so the daily stop is sized to absorb ~4 full
+// stop-outs before pausing for the day.
 function getPresetRiskControls(mode: BotMode): { maxConsecutiveLosses: number; maxDailyLossSol: number; riskFloorMultiplier: number; riskCeilingMultiplier: number } {
     switch (mode) {
         case 'god':
             return {
-                maxConsecutiveLosses: 2,
-                maxDailyLossSol: 0.008,
+                maxConsecutiveLosses: 3,
+                maxDailyLossSol: 0.024,
                 riskFloorMultiplier: 0.6,
                 riskCeilingMultiplier: 1.35
             };
         case 'micro':
             return {
                 maxConsecutiveLosses: 3,
-                maxDailyLossSol: 0.007,
+                maxDailyLossSol: 0.02,
                 riskFloorMultiplier: 0.55,
                 riskCeilingMultiplier: 1.2
             };
         case 'sniper':
             return {
                 maxConsecutiveLosses: 3,
-                maxDailyLossSol: 0.005,
+                maxDailyLossSol: 0.01,
                 riskFloorMultiplier: 0.45,
                 riskCeilingMultiplier: 1.05
             };
         case 'degen':
             return {
                 maxConsecutiveLosses: 3,
-                maxDailyLossSol: 0.006,
+                maxDailyLossSol: 0.015,
                 riskFloorMultiplier: 0.5,
                 riskCeilingMultiplier: 1.15
             };
         case 'custom':
         default:
             return {
-                maxConsecutiveLosses: 2,
-                maxDailyLossSol: 0.01,
+                maxConsecutiveLosses: 3,
+                maxDailyLossSol: 0.024,
                 riskFloorMultiplier: 0.55,
                 riskCeilingMultiplier: 1.2
             };
@@ -289,7 +169,11 @@ export function loadRunnerConfig(): RunnerConfig {
         walletAddress: wallet ? wallet.publicKey.toBase58() : null,
         walletSecret: process.env.TRADER_PRIVATE_KEY?.trim() || '',
         mode,
-        amountSol: parseNumber(process.env.BOT_TRADE_AMOUNT_SOL, 0.01),
+        // Default trade size comes from the mode preset. Sizes are chosen so
+        // the fixed cost stack (priority fees + network fee, ~0.0007 SOL per
+        // round trip) stays under ~2.5% of the position — smaller sizes were
+        // mathematically unable to profit even on winning trades.
+        amountSol: parseNumber(process.env.BOT_TRADE_AMOUNT_SOL, getStrategyPresetConfig(normalizeStrategyProfile(mode)).amount),
         slippage: advanced.slippage ?? 20,
         maxConcurrentTrades: Math.max(1, Math.floor(parseNumber(process.env.BOT_MAX_CONCURRENT_TRADES, 1))),
         minTimeBetweenTradesMs: Math.max(0, parseNumber(process.env.BOT_MIN_MS_BETWEEN_TRADES, 500)),

@@ -32,8 +32,10 @@ import {
 const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000;
 const PUMP_CURVE_SALE_TOKENS = 793_100_000;
 
-// Exit presets kept in sync with bot/config.ts so the paper replay mirrors
-// what the live bot actually runs. See Phase 2 notes in the commit history.
+// Exit presets come straight from bot/config.ts so the replay always runs
+// exactly what the live bot runs — no more hand-copied drift.
+import { getPresetExitStrategy } from './config';
+
 const LEGACY_EXIT: ManagedExitStrategy = {
     takeProfit: 32,
     takeProfit2: 95,
@@ -57,74 +59,9 @@ const LEGACY_EXIT: ManagedExitStrategy = {
     runnerTimeExitFloor: 12
 };
 
-const STRICT_EXIT: ManagedExitStrategy = {
-    takeProfit: 24,
-    takeProfit2: 60,
-    stopLoss: 6,
-    maxHoldTime: 210,
-    trailingStop: false,
-    fastKillLoss: 3.8,
-    fastKillSeconds: 11,
-    givebackPeakTrigger: 7,
-    givebackFloor: 4,
-    givebackSeconds: 30,
-    stagnationSeconds: 65,
-    stagnationFloor: 0.5,
-    tp1SellPercent: 45,
-    tp2SellPercent: 25,
-    postTp1FloorPercent: 6,
-    postTp2FloorPercent: 14,
-    runnerMaxHoldTime: 480,
-    runnerTrailingStopPercent: 16,
-    runnerActivationProfit: 28,
-    runnerTimeExitFloor: 8
-};
-
-const AGGRESSIVE_EXIT: ManagedExitStrategy = {
-    takeProfit: 10,
-    takeProfit2: 18,
-    stopLoss: 5.5,
-    maxHoldTime: 55,
-    trailingStop: false,
-    fastKillLoss: 3.2,
-    fastKillSeconds: 9,
-    givebackPeakTrigger: 4,
-    givebackFloor: 2.2,
-    givebackSeconds: 16,
-    stagnationSeconds: 22,
-    stagnationFloor: -1.5,
-    tp1SellPercent: 50,
-    tp2SellPercent: 25,
-    postTp1FloorPercent: 3.5,
-    postTp2FloorPercent: 8,
-    runnerMaxHoldTime: 130,
-    runnerTrailingStopPercent: 9,
-    runnerActivationProfit: 10,
-    runnerTimeExitFloor: 3
-};
-
-const PROBE_EXIT: ManagedExitStrategy = {
-    takeProfit: 10,
-    takeProfit2: 18,
-    stopLoss: 6,
-    maxHoldTime: 45,
-    trailingStop: false,
-    fastKillLoss: 3.2,
-    fastKillSeconds: 8,
-    givebackPeakTrigger: 4,
-    givebackFloor: 2.5,
-    givebackSeconds: 16,
-    stagnationSeconds: 22,
-    stagnationFloor: -1.5,
-    tp1SellPercent: 55,
-    tp2SellPercent: 25,
-    postTp1FloorPercent: 3.5,
-    postTp2FloorPercent: 8,
-    runnerMaxHoldTime: 120,
-    runnerTrailingStopPercent: 10,
-    runnerActivationProfit: 10,
-    runnerTimeExitFloor: 3
-};
+const STRICT_EXIT: ManagedExitStrategy = getPresetExitStrategy('god');
+const AGGRESSIVE_EXIT: ManagedExitStrategy = getPresetExitStrategy('degen');
+const PROBE_EXIT: ManagedExitStrategy = getPresetExitStrategy('sniper');
 
 type Position = {
     buyPrice: number;
@@ -170,7 +107,7 @@ export const STRATEGIES: StrategyConfig[] = [
     {
         name: 'strict',
         label: 'strict',
-        amountSol: 0.006,
+        amountSol: 0.05,
         buySlippagePercent: 12,
         exitStrategy: STRICT_EXIT,
         guardMode: 'god'
@@ -178,7 +115,7 @@ export const STRATEGIES: StrategyConfig[] = [
     {
         name: 'aggressive',
         label: 'aggressive',
-        amountSol: 0.0025,
+        amountSol: 0.03,
         buySlippagePercent: 12,
         exitStrategy: AGGRESSIVE_EXIT,
         guardMode: 'degen'
@@ -186,7 +123,7 @@ export const STRATEGIES: StrategyConfig[] = [
     {
         name: 'probe',
         label: 'probe',
-        amountSol: 0.002,
+        amountSol: 0.02,
         buySlippagePercent: 12,
         exitStrategy: PROBE_EXIT,
         guardMode: 'sniper'
@@ -607,6 +544,10 @@ export function runScenario(strategy: StrategyName, scenario: Scenario): RunResu
                     };
                     entryAgeSeconds = event.t;
                     closeReason = 'open';
+                    // Charge the buy-side network/priority fee at entry so the
+                    // replay P&L carries the full live cost stack. (Rent nets
+                    // out now that full exits close the token account.)
+                    realizedPnlSol -= buyExecution.networkFeeSol;
                 }
             }
 
@@ -615,6 +556,17 @@ export function runScenario(strategy: StrategyName, scenario: Scenario): RunResu
                     vSolInBondingCurve: token.vSolInBondingCurve,
                     vTokensInBondingCurve: token.vTokensInBondingCurve
                 };
+                // Creator-sell instant exit (mirrors the live runner). Entry
+                // requires zero creator sells, so any count here means the
+                // rug started while we were holding.
+                const holdingSnapshot = getMarketSnapshot(mint);
+                if (holdingSnapshot && holdingSnapshot.creatorSellCount > 0) {
+                    const sell = executeSell(position, 100, price, currentCurve);
+                    realizedPnlSol += sell.realizedDelta;
+                    closeReason = 'creator-sold';
+                    position = null;
+                    continue;
+                }
                 const sellResult = maybeManageExit(position, price, now, currentCurve);
                 if (sellResult.realizedDelta) {
                     realizedPnlSol += sellResult.realizedDelta;

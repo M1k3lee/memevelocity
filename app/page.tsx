@@ -18,6 +18,7 @@ import { formatTokenPrice } from '../utils/priceFormat';
 import { calculateBondingCurveProgress, calculatePumpPrice } from '../utils/pumpMath';
 import { getTokenAgeSeconds } from '../utils/tokenTiming';
 import { evaluateLiveEntryGuard } from '../utils/liveEntryGuard';
+import { getPresetExitStrategy, type ExitPresetMode } from '../utils/exitPresets';
 import { isCreatorDumpingLaunch } from '../utils/entrySignals';
 import { createEmptyPumpLaunchFlags } from '../utils/pumpLaunchFlags';
 import { getStrategyPresetConfig, normalizeStrategyProfile, STRATEGY_PRESET_VERSION } from '../utils/strategyProfiles';
@@ -1197,6 +1198,13 @@ export default function Home() {
   const onTokenDetected = useCallback(async (token: TokenData, isRetrying = false) => {
     if (!config.isRunning) return;
 
+    // The bespoke per-mode pipelines (first/micro/god) are retired: they were
+    // three separately-tuned strategy engines that drifted apart from the bot
+    // runner and the replay harness. All modes now flow through the shared
+    // path below (analyzer for hard security facts -> flow entry guard for
+    // the tape decision), which is the exact pipeline the backtest validates.
+    const LEGACY_MODE_PIPELINES = false;
+
     // scheduleRetry: only blocks if a retry is *already in flight* for this mint.
     // Clears itself when the timeout fires so subsequent retries can be scheduled.
     const scheduleRetry = (waitTime: number, message: string) => {
@@ -1415,7 +1423,7 @@ export default function Home() {
     }
 
     // === EXPERIMENTAL PROBE MODE ===
-    if (config.mode === 'first') {
+    if (LEGACY_MODE_PIPELINES && config.mode === 'first') {
       try {
         // Quick pre-filter
         const quickCheck = quickFirstBuyerCheck(token);
@@ -1655,7 +1663,7 @@ export default function Home() {
       } catch (e) { }
     }
 
-    if (config.mode === 'micro') {
+    if (LEGACY_MODE_PIPELINES && config.mode === 'micro') {
       try {
         const age = getTokenAgeSeconds(token);
         const liquidity = token.vSolInBondingCurve || 30;
@@ -1982,7 +1990,7 @@ export default function Home() {
       }
     }
 
-    if (config.mode === 'god') {
+    if (LEGACY_MODE_PIPELINES && config.mode === 'god') {
       try {
         const age = getTokenAgeSeconds(token);
         const liquidity = token.vSolInBondingCurve || 30;
@@ -2604,62 +2612,20 @@ export default function Home() {
         addLog(`⚠️ RPC issues detected - lowering score threshold to ${minScore} for ${token.symbol}`);
       }
 
-      // Hard minimum score floor — never buy a token below this regardless of
-      // what the analyzer's pass/fail says. The analyzer can mark a token as
-      // "passed" on a fast-path with incomplete data; the score is a better
-      // signal of actual quality when RPC data is unavailable.
-      const hardMinScore = config.mode === 'degen' ? 35   // Lowered from 40 to 35: Allow the "better" runners to pass
-        : config.mode === 'velocity' ? 32                 // Lowered from 38
-        : config.mode === 'sniper' || config.mode === 'first' ? 28
-        : config.mode === 'micro' ? 38
-        : config.mode === 'god' ? 50
-        : 28;
-
-      if (analysis.score < hardMinScore) {
-        addLog(`🚫 Rejected: ${token.symbol} - Score ${analysis.score}/100 below hard floor (${hardMinScore}). Not buying low-quality token.`);
-        return;
-      }
-
-      // The analyzer already decides pass/fail per strategy. Keep the score gate
-      // for weak/fallback analyses, but don't block a token that the live
-      // strategy-specific analyzer has explicitly approved.
-      if (analysis.score < minScore && !analysis.passed) {
-        addLog(`🚫 Rejected: ${token.symbol} - Score: ${analysis.score}/100 (Need: ${minScore}) - ${analysis.riskLevel.toUpperCase()} risk`);
-        addLog(`   Bonding Curve: ${analysis.bondingCurveProgress.toFixed(1)}% | Market Cap: ${analysis.marketCap.toFixed(1)} SOL`);
-        if (analysis.reasons.length > 0) {
-          analysis.reasons.forEach(r => addLog(`   ${r}`));
-        }
-        if (analysis.warnings.length > 0) {
-          analysis.warnings.forEach(w => addLog(`   ⚠️ ${w}`));
-        }
-        return;
-      }
-
-      const shouldRetryEarlyAnalysis =
-        !analysis.passed &&
-        analysis.reasons.some(r => r.includes('Too early')) &&
-        age < 60;
-
-      if (shouldRetryEarlyAnalysis) {
-        const waitTime = isRetrying ? 20000 : 15000;
-        scheduleRetry(waitTime, `â³ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
-        return;
-      }
-
+      // The analyzer is authoritative ONLY for hard security facts (tier-0
+      // failures, freeze/mint authority, honeypots, hard-blocked launch
+      // types, creator exiting). Its tape-shape opinions and composite score
+      // are advisory - the flow entry guard below is the single decision
+      // layer for tape quality, and it is the exact logic the paper replay
+      // backtests. Double-gating on the analyzer's score was a major source
+      // of missed entries without adding measurable protection.
       if (!analysis.passed) {
-        // PERSISTENT MONITORING: If rejected for being 'too early', retry until it's at least 60s old
-        if (analysis.reasons.some(r => r.includes('Too early')) && age < 60) {
-          const waitTime = isRetrying ? 20000 : 15000;
-          scheduleRetry(waitTime, `⏳ ${token.symbol} still early (${analysis.bondingCurveProgress.toFixed(1)}%). Re-checking in ${waitTime / 1000}s...`);
+        const firstAnalyzerReason = analysis.reasons[0] || '';
+        const isTerminalAnalyzerReject = /tier 0|freeze|mint authority|metadata|hard ?block|honeypot|creator is exiting/i.test(firstAnalyzerReason);
+        if (isTerminalAnalyzerReject) {
+          addLog(`🚫 Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
           return;
         }
-
-        if (isRetrying) {
-          addLog(`🚫 Retry Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
-        } else {
-          addLog(`🚫 Rejected: ${token.symbol} - ${analysis.reasons.join(', ')}`);
-        }
-        return;
       }
 
       // Velocity intentionally bypasses the live entry guard. The guard's
@@ -2751,67 +2717,22 @@ export default function Home() {
       // Finalize: Token successfully passed all filters
       processedMints.current.add(token.mint);
 
-      const isAggressiveAlias = config.mode === 'degen' || config.mode === 'high' || config.mode === 'velocity' || config.mode === 'scalp';
-      const isExperimentalAlias = config.mode === 'sniper' || config.mode === 'first';
-      const exitStrategy = isAggressiveAlias
-        ? {
-            takeProfit: Math.min(config.takeProfit, 8),
-            takeProfit2: 14,
-            stopLoss: Math.min(config.stopLoss, 4),
-            maxHoldTime: 40,
-            trailingStop: false,
-            momentumExit: false,
-            minHoldTime: 6,
-            fastKillLoss: 2.2,
-            fastKillSeconds: 5,
-            givebackPeakTrigger: 3.2,
-            givebackFloor: 0.2,
-            givebackSeconds: 6,
-            stagnationSeconds: 10,
-            stagnationFloor: -0.5,
-            tp1SellPercent: 82,
-            tp2SellPercent: 8,
-            postTp1FloorPercent: 1,
-            postTp2FloorPercent: 3,
-            runnerMaxHoldTime: 90,
-            runnerTrailingStopPercent: 6,
-            runnerActivationProfit: 8,
-            runnerTimeExitFloor: 2
-          }
-        : isExperimentalAlias
-        ? {
-            takeProfit: Math.min(config.takeProfit, 8),
-            takeProfit2: 14,
-            stopLoss: Math.min(config.stopLoss, 4),
-            maxHoldTime: 30,
-            trailingStop: false,
-            momentumExit: false,
-            minHoldTime: 5,
-            fastKillLoss: 2.2,
-            fastKillSeconds: 4,
-            givebackPeakTrigger: 3.2,
-            givebackFloor: 0.4,
-            givebackSeconds: 7,
-            stagnationSeconds: 12,
-            stagnationFloor: -0.5,
-            tp1SellPercent: 85,
-            tp2SellPercent: 10,
-            postTp1FloorPercent: 1.2,
-            postTp2FloorPercent: 4,
-            runnerMaxHoldTime: 90,
-            runnerTrailingStopPercent: 8,
-            runnerActivationProfit: 8,
-            runnerTimeExitFloor: 2
-          }
-        : {
-            takeProfit: config.takeProfit,
-            takeProfit2: config.mode === 'micro' ? 35 : undefined,
-            stopLoss: config.stopLoss,
-            maxHoldTime: config.mode === 'micro' ? 90 : 3600,
-            trailingStop: config.mode === 'runner', // Enable trailing stop for runners
-            momentumExit: false,
-            minHoldTime: config.mode === 'micro' ? 12 : undefined,
-          };
+      // Exit ladders come from the shared presets (utils/exitPresets.ts) —
+      // the same ladders the bot runner executes and the paper replay
+      // validates. The user's dashboard TP/SL settings override the first
+      // take-profit and the stop.
+      const exitPresetMode: ExitPresetMode =
+        (config.mode === 'high' || config.mode === 'scalp' || config.mode === 'velocity' || config.mode === 'degen') ? 'degen'
+          : (config.mode === 'sniper' || config.mode === 'first') ? 'sniper'
+          : (config.mode === 'micro') ? 'micro'
+          : (config.mode === 'custom') ? 'custom'
+          : 'god';
+      const presetExit = getPresetExitStrategy(exitPresetMode);
+      const exitStrategy = {
+        ...presetExit,
+        takeProfit: config.takeProfit || presetExit.takeProfit,
+        stopLoss: config.stopLoss || presetExit.stopLoss
+      };
 
       await buyToken(token.mint, token.symbol, positionSize, slippage, initialPrice, exitStrategy);
     } catch (error: any) {
@@ -2862,6 +2783,17 @@ export default function Home() {
     activeTrades.forEach(trade => {
       // Only process OPEN trades
       if (trade.status !== "open") return;
+
+      // Creator-sell instant exit: entries require zero creator sells, so any
+      // positive count while holding means the rug just started. In captured
+      // live tape 36/42 launches ended as creator-exits — this is the single
+      // most valuable exit signal we have.
+      const creatorWatchSnapshot = getMarketSnapshot(trade.mint);
+      if (creatorWatchSnapshot && creatorWatchSnapshot.creatorSellCount > 0) {
+        addLog(`🚨 CREATOR SOLD: ${trade.symbol} (${creatorWatchSnapshot.creatorSellCount} sell${creatorWatchSnapshot.creatorSellCount === 1 ? '' : 's'}). Instant exit.`);
+        sellToken(trade.mint, 100);
+        return;
+      }
 
       // CRITICAL FIX: Don't skip if buyPrice is 0 - wait for it to be set
       // The price polling will set buyPrice on first update

@@ -15,7 +15,7 @@ export type InternalMode =
 export type VisibleStrategyMode = 'god' | 'micro' | 'degen' | 'sniper' | 'velocity' | 'custom';
 
 // Bump this when preset defaults change and saved UI configs should refresh.
-export const STRATEGY_PRESET_VERSION = 8;
+export const STRATEGY_PRESET_VERSION = 9;
 
 export interface StrategyAdvancedConfig {
     minLiquidity: number;
@@ -50,42 +50,48 @@ export interface StrategyProfileDefinition {
     description: string;
 }
 
+// All modes run the same flow-based strategy (utils/flowStrategy.ts): enter
+// only on early multi-wallet accumulation with real SOL inflow and a silent
+// creator, exit instantly if the creator sells, cut dead entries in seconds,
+// and trail the rare runner far. The modes differ only in how tight the
+// thresholds are — backtests on captured live tape show PnL degrades as
+// selectivity loosens, so Selective is the recommended default.
 export const STRATEGY_PROFILE_DEFINITIONS: StrategyProfileDefinition[] = [
     {
         id: 'god',
-        label: 'Conservative',
-        subtitle: 'Selective runner entries',
-        description: 'Lower frequency, stronger confirmation, best default for live capital.'
+        label: 'Selective',
+        subtitle: 'The backtested optimum',
+        description: 'Waits for the strongest accumulation signature (4+ wallets, 5+ SOL real inflow, clean tape, no chase). Trades rarely — roughly the best launch per hour — but this config was the only profitable one on captured live data.'
     },
     {
         id: 'micro',
         label: 'Balanced',
-        subtitle: 'Reclaim-first compounding',
-        description: 'Waits for the first shakeout, then looks for a cleaner second leg.'
+        subtitle: 'Slightly wider chase window',
+        description: 'Same core signature as Selective but tolerates entries up to 40% above first price. Adds a trade or two per hour at slightly worse expected value.'
     },
     {
         id: 'degen',
         label: 'Aggressive',
-        subtitle: 'Earlier continuation entries',
-        description: 'Takes earlier continuation setups after a real shakeout, with faster exits and tighter anti-rug filters.'
+        subtitle: 'Looser confirmation, longer window',
+        description: 'Accepts 3-wallet confirmation and a 90s entry window. More activity, and the extra trades were roughly break-even in backtests — the creator-sell instant exit is what keeps the losses shallow.'
     },
     {
         id: 'sniper',
         label: 'Experimental',
         subtitle: 'Earliest entries, smallest size',
-        description: 'Structured launch probe mode. Tiny size only, multi-wallet flow required, and still best kept in paper testing first.'
+        description: 'Loosest thresholds and the earliest window (3s). Negative expectancy on most captured tape — keep it in paper mode for research.'
     },
     {
         id: 'velocity',
         label: 'Velocity',
-        subtitle: 'High-momentum launch sniping',
-        description: 'Built for the first 30 seconds of life. Loose distribution filters (launch is structurally top-heavy), strict momentum requirement (must be moving fast), tiny size, fast TP/SL. The mode to pick when nothing else is buying.'
+        subtitle: 'Aggressive alias',
+        description: 'Legacy alias that now routes through the Aggressive flow thresholds with fast exits.'
     },
     {
         id: 'custom',
         label: 'Custom',
         subtitle: 'Manual control',
-        description: 'Direct parameter control when you want to override the curated presets.'
+        description: 'Balanced flow thresholds with your own size, TP and SL on top.'
     }
 ];
 
@@ -121,9 +127,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'god':
             return {
                 mode: 'god',
-                amount: 0.006,
-                takeProfit: 24,
-                stopLoss: 4,
+                amount: 0.05,
+                takeProfit: 18,
+                stopLoss: 7,
                 maxConcurrentTrades: 1,
                 dynamicSizing: true,
                 advanced: {
@@ -148,9 +154,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'micro':
             return {
                 mode: 'micro',
-                amount: 0.008,
-                takeProfit: 12,
-                stopLoss: 6,
+                amount: 0.04,
+                takeProfit: 15,
+                stopLoss: 7,
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
@@ -172,9 +178,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'degen':
             return {
                 mode: 'degen',
-                amount: 0.0025,
-                takeProfit: 8,
-                stopLoss: 4,
+                amount: 0.03,
+                takeProfit: 15,
+                stopLoss: 6.5,
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
@@ -204,9 +210,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         case 'sniper':
             return {
                 mode: 'sniper',
-                amount: 0.002,
-                takeProfit: 8,
-                stopLoss: 4,
+                amount: 0.02,
+                takeProfit: 12,
+                stopLoss: 6,
                 maxConcurrentTrades: 1,
                 dynamicSizing: false,
                 advanced: {
@@ -237,9 +243,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
                 // pre-launch — the analyzer's launch-phase exemption handles
                 // that), and exit fast on either profit or fade.
                 mode: 'velocity',
-                amount: 0.0025,
+                amount: 0.02,
                 takeProfit: 12,
-                stopLoss: 5,
+                stopLoss: 6,
                 maxConcurrentTrades: 2,
                 dynamicSizing: false,
                 advanced: {
@@ -281,9 +287,9 @@ export function getStrategyPresetConfig(profile: VisibleStrategyMode): StrategyP
         default:
             return {
                 mode: 'custom',
-                amount: 0.008,
-                takeProfit: 20,
-                stopLoss: 10,
+                amount: 0.05,
+                takeProfit: 18,
+                stopLoss: 7,
                 maxConcurrentTrades: 1,
                 dynamicSizing: true,
                 advanced: {

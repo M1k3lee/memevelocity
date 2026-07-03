@@ -5,7 +5,7 @@
 // To bump the version, just commit. The patch number is the current commit
 // count and the short SHA is the current HEAD.
 
-export const APP_VERSION_SEMVER = "1.0.178";
-export const APP_VERSION_LABEL = "v1.0.178+dirty BETA · 891d9bc";
-export const APP_VERSION_SHA = "891d9bc";
-export const APP_VERSION_DATE = "2026-06-04 21:17 UTC";
+export const APP_VERSION_SEMVER = "1.0.181";
+export const APP_VERSION_LABEL = "v1.0.181+dirty BETA · d4c28b9";
+export const APP_VERSION_SHA = "d4c28b9";
+export const APP_VERSION_DATE = "2026-07-03 09:31 UTC";
