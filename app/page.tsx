@@ -2440,8 +2440,6 @@ export default function Home() {
           // allowing subsequent retries if the token still isn't ready.
           scheduleRetry(15000, `⏳ ${token.symbol} too new (${age.toFixed(1)}s). Monitoring for activity...`);
           return;
-        } else if (momentum >= 1.5) {
-          addLog(`🚀 High Momentum detected for ${token.symbol} (${momentum.toFixed(1)} SOL/min)! Bypassing wait...`);
         }
       }
 
@@ -2578,29 +2576,6 @@ export default function Home() {
 
         // Don't wait — fall through to the buy. The whole point of this
         // mode is that we already filtered on velocity upstream.
-      } else if (config.mode === 'degen') {
-        // Relaxed curve-based requirement for degen mode when snapshot data is unavailable
-        const liquidity = token.vSolInBondingCurve || 30;
-        const liquidityGrowth = liquidity - 30;
-
-        // Minimum requirements before considering entry:
-        // Loosened for explosive launches: if momentum is extreme (>= 12.0 SOL/min),
-        // we only need a tiny bit of curve confirmation (0.1%), BUT it must have
-        // a higher quality score (>= 45) to avoid sniper traps.
-        const hasMinActivity =
-          (analysis.bondingCurveProgress >= 1.0 && liquidityGrowth > 0) ||
-          (momentum >= 12.0 && analysis.bondingCurveProgress >= 0.1 && analysis.score >= 45);
-
-        if (!hasMinActivity) {
-          if (age < 90) {
-            scheduleRetry(6000, `⏳ Degen wait: ${token.symbol} needs more curve activity (${analysis.bondingCurveProgress.toFixed(1)}% curve, +${liquidityGrowth.toFixed(2)} SOL).`);
-            return;
-          }
-          addLog(`🚫 Degen Reject: ${token.symbol} - Not enough curve activity (${analysis.bondingCurveProgress.toFixed(1)}% curve, +${liquidityGrowth.toFixed(2)} SOL).`);
-          return;
-        }
-
-        // Downstream checks for tradeCount/buyPressure are removed as they'll always be 0 without snapshot data
       }
 
       // If RPC is failing (analysis might be incomplete), be very lenient
