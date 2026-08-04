@@ -21,7 +21,12 @@ export function isCreatorDumpingLaunch(params: {
         return false;
     }
 
-    // Multiple creator sells in the opening window is still a hard skip.
+    // A single creator sell in the opening window is a hard skip to avoid rugs.
+    if (creatorSellCount >= 1 && age <= 90) {
+        return true;
+    }
+
+    // Multiple creator sells is still a hard skip.
     if (creatorSellCount >= 2) {
         return true;
     }

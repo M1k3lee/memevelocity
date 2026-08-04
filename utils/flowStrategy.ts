@@ -81,10 +81,10 @@ export function getFlowEntryOptions(mode: FlowMode): FlowEntryOptions {
     switch (mode) {
         case 'god':
             return {
-                minAgeSeconds: 4,
-                maxAgeSeconds: 60,
-                minUniqueTraders: 4,
-                minBuyCount: 4,
+                minAgeSeconds: 10,
+                maxAgeSeconds: 120,
+                minUniqueTraders: 5,
+                minBuyCount: 5,
                 maxSellToBuyRatio: 0.4,
                 minLiquidityGrowthSol: 5,
                 minBuyPressure: 0.5,
@@ -95,10 +95,10 @@ export function getFlowEntryOptions(mode: FlowMode): FlowEntryOptions {
         case 'micro':
         case 'custom':
             return {
-                minAgeSeconds: 4,
-                maxAgeSeconds: 60,
-                minUniqueTraders: 4,
-                minBuyCount: 4,
+                minAgeSeconds: 10,
+                maxAgeSeconds: 120,
+                minUniqueTraders: 5,
+                minBuyCount: 5,
                 maxSellToBuyRatio: 0.4,
                 minLiquidityGrowthSol: 5,
                 minBuyPressure: 0.5,
@@ -108,9 +108,9 @@ export function getFlowEntryOptions(mode: FlowMode): FlowEntryOptions {
             };
         case 'degen':
             return {
-                minAgeSeconds: 4,
-                maxAgeSeconds: 90,
-                minUniqueTraders: 3,
+                minAgeSeconds: 8,
+                maxAgeSeconds: 120,
+                minUniqueTraders: 4,
                 minBuyCount: 4,
                 maxSellToBuyRatio: 0.4,
                 minLiquidityGrowthSol: 5,
@@ -121,8 +121,8 @@ export function getFlowEntryOptions(mode: FlowMode): FlowEntryOptions {
             };
         case 'sniper':
             return {
-                minAgeSeconds: 3,
-                maxAgeSeconds: 45,
+                minAgeSeconds: 6,
+                maxAgeSeconds: 90,
                 minUniqueTraders: 3,
                 minBuyCount: 3,
                 maxSellToBuyRatio: 0.45,

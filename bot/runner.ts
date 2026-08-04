@@ -539,10 +539,10 @@ class PumpFunRunner {
         const sellPriorityFee = amount <= 0.05 ? 0.0003 : Math.max(0.0005, Math.min(0.002, amount * 0.02));
         const fixedCostSol = buyPriorityFee + sellPriorityFee + 0.00002;
         const tp1WinSol = amount * (this.config.defaultExit.takeProfit / 100);
-        if (tp1WinSol < fixedCostSol * 2.5) {
+        if (tp1WinSol < fixedCostSol * 1.5) {
             if (!this.loggedCostGateWarning) {
                 this.loggedCostGateWarning = true;
-                this.log(`Cost gate: trade size ${amount.toFixed(4)} SOL cannot clear the fee stack (TP1 win ${tp1WinSol.toFixed(5)} SOL vs ~${fixedCostSol.toFixed(5)} SOL fixed costs). Raise BOT_TRADE_AMOUNT_SOL to at least ${(fixedCostSol * 2.5 / (this.config.defaultExit.takeProfit / 100)).toFixed(3)} SOL.`);
+                this.log(`Cost gate: trade size ${amount.toFixed(4)} SOL cannot clear the fee stack (TP1 win ${tp1WinSol.toFixed(5)} SOL vs ~${fixedCostSol.toFixed(5)} SOL fixed costs). Raise BOT_TRADE_AMOUNT_SOL to at least ${(fixedCostSol * 1.5 / (this.config.defaultExit.takeProfit / 100)).toFixed(3)} SOL.`);
             }
             return 0;
         }
@@ -659,9 +659,9 @@ class PumpFunRunner {
         // pressure check and rely on liquidity/curve/price delta.
         const skipBuyPressureCheck = tradeCount === 0;
         const minBuyPressure = isSelectiveMode ? 0.5 : (isProbeMode ? 0.5 : (isAggressiveMode ? 0.5 : 0.48));
-        const maxLiquidityDrop = isSelectiveMode ? -10 : (isProbeMode ? -12 : (isAggressiveMode ? -12 : -14));
-        const maxCurveRollback = isSelectiveMode ? -2.5 : (isProbeMode ? -3 : (isAggressiveMode ? -3 : -3.5));
-        const maxPriceFade = isSelectiveMode ? -5 : (isProbeMode ? -6 : (isAggressiveMode ? -6 : -8));
+        const maxLiquidityDrop = isSelectiveMode ? -15 : (isProbeMode ? -16 : (isAggressiveMode ? -16 : -18));
+        const maxCurveRollback = isSelectiveMode ? -3.5 : (isProbeMode ? -4.5 : (isAggressiveMode ? -4.5 : -5));
+        const maxPriceFade = isSelectiveMode ? -12 : (isProbeMode ? -14 : (isAggressiveMode ? -14 : -16));
 
         if (
             liquidityDeltaPercent < maxLiquidityDrop ||
